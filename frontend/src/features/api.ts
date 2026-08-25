@@ -33,6 +33,20 @@ export type ClinicalTimelineEntry = PatientTimelineEntry & {
   author_id: string | null
 }
 
+// Deliberately narrower than GlancePublic. The patient view never receives
+// care-team ranking reasons, critical flags, or review state in its component
+// contract, even when the server response contains those internal fields.
+export type PatientSafeGlance = {
+  patient_id: string
+  source: "precomputed"
+  generated_at: string
+  cards: Array<{
+    highlight_id: string
+    label: string
+    provenance_pointer_id: string
+  }>
+}
+
 export type VersionConflict = {
   code: "VERSION_CONFLICT"
   message: string
@@ -148,6 +162,22 @@ async function glance(patientId: string): Promise<GlancePublic> {
   return (
     await PatientsService.patientGlance({ path: { patient_id: patientId } })
   ).data
+}
+
+async function patientSafeGlance(
+  patientId: string,
+): Promise<PatientSafeGlance> {
+  const response = await glance(patientId)
+  return {
+    patient_id: response.patient_id,
+    source: response.source ?? "precomputed",
+    generated_at: response.generated_at,
+    cards: response.cards.map((card) => ({
+      highlight_id: card.highlight_id,
+      label: card.label,
+      provenance_pointer_id: card.provenance_pointer_id,
+    })),
+  }
 }
 
 async function createEntry(
@@ -361,7 +391,7 @@ export const patientSafeApi = {
   me,
   patients,
   timeline: patientTimeline,
-  glance,
+  glance: patientSafeGlance,
   resolveProvenance,
   createInsight: createPatientInsight,
 }

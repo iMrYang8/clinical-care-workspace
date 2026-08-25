@@ -10,12 +10,10 @@ import {
 import { useEffect, useState } from "react"
 
 import type {
-  GlancePublic,
   PatientPublic,
   PatientTimelineEntry,
   ProvenanceResolved,
 } from "@/client"
-import { GlanceTopCard } from "@/components/CareNote/GlanceTopCard"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -23,12 +21,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import { apiErrorMessage, patientSafeApi } from "@/features/api"
+import {
+  apiErrorMessage,
+  type PatientSafeGlance,
+  patientSafeApi,
+} from "@/features/api"
 
 export type PatientSafeApi = {
   patients: () => Promise<PatientPublic[]>
   timeline: (patientId: string) => Promise<PatientTimelineEntry[]>
-  glance: (patientId: string) => Promise<GlancePublic>
+  glance: (patientId: string) => Promise<PatientSafeGlance>
   resolveProvenance: (pointerId: string) => Promise<ProvenanceResolved>
   createInsight: (
     patientId: string,
@@ -266,10 +268,55 @@ export function PatientSafeCareNote({
         </section>
 
         <aside className="space-y-4 lg:sticky lg:top-24">
-          <GlanceTopCard
-            cards={glanceQuery.data?.cards ?? []}
-            onSource={(card) => showSource(card.provenance_pointer_id)}
-          />
+          <Card className="overflow-hidden border-amber-100 bg-white shadow-sm">
+            <CardHeader className="border-b border-amber-100 bg-gradient-to-br from-amber-50 to-white pb-4">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">
+                At a glance
+              </p>
+              <CardTitle className="font-serif text-2xl">
+                Shared care highlights
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {(glanceQuery.data?.cards.length ?? 0) === 0 ? (
+                <div className="px-5 py-8 text-center">
+                  <ShieldCheck className="mx-auto mb-3 size-7 text-amber-600" />
+                  <p className="font-medium text-slate-800">
+                    No shared highlights yet
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    Care-team approved, source-linked facts will appear here.
+                  </p>
+                </div>
+              ) : (
+                <ol
+                  aria-label="Patient-facing care highlights"
+                  className="divide-y divide-slate-100"
+                >
+                  {glanceQuery.data?.cards.slice(0, 5).map((card, index) => (
+                    <li className="space-y-3 p-4" key={card.highlight_id}>
+                      <div className="flex items-start gap-3">
+                        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-amber-100 text-xs font-bold text-amber-800">
+                          {index + 1}
+                        </span>
+                        <p className="min-w-0 flex-1 font-medium leading-6 text-slate-900">
+                          {card.label}
+                        </p>
+                      </div>
+                      <Button
+                        className="ml-10 min-h-11"
+                        onClick={() => showSource(card.provenance_pointer_id)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        <Link2 aria-hidden="true" /> View approved source
+                      </Button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </CardContent>
+          </Card>
           {source && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
               <p className="flex items-center gap-2 font-semibold text-amber-950">
