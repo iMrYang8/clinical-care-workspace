@@ -43,6 +43,7 @@ def test_comment_anchor_mentions_assignment_resolve_and_encryption(
     comment = created.json()
     assert comment["anchor_state"] == "resolved"
     assert comment["assigned_membership_id"] == clinician["membership_id"]
+    assert comment["mentioned_user_ids"] == [clinician["user_id"]]
 
     with Session(engine) as session:
         stored = session.get(Comment, comment["id"])
@@ -58,11 +59,22 @@ def test_comment_anchor_mentions_assignment_resolve_and_encryption(
     )
     assert listed.status_code == 200
     assert listed.json()[0]["body"] == "Please review the synthetic care note."
+    assert listed.json()[0]["mentioned_user_ids"] == [clinician["user_id"]]
     resolved = client.post(
         f"/api/v1/comments/{comment['id']}/resolve", headers=clinician_headers
     )
     assert resolved.status_code == 200
     assert resolved.json()["resolved_at"] is not None
+
+    patient_membership = client.get(
+        "/api/v1/auth/me", headers=auth_headers("patient")
+    ).json()["membership_id"]
+    invalid_assignment = client.patch(
+        f"/api/v1/comments/{comment['id']}/assignment",
+        headers=staff_headers,
+        json={"assigned_membership_id": patient_membership},
+    )
+    assert invalid_assignment.status_code == 422
 
     assert (
         client.get(

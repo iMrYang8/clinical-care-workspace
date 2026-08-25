@@ -1,8 +1,11 @@
 import uuid
 
+import jwt
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from app.core import security
+from app.core.config import settings
 from app.core.db import engine
 from app.models import Entry
 from app.seed import demo_id
@@ -88,6 +91,20 @@ def test_cross_clinic_resources_are_hidden_as_404(
     )
 
 
+def test_signed_clinic_claim_is_verified_against_live_membership(
+    client: TestClient,
+) -> None:
+    login = client.post("/api/v1/auth/demo-login", json={"persona": "staff"})
+    token = login.json()["access_token"]
+    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[security.ALGORITHM])
+    payload["clinic_id"] = str(demo_id("clinic-other"))
+    mismatched = jwt.encode(payload, settings.SECRET_KEY, algorithm=security.ALGORITHM)
+    response = client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {mismatched}"}
+    )
+    assert response.status_code == 404
+
+
 def test_patient_dto_and_query_exclude_internal_and_raw_ai(
     client: TestClient, auth_headers
 ) -> None:
@@ -147,6 +164,30 @@ def test_patient_dto_and_query_exclude_internal_and_raw_ai(
         ).status_code
         == 404
     )
+
+    patient_created = client.post(
+        "/api/v1/entries",
+        headers=patient_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "patient",
+            "title": "My observation",
+            "content": "Synthetic patient insight",
+            "clinic_id": str(uuid.uuid4()),
+            "author_id": str(uuid.uuid4()),
+            "role": "clinician",
+        },
+    )
+    assert patient_created.status_code == 201, patient_created.text
+    patient_payload = patient_created.json()
+    assert "clinic_id" not in patient_payload
+    assert "author_id" not in patient_payload
+    assert "origin" not in patient_payload
+    read_back = client.get(
+        f"/api/v1/entries/{patient_payload['id']}", headers=patient_headers
+    )
+    assert read_back.status_code == 200
+    assert "author_id" not in read_back.json()
 
 
 def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
