@@ -6,7 +6,7 @@ PostgreSQL RLS migration are independent tenant boundaries.
 
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import EmailStr
 from sqlalchemy import (
@@ -30,7 +30,6 @@ def get_datetime_utc() -> datetime:
 Role = Literal["patient", "staff", "clinician", "admin", "worker"]
 Section = Literal["patient", "staff", "clinician", "system"]
 EntryOrigin = Literal["human", "ai", "system"]
-KnownName = Annotated[str, Field(min_length=1, max_length=255)]
 
 
 class TenantRow(SQLModel):
@@ -598,15 +597,22 @@ class JobAttempt(TenantRow, table=True):
             "clinic_id", "job_id", "attempt_no", name="uq_job_attempt_number"
         ),
         Index("ix_job_attempt_job", "clinic_id", "job_id"),
+        Index("ix_job_attempt_worker", "clinic_id", "worker_membership_id"),
         ForeignKeyConstraint(
             ["clinic_id", "job_id"],
             ["jobs.clinic_id", "jobs.id"],
             name="fk_job_attempt_tenant",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["clinic_id", "worker_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_job_attempt_worker_tenant",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     job_id: uuid.UUID
+    worker_membership_id: uuid.UUID | None = None
     attempt_no: int = Field(ge=1)
     status: str = Field(default="started", max_length=30)
     error_code: str | None = Field(default=None, max_length=80)
@@ -654,6 +660,7 @@ class AIRun(TenantRow, table=True):
         UniqueConstraint("clinic_id", "id", name="uq_ai_run_clinic_id"),
         UniqueConstraint("clinic_id", "job_id", name="uq_ai_run_job"),
         Index("ix_ai_run_patient_created", "clinic_id", "patient_id", "created_at"),
+        Index("ix_ai_run_worker", "clinic_id", "executed_by_worker_membership_id"),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -686,15 +693,29 @@ class AIRun(TenantRow, table=True):
             ["entry_versions.clinic_id", "entry_versions.id"],
             name="fk_ai_run_output_version_tenant",
         ),
+        ForeignKeyConstraint(
+            ["clinic_id", "executed_by_worker_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_ai_run_worker_tenant",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     patient_id: uuid.UUID
     job_id: uuid.UUID
     redaction_run_id: uuid.UUID
     source_entry_version_id: uuid.UUID
+    executed_by_worker_membership_id: uuid.UUID | None = None
     interaction_type: str = Field(max_length=60)
     provider: str = Field(max_length=60)
     model: str = Field(max_length=160)
+    review_model: str | None = Field(default=None, max_length=160)
+    review_status: str = Field(default="not_required", max_length=30)
+    primary_output_ciphertext: bytes | None = Field(
+        default=None, sa_column=Column(LargeBinary, nullable=True)
+    )
+    review_output_ciphertext: bytes | None = Field(
+        default=None, sa_column=Column(LargeBinary, nullable=True)
+    )
     status: str = Field(max_length=30)
     risk_tier: str = Field(default="standard", max_length=30)
     fallback_reason: str | None = Field(default=None, max_length=100)
@@ -1061,10 +1082,6 @@ class ClinicalGlancePublic(SQLModel):
 class AIIngestRequest(SQLModel):
     source_entry_version_id: uuid.UUID
     interaction_type: str = Field(default="care_note", max_length=60)
-    known_names: list[KnownName] = Field(default_factory=list, max_length=20)
-    known_aliases: list[KnownName] = Field(default_factory=list, max_length=20)
-    high_risk: bool = False
-    conflict_review: bool = False
 
 
 class AIRunPublic(SQLModel):
@@ -1073,6 +1090,8 @@ class AIRunPublic(SQLModel):
     source_entry_version_id: uuid.UUID
     provider: str
     model: str
+    review_model: str | None
+    review_status: str
     status: str
     risk_tier: str
     fallback_reason: str | None
@@ -1097,7 +1116,7 @@ class JobPublic(SQLModel):
 
 
 class ImportanceFeedbackCreate(SQLModel):
-    signal: Literal["pin", "accept", "manual", "comment", "edit", "reject", "dismiss"]
+    signal: Literal["dismiss"]
 
 
 class DecayCandidatePublic(SQLModel):

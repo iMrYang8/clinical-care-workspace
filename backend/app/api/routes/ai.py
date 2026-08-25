@@ -3,12 +3,14 @@ import uuid
 from fastapi import APIRouter, Header, HTTPException
 
 from app.api.deps import CurrentContext, SessionDep
+from app.core.config import settings
 from app.models import AIIngestRequest, JobPublic
 from app.services.ai_jobs import (
     create_or_replay_job,
     get_scoped_job,
     job_public,
     process_job,
+    worker_context_for_job,
 )
 
 router = APIRouter(tags=["ai"])
@@ -39,7 +41,12 @@ async def _submit(
         payload=payload,
     )
     if not replayed:
-        await process_job(session, context, job)
+        # The request path may execute the deterministic/no-egress provider for
+        # the local demo. Configured remote jobs remain pending for a worker so
+        # an HTTP request never waits on an external model call.
+        worker_context = worker_context_for_job(session, job)
+        if settings.AI_PROVIDER != "openai" and worker_context is not None:
+            await process_job(session, worker_context, job.id)
         session.commit()
         session.refresh(job)
     return job_public(session, job)
@@ -105,7 +112,10 @@ async def retry_job(
             status_code=409,
             detail={"code": "JOB_NOT_RETRYABLE", "state": job.state},
         )
-    await process_job(session, context, job)
+    worker_context = worker_context_for_job(session, job)
+    if worker_context is None:
+        raise HTTPException(status_code=503, detail={"code": "WORKER_UNAVAILABLE"})
+    await process_job(session, worker_context, job.id)
     session.commit()
     session.refresh(job)
     return job_public(session, job)

@@ -5,35 +5,52 @@ import json
 import re
 import uuid
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 from fastapi import HTTPException
-from sqlmodel import Session, select
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, col, select
 
 from app.api.deps import RequestContext
 from app.core.config import settings
+from app.core.db import set_rls_clinic
 from app.core.field_crypto import field_codec
 from app.models import (
     AIRun,
     AIRunPublic,
+    ClinicMembership,
+    ConflictCase,
     Entry,
     EntryVersion,
     Highlight,
     Job,
     JobAttempt,
     JobPublic,
+    Patient,
     ProvenancePointer,
     RedactionRun,
+    User,
     get_datetime_utc,
 )
 from app.services.importance import refresh_highlight_score, sanitize_feature_keys
 from app.services.nightingale import decrypt_version, emit_change, get_patient
-from app.services.providers.base import ClinicalFact, ExtractionContext
+from app.services.providers.base import (
+    ClinicalFact,
+    ClinicalNoteDraft,
+    ExtractionContext,
+    validate_evidence,
+)
 from app.services.providers.deterministic import DeterministicClinicalNoteProvider
 from app.services.providers.openai_text import OpenAITextProvider
 from app.services.redaction import ClinicalScribePipeline, RedactionService
 
 _SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,79}$")
+_HIGH_RISK_TEXT = re.compile(
+    r"\b(?:anaphylaxis|anaphylactic|suicid(?:e|al)|chest pain|stroke|"
+    r"sepsis|critical|emergency|overdose)\b",
+    re.IGNORECASE,
+)
 
 
 def canonical_request_hash(
@@ -100,6 +117,8 @@ def _ai_run_public(run: AIRun) -> AIRunPublic:
         source_entry_version_id=run.source_entry_version_id,
         provider=run.provider,
         model=run.model,
+        review_model=run.review_model,
+        review_status=run.review_status,
         status=run.status,
         risk_tier=run.risk_tier,
         fallback_reason=run.fallback_reason,
@@ -181,8 +200,32 @@ def create_or_replay_job(
         ),
         created_by_id=context.user_id,
     )
-    session.add(job)
-    session.flush()
+    try:
+        with session.begin_nested():
+            session.add(job)
+            session.flush()
+    except IntegrityError:
+        # Another transaction may have inserted the same idempotency tuple
+        # after our first read. The unique constraint is the serialization
+        # point; replay its durable result instead of surfacing a 500.
+        existing = session.exec(
+            select(Job).where(
+                Job.clinic_id == context.clinic_id,
+                Job.kind == kind,
+                Job.idempotency_key == idempotency_token,
+            )
+        ).first()
+        if existing is None:
+            raise
+        if existing.request_sha256 != request_hash:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "IDEMPOTENCY_KEY_REUSED",
+                    "message": "The key was already used for different input",
+                },
+            )
+        return existing, True
     emit_change(
         session,
         context,
@@ -192,6 +235,115 @@ def create_or_replay_job(
         metadata={"kind": kind, "state": "pending"},
     )
     return job, False
+
+
+def worker_context_for_job(session: Session, job: Job) -> RequestContext | None:
+    """Resolve a trusted active worker in the job's clinic.
+
+    The requester's context is never reused to author system-derived data. The
+    job binding is constructed server-side and rechecked again at claim time.
+    """
+
+    membership = session.exec(
+        select(ClinicMembership)
+        .where(
+            ClinicMembership.clinic_id == job.clinic_id,
+            ClinicMembership.role == "worker",
+            col(ClinicMembership.is_active).is_(True),
+        )
+        .order_by(col(ClinicMembership.created_at), col(ClinicMembership.id))
+    ).first()
+    if membership is None:
+        return None
+    user = session.get(User, membership.user_id)
+    if user is None or not user.is_active:
+        return None
+    return RequestContext(user=user, membership=membership, job_id=job.id)
+
+
+def _trusted_patient_names(
+    session: Session, context: RequestContext, patient_id: uuid.UUID
+) -> list[str]:
+    patient: Patient = get_patient(session, context, patient_id)
+    display_name = field_codec.decrypt_text(
+        patient.clinic_id,
+        "patient.display_name",
+        patient.id,
+        patient.display_name_ciphertext,
+    ).strip()
+    return [display_name] if display_name else []
+
+
+def _server_risk_flags(
+    session: Session,
+    context: RequestContext,
+    patient_id: uuid.UUID,
+    source_version: EntryVersion,
+    source_text: str,
+) -> tuple[bool, bool]:
+    """Derive risk only from trusted server state and deterministic rules."""
+
+    conflict_review = (
+        session.exec(
+            select(ConflictCase).where(
+                ConflictCase.clinic_id == context.clinic_id,
+                ConflictCase.status == "unresolved",
+                (ConflictCase.left_entry_id == source_version.entry_id)
+                | (ConflictCase.right_entry_id == source_version.entry_id),
+            )
+        ).first()
+        is not None
+    )
+    protected_highlight = session.exec(
+        select(Highlight).where(
+            Highlight.clinic_id == context.clinic_id,
+            Highlight.patient_id == patient_id,
+            col(Highlight.critical).is_(True) | col(Highlight.unresolved).is_(True),
+        )
+    ).first()
+    return (
+        bool(_HIGH_RISK_TEXT.search(source_text)) or protected_highlight is not None,
+        conflict_review,
+    )
+
+
+def _draft_payload(draft: ClinicalNoteDraft) -> dict[str, Any]:
+    return {
+        "summary": draft.summary,
+        "facts": [
+            {
+                "fact_type": fact.fact_type,
+                "value": fact.value,
+                "evidence_start": fact.evidence_start,
+                "evidence_end": fact.evidence_end,
+                "evidence_quote": fact.evidence_quote,
+                "feature_keys": fact.feature_keys,
+                "critical": fact.critical,
+            }
+            for fact in draft.facts
+        ],
+        "provider": draft.provider,
+        "model": draft.model,
+        "warnings": draft.warnings,
+        "needs_review": draft.needs_review,
+    }
+
+
+def _drafts_consistent(primary: ClinicalNoteDraft, review: ClinicalNoteDraft) -> bool:
+    def signature(draft: ClinicalNoteDraft) -> set[tuple[str, str, str, bool]]:
+        return {
+            (
+                fact.fact_type.strip().lower(),
+                fact.value.strip().lower(),
+                fact.evidence_quote,
+                fact.critical,
+            )
+            for fact in draft.facts
+        }
+
+    primary_summary = " ".join(primary.summary.lower().split())
+    review_summary = " ".join(review.summary.lower().split())
+    return signature(primary) == signature(review) and primary_summary == review_summary
 
 
 def _source_for_job(
@@ -343,9 +495,63 @@ def _create_fact_provenance(
         )
 
 
-async def process_job(session: Session, context: RequestContext, job: Job) -> Job:
+def claim_job(session: Session, context: RequestContext, job_id: uuid.UUID) -> Job:
+    """Atomically claim one clinic/job-bound lease with SKIP LOCKED."""
+
+    if (
+        context.role != "worker"
+        or context.job_id != job_id
+        or context.membership.clinic_id != context.clinic_id
+    ):
+        raise HTTPException(status_code=403, detail="Worker job binding required")
+    set_rls_clinic(session, context.clinic_id)
+    now = get_datetime_utc()
+    claimable = (
+        col(Job.state).in_(["pending", "failed"])
+        & (col(Job.locked_until).is_(None) | (col(Job.locked_until) < now))
+    ) | ((col(Job.state) == "running") & (col(Job.locked_until) < now))
+    job = session.exec(
+        select(Job)
+        .where(
+            Job.clinic_id == context.clinic_id,
+            Job.id == job_id,
+            claimable,
+        )
+        .with_for_update(skip_locked=True)
+    ).first()
+    if job is None:
+        raise HTTPException(status_code=409, detail={"code": "JOB_NOT_CLAIMABLE"})
     if job.attempt_count >= job.max_attempts:
         raise HTTPException(status_code=409, detail={"code": "JOB_ATTEMPTS_EXHAUSTED"})
+    if job.state == "running":
+        expired_attempts = session.exec(
+            select(JobAttempt)
+            .where(
+                JobAttempt.clinic_id == context.clinic_id,
+                JobAttempt.job_id == job.id,
+                JobAttempt.status == "started",
+            )
+            .with_for_update()
+        ).all()
+        for expired_attempt in expired_attempts:
+            expired_attempt.status = "failed"
+            expired_attempt.error_code = "WORKER_LEASE_EXPIRED"
+            expired_attempt.completed_at = now
+            session.add(expired_attempt)
+    job.state = "running"
+    job.locked_by = str(context.membership.id)
+    job.locked_until = now + timedelta(seconds=max(30, settings.AI_JOB_LEASE_SECONDS))
+    job.error_code = None
+    job.updated_at = now
+    session.add(job)
+    session.flush()
+    return job
+
+
+async def process_job(
+    session: Session, context: RequestContext, job_id: uuid.UUID
+) -> Job:
+    job = claim_job(session, context, job_id)
     if (
         session.exec(
             select(AIRun).where(
@@ -354,20 +560,21 @@ async def process_job(session: Session, context: RequestContext, job: Job) -> Jo
         ).first()
         is not None
     ):
-        return job
+        raise HTTPException(status_code=409, detail={"code": "JOB_ALREADY_COMPLETED"})
 
     attempt = JobAttempt(
         clinic_id=context.clinic_id,
         job_id=job.id,
+        worker_membership_id=context.membership.id,
         attempt_no=job.attempt_count + 1,
     )
     job.attempt_count += 1
-    job.state = "running"
-    job.error_code = None
-    job.updated_at = get_datetime_utc()
     session.add(job)
     session.add(attempt)
     session.flush()
+    # Persist the lease before any external provider work. This releases the
+    # row lock while keeping a durable recovery boundary for another worker.
+    session.commit()
     attempt_work = session.begin_nested()
     try:
         payload = field_codec.decrypt_json(
@@ -377,15 +584,9 @@ async def process_job(session: Session, context: RequestContext, job: Job) -> Jo
             raise ValueError("INVALID_JOB_PAYLOAD")
         source_version, source_text = _source_for_job(session, context, job, payload)
         interaction_type = str(payload.get("interaction_type", "care_note"))[:60]
-        high_risk = bool(payload.get("high_risk", False))
-        conflict_review = bool(payload.get("conflict_review", False))
-        known_names = [
-            str(item)
-            for item in [
-                *payload.get("known_names", []),
-                *payload.get("known_aliases", []),
-            ]
-        ]
+        high_risk, conflict_review = _server_risk_flags(
+            session, context, job.patient_id, source_version, source_text
+        )
         extraction_context = ExtractionContext(
             clinic_id=context.clinic_id,
             patient_id=job.patient_id,
@@ -406,23 +607,65 @@ async def process_job(session: Session, context: RequestContext, job: Job) -> Jo
         result = await pipeline.run(
             source_text,
             context=extraction_context,
-            known_names=known_names,
+            known_names=_trusted_patient_names(session, context, job.patient_id),
             remote_provider=remote_provider,
         )
+        high_risk = high_risk or any(fact.critical for fact in result.draft.facts)
+        review_required = high_risk or conflict_review
+        review_draft: ClinicalNoteDraft | None = None
+        review_status = "not_required"
+        review_model = getattr(remote_provider, "review_model", None)
+        review_warnings: list[str] = []
+        if review_required:
+            if remote_provider is None or result.used_fallback or not review_model:
+                review_status = "unavailable"
+                review_warnings.append("HIGH_RISK_REVIEW_MODEL_UNAVAILABLE")
+            else:
+                try:
+                    review_context = replace(
+                        extraction_context,
+                        high_risk=high_risk,
+                        conflict_review=conflict_review,
+                    )
+                    review_draft = validate_evidence(
+                        await remote_provider.review(
+                            result.redaction.redacted_text,
+                            review_context,
+                            result.draft,
+                        ),
+                        result.redaction.redacted_text,
+                    )
+                    review_status = (
+                        "consistent"
+                        if _drafts_consistent(result.draft, review_draft)
+                        else "disagreed"
+                    )
+                    review_warnings.extend(review_draft.warnings)
+                except Exception as review_error:
+                    review_status = "error"
+                    candidate = str(review_error)
+                    review_warnings.append(
+                        candidate
+                        if _SAFE_ERROR_CODE.fullmatch(candidate)
+                        else "HIGH_RISK_REVIEW_FAILED"
+                    )
+
         facts, raw_mapping_failed = _map_facts_to_source(
             result.draft.facts, source_text
         )
         warnings = [
             warning
-            for warning in result.draft.warnings
+            for warning in [*result.draft.warnings, *review_warnings]
             if _SAFE_ERROR_CODE.fullmatch(warning)
         ]
         if raw_mapping_failed:
             warnings.append("INVALID_RAW_EVIDENCE_SPAN")
-        # Deterministic extraction is a truthful fallback, not a silent stand-in
-        # for configured model review.
         needs_review = (
-            result.draft.needs_review or raw_mapping_failed or result.used_fallback
+            result.draft.needs_review
+            or raw_mapping_failed
+            or result.used_fallback
+            or (review_required and review_status != "consistent")
+            or bool(review_draft and review_draft.needs_review)
         )
 
         redaction_run = RedactionRun(
@@ -465,17 +708,38 @@ async def process_job(session: Session, context: RequestContext, job: Job) -> Jo
                 fallback_reason = "REMOTE_PROVIDER_NOT_CONFIGURED"
             else:
                 fallback_reason = "DETERMINISTIC_MODE"
+        run_id = uuid.uuid4()
         run = AIRun(
+            id=run_id,
             clinic_id=context.clinic_id,
             patient_id=job.patient_id,
             job_id=job.id,
             redaction_run_id=redaction_run.id,
             source_entry_version_id=source_version.id,
+            executed_by_worker_membership_id=context.membership.id,
             interaction_type=interaction_type,
             provider=result.draft.provider,
             model=result.draft.model,
+            review_model=review_model,
+            review_status=review_status,
+            primary_output_ciphertext=field_codec.encrypt_json(
+                context.clinic_id,
+                "ai_run.primary_output",
+                run_id,
+                _draft_payload(result.draft),
+            ),
+            review_output_ciphertext=(
+                field_codec.encrypt_json(
+                    context.clinic_id,
+                    "ai_run.review_output",
+                    run_id,
+                    _draft_payload(review_draft),
+                )
+                if review_draft is not None
+                else None
+            ),
             status="fallback" if result.used_fallback else "completed",
-            risk_tier="high" if high_risk or conflict_review else "standard",
+            risk_tier="high" if review_required else "standard",
             fallback_reason=fallback_reason,
             needs_review=needs_review,
             request_sha256=job.request_sha256,
@@ -487,6 +751,8 @@ async def process_job(session: Session, context: RequestContext, job: Job) -> Jo
         attempt.status = "completed"
         attempt.completed_at = get_datetime_utc()
         job.state = "needs_review" if needs_review else "completed"
+        job.locked_by = None
+        job.locked_until = None
         job.updated_at = get_datetime_utc()
         session.add(attempt)
         session.add(job)
@@ -500,13 +766,11 @@ async def process_job(session: Session, context: RequestContext, job: Job) -> Jo
                 "job_id": str(job.id),
                 "state": job.state,
                 "fallback": result.used_fallback,
+                "review_status": review_status,
             },
         )
         session.flush()
         attempt_work.commit()
-    except HTTPException:
-        attempt_work.rollback()
-        raise
     except Exception as exc:
         attempt_work.rollback()
         candidate_code = str(exc)
@@ -520,6 +784,8 @@ async def process_job(session: Session, context: RequestContext, job: Job) -> Jo
         attempt.completed_at = get_datetime_utc()
         job.state = "failed"
         job.error_code = error_code
+        job.locked_by = None
+        job.locked_until = None
         job.updated_at = get_datetime_utc()
         session.add(attempt)
         session.add(job)
@@ -532,4 +798,5 @@ async def process_job(session: Session, context: RequestContext, job: Job) -> Jo
             metadata={"error_code": error_code},
         )
     session.flush()
+    session.commit()
     return job

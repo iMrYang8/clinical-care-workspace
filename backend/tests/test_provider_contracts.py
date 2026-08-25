@@ -10,7 +10,7 @@ from app.services.providers.base import (
     validate_evidence,
 )
 from app.services.providers.deterministic import DeterministicClinicalNoteProvider
-from app.services.providers.openai_text import OpenAITextProvider
+from app.services.providers.openai_text import OpenAITextProvider, _response_text
 
 pytestmark = pytest.mark.unit
 
@@ -71,7 +71,7 @@ def test_high_risk_without_review_model_is_explicitly_review_required() -> None:
     assert "HIGH_RISK_REVIEW_MODEL_UNAVAILABLE" in draft.warnings
 
 
-def test_openai_boundary_uses_only_configured_model_ids_and_review_route() -> None:
+def test_openai_boundary_runs_primary_then_configured_review_model() -> None:
     calls: list[tuple[str, str]] = []
 
     async def transport(model: str, text: str, _interaction_type: str) -> dict:
@@ -89,9 +89,35 @@ def test_openai_boundary_uses_only_configured_model_ids_and_review_route() -> No
         review_model="configured-review-id",
         transport=transport,
     )
-    draft = asyncio.run(
+    primary = asyncio.run(
         provider.extract("[KNOWN_NAME_1] allergy", _context(high_risk=True))
     )
+    review = asyncio.run(
+        provider.review("[KNOWN_NAME_1] allergy", _context(high_risk=True), primary)
+    )
 
-    assert calls == [("configured-review-id", "[KNOWN_NAME_1] allergy")]
-    assert draft.model == "configured-review-id"
+    assert calls[0] == ("configured-extract-id", "[KNOWN_NAME_1] allergy")
+    assert calls[1][0] == "configured-review-id"
+    assert "[KNOWN_NAME_1] allergy" in calls[1][1]
+    assert primary.model == "configured-extract-id"
+    assert review.model == "configured-review-id"
+
+
+def test_openai_responses_envelope_text_is_parsed_without_sdk_shape_assumptions() -> (
+    None
+):
+    assert (
+        _response_text(
+            {
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": '{"facts": []}'}],
+                    }
+                ]
+            }
+        )
+        == '{"facts": []}'
+    )
+    with pytest.raises(ValueError, match="PROVIDER_INVALID_RESPONSE"):
+        _response_text({"output": [{"content": [{"type": "refusal"}]}]})

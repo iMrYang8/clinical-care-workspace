@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     OPENAI_EXTRACT_MODEL: str | None = None
     OPENAI_REVIEW_MODEL: str | None = None
+    AI_JOB_LEASE_SECONDS: int = 300
     PRESIDIO_REQUIRED: bool = True
     PRESIDIO_NLP_MODEL: str = "en_core_web_sm"
     IMPORTANCE_LEARNING_ENABLED: bool = True

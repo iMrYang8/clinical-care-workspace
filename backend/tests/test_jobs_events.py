@@ -1,12 +1,32 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from threading import Barrier
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.models import AIRun, DomainEvent, JobAttempt, RedactionRun
-from app.services.ai_jobs import _map_facts_to_source, canonical_request_hash
+from app.models import (
+    AIRun,
+    ClinicMembership,
+    DomainEvent,
+    EntryVersion,
+    Job,
+    JobAttempt,
+    RedactionRun,
+    User,
+    get_datetime_utc,
+)
+from app.seed import demo_id
+from app.services.ai_jobs import (
+    _map_facts_to_source,
+    canonical_request_hash,
+    claim_job,
+    worker_context_for_job,
+)
 from app.services.providers.base import (
     ClinicalFact,
     ClinicalNoteDraft,
@@ -209,3 +229,198 @@ def test_failed_job_retry_persists_each_attempt(
             )
         ).all()
         assert [attempt.status for attempt in attempts] == ["failed", "completed"]
+
+
+def test_server_trusted_name_and_risk_force_redaction_and_second_review(
+    client: TestClient, auth_headers, monkeypatch
+) -> None:
+    import app.services.ai_jobs as ai_jobs
+    from app.core.config import settings
+
+    outbound: list[tuple[str, str]] = []
+
+    class ReviewSpy:
+        review_model = "configured-review-model"
+
+        @staticmethod
+        def _draft(redacted_text: str, model: str) -> ClinicalNoteDraft:
+            quote = "critical allergy"
+            start = redacted_text.index(quote)
+            return ClinicalNoteDraft(
+                summary="redacted synthetic summary",
+                facts=[
+                    ClinicalFact(
+                        fact_type="allergy",
+                        value=quote,
+                        evidence_start=start,
+                        evidence_end=start + len(quote),
+                        evidence_quote=quote,
+                        feature_keys=["entity:allergy"],
+                        critical=True,
+                    )
+                ],
+                provider="synthetic-remote",
+                model=model,
+            )
+
+        async def extract(
+            self, redacted_text: str, context: ExtractionContext
+        ) -> ClinicalNoteDraft:
+            outbound.append(("primary", redacted_text))
+            return self._draft(redacted_text, "configured-primary-model")
+
+        async def review(
+            self,
+            redacted_text: str,
+            context: ExtractionContext,
+            primary: ClinicalNoteDraft,
+        ) -> ClinicalNoteDraft:
+            outbound.append(("review", redacted_text))
+            return self._draft(redacted_text, self.review_model)
+
+    monkeypatch.setattr(settings, "PRESIDIO_REQUIRED", False)
+    monkeypatch.setattr(ai_jobs, "_configured_remote_provider", lambda: ReviewSpy())
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Trusted redaction source",
+            "content": (
+                "Alex Synthetic S1234567D MRN:AB-12345 91234567 has critical allergy."
+            ),
+        },
+    ).json()
+    response = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "server-risk-review"},
+        json={
+            "source_entry_version_id": source["version_id"],
+            # The untrusted legacy risk fields are ignored by the request model.
+            # No client-provided name dictionary is sent.
+            "high_risk": False,
+            "conflict_review": False,
+        },
+    )
+    assert response.status_code == 200, response.text
+    run = response.json()["ai_run"]
+    assert response.json()["state"] == "completed"
+    assert run["risk_tier"] == "high"
+    assert run["model"] == "configured-primary-model"
+    assert run["review_model"] == "configured-review-model"
+    assert run["review_status"] == "consistent"
+    assert [stage for stage, _ in outbound] == ["primary", "review"]
+    for _, egress in outbound:
+        assert "Alex Synthetic" not in egress
+        assert "S1234567D" not in egress
+        assert "AB-12345" not in egress
+        assert "91234567" not in egress
+
+    with Session(engine) as session:
+        job = session.get(Job, uuid.UUID(response.json()["id"]))
+        ai_run = session.exec(select(AIRun).where(AIRun.job_id == job.id)).one()
+        attempt = session.exec(
+            select(JobAttempt).where(JobAttempt.job_id == job.id)
+        ).one()
+        output_version = session.get(EntryVersion, ai_run.output_entry_version_id)
+        worker_membership = session.get(ClinicMembership, demo_id("membership-worker"))
+        clinician = session.get(User, demo_id("user-clinician"))
+        worker = session.get(User, demo_id("user-worker"))
+        assert job is not None
+        assert output_version is not None
+        assert worker_membership is not None
+        assert clinician is not None and worker is not None
+        assert job.created_by_id == clinician.id
+        assert attempt.worker_membership_id == worker_membership.id
+        assert ai_run.executed_by_worker_membership_id == worker_membership.id
+        assert output_version.author_id == worker.id
+        assert b"critical allergy" not in ai_run.primary_output_ciphertext
+        assert ai_run.review_output_ciphertext is not None
+        assert b"critical allergy" not in ai_run.review_output_ciphertext
+
+
+def test_concurrent_idempotency_and_skip_locked_worker_lease(
+    client: TestClient, auth_headers, monkeypatch
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "openai")
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Queued remote source",
+            "content": "Synthetic follow up note.",
+        },
+    ).json()
+    barrier = Barrier(2)
+
+    def submit() -> tuple[int, dict]:
+        barrier.wait()
+        response = client.post(
+            f"/api/v1/patients/{patient_id}/ai/ingest",
+            headers=headers | {"Idempotency-Key": "concurrent-job-key"},
+            json={"source_entry_version_id": source["version_id"]},
+        )
+        return response.status_code, response.json()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            future.result() for future in [pool.submit(submit), pool.submit(submit)]
+        ]
+    assert [status for status, _ in results] == [200, 200]
+    assert len({body["id"] for _, body in results}) == 1
+    assert all(body["state"] == "pending" for _, body in results)
+    assert all(body["attempt_count"] == 0 for _, body in results)
+
+    job_id = uuid.UUID(results[0][1]["id"])
+    with Session(engine) as first, Session(engine) as second:
+        first_job = first.get(Job, job_id)
+        second_job = second.get(Job, job_id)
+        assert first_job is not None and second_job is not None
+        first_context = worker_context_for_job(first, first_job)
+        second_context = worker_context_for_job(second, second_job)
+        assert first_context is not None and second_context is not None
+        claimed = claim_job(first, first_context, job_id)
+        assert claimed.state == "running"
+        assert claimed.locked_by == str(first_context.membership.id)
+        with pytest.raises(HTTPException) as busy:
+            claim_job(second, second_context, job_id)
+        assert busy.value.detail["code"] == "JOB_NOT_CLAIMABLE"
+        first.rollback()
+
+        claimed_after_release = claim_job(second, second_context, job_id)
+        assert claimed_after_release.id == job_id
+        claimed_after_release.attempt_count = 1
+        claimed_after_release.locked_until = get_datetime_utc() - timedelta(seconds=1)
+        second.add(claimed_after_release)
+        second.add(
+            JobAttempt(
+                clinic_id=claimed_after_release.clinic_id,
+                job_id=job_id,
+                worker_membership_id=second_context.membership.id,
+                attempt_no=1,
+            )
+        )
+        second.commit()
+
+    with Session(engine) as recovery:
+        recoverable = recovery.get(Job, job_id)
+        assert recoverable is not None
+        recovery_context = worker_context_for_job(recovery, recoverable)
+        assert recovery_context is not None
+        reclaimed = claim_job(recovery, recovery_context, job_id)
+        assert reclaimed.state == "running"
+        recovery.commit()
+        expired = recovery.exec(
+            select(JobAttempt).where(JobAttempt.job_id == job_id)
+        ).one()
+        assert expired.status == "failed"
+        assert expired.error_code == "WORKER_LEASE_EXPIRED"

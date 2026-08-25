@@ -80,12 +80,28 @@ POST /api/v1/decay/entries/{version_id}/rehydrate
 `AI_PROVIDER=deterministic` is the default offline fixture. OpenAI text egress
 requires all of `AI_PROVIDER=openai`, `REMOTE_TEXT_EGRESS_ENABLED=true`,
 `OPENAI_API_KEY`, and `OPENAI_EXTRACT_MODEL`. Model IDs are read only from the
-environment. Before any remote call, Nightingale performs NFC normalization,
-known-name and Singapore identifier/contact redaction, embedded Presidio
-analysis, and a residual scan. Missing Presidio NLP models, analyzer errors, or
-residual findings block remote egress and produce explicit
-`fallback/needs_review` state. Application code never downloads a language
-model.
+environment. Configured remote jobs are queued for a leased worker rather than
+executed in the submitting HTTP request; the offline deterministic fixture may
+complete synchronously for the demo. Before any remote call, Nightingale
+performs NFC normalization, server-decrypted patient-name and Singapore
+identifier/contact redaction, embedded Presidio analysis, and a residual scan.
+Missing Presidio NLP models, analyzer errors, or residual findings block remote
+egress and produce explicit `fallback/needs_review` state. Application code
+never downloads a language model.
+
+Client-supplied name dictionaries and risk flags are not part of the ingest
+contract. Risk is derived from server conflict/highlight state, deterministic
+critical-text rules, and extracted critical facts. A high-risk run first uses
+`OPENAI_EXTRACT_MODEL`, then independently calls `OPENAI_REVIEW_MODEL`; both
+outputs are encrypted and the persisted run records whether they were
+consistent, disagreed, unavailable, or errored. System-derived versions and
+completion events are authored by the clinic/job-bound Worker, while the Job
+retains the staff/clinician requester.
+
+The API database login is `nightingale_app`, a non-owner
+`NOSUPERUSER NOBYPASSRLS` role. The one-shot prestart/Alembic path alone receives
+the owner URL. Tenant RLS context is transaction-local and is restored from the
+already-verified server membership after a request-side commit.
 
 Importance features are bounded taxonomy keys rather than free text. Weights
 are clinic-scoped, use diminishing updates, and clamp to `[-0.20, 0.20]`.

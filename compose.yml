@@ -88,6 +88,17 @@ services:
       EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
       # The long-running API receives only the restricted, non-owner role.
       DATABASE_URL: postgresql://nightingale_app:${POSTGRES_APP_PASSWORD:?Variable not set}@db:5432/app
+      AI_PROVIDER: ${AI_PROVIDER:-deterministic}
+      REMOTE_TEXT_EGRESS_ENABLED: ${REMOTE_TEXT_EGRESS_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EXTRACT_MODEL: ${OPENAI_EXTRACT_MODEL:-}
+      OPENAI_REVIEW_MODEL: ${OPENAI_REVIEW_MODEL:-}
+      AI_JOB_LEASE_SECONDS: ${AI_JOB_LEASE_SECONDS:-300}
+      PRESIDIO_REQUIRED: ${PRESIDIO_REQUIRED:-true}
+      PRESIDIO_NLP_MODEL: ${PRESIDIO_NLP_MODEL:-en_core_web_sm}
+      IMPORTANCE_LEARNING_ENABLED: ${IMPORTANCE_LEARNING_ENABLED:-true}
+      DATA_DECAY_ENABLED: ${DATA_DECAY_ENABLED:-true}
+      DATA_DECAY_DRY_RUN: ${DATA_DECAY_DRY_RUN:-true}
       SENTRY_DSN: ${SENTRY_DSN:-}
 
     healthcheck:

@@ -42,6 +42,17 @@ class ClinicalNoteProvider(Protocol):
     ) -> ClinicalNoteDraft: ...
 
 
+class ClinicalReviewProvider(ClinicalNoteProvider, Protocol):
+    review_model: str | None
+
+    async def review(
+        self,
+        redacted_text: str,
+        context: ExtractionContext,
+        primary: ClinicalNoteDraft,
+    ) -> ClinicalNoteDraft: ...
+
+
 def validate_evidence(draft: ClinicalNoteDraft, source_text: str) -> ClinicalNoteDraft:
     """Discard unsupported facts instead of guessing a source anchor."""
 
