@@ -78,13 +78,15 @@ export function TimelineEntryCard({
   onOpenComments,
   onOpenVersions,
 }: TimelineEntryCardProps) {
-  const [editing, setEditing] = useState(false)
+  const [editingEntry, setEditingEntry] =
+    useState<ClinicalTimelineEntry | null>(null)
   const cardRef = useRef<HTMLElement>(null)
   const canEdit =
     entry.origin === "human" &&
     ((currentUser.role === "staff" && entry.section === "staff") ||
       (currentUser.role === "clinician" && entry.section === "clinician"))
   const focused = sourceFocus?.entryId === entry.id
+  const editing = editingEntry !== null
 
   useEffect(() => {
     if (!focused) return
@@ -138,7 +140,7 @@ export function TimelineEntryCard({
             <div className="flex flex-wrap gap-1">
               {canEdit && !editing && (
                 <Button
-                  onClick={() => setEditing(true)}
+                  onClick={() => setEditingEntry(entry)}
                   size="sm"
                   variant="outline"
                 >
@@ -163,21 +165,25 @@ export function TimelineEntryCard({
           </div>
         </CardHeader>
         <CardContent className="p-5">
-          {editing ? (
+          {editingEntry ? (
             <EntryEditor
+              currentVersionId={entry.version_id}
               initialDraft={{
-                title: entry.title,
-                content: entry.content,
-                patient_facing: entry.patient_facing,
+                title: editingEntry.title,
+                content: editingEntry.content,
+                patient_facing: editingEntry.patient_facing,
               }}
-              onCancel={() => setEditing(false)}
-              onCreateComment={(body) => onCreateComment(entry.id, body)}
+              onCancel={() => setEditingEntry(null)}
+              onCreateComment={(body) => onCreateComment(editingEntry.id, body)}
               onReviewVersions={() => onOpenVersions(entry)}
-              onSave={async (draft) => {
-                await onSave(entry, draft)
-                setEditing(false)
+              onSave={async (draft, baseVersionId) => {
+                await onSave(
+                  { ...editingEntry, version_id: baseVersionId },
+                  draft,
+                )
+                setEditingEntry(null)
               }}
-              versionId={entry.version_id}
+              versionId={editingEntry.version_id}
             />
           ) : (
             <p className="whitespace-pre-wrap text-[0.95rem] leading-7 text-slate-700">

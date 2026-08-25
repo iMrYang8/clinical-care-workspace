@@ -51,5 +51,60 @@ describe("EntryEditor optimistic concurrency", () => {
     expect(screen.getByLabelText("Entry title")).toHaveValue(
       "My unsaved clinical draft",
     )
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "My unsaved clinical draft" }),
+      "version-1",
+    )
+  })
+
+  it("freezes the base ETag when a refreshed version arrives", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const props = {
+      initialDraft: {
+        title: "Initial title",
+        content: "Original care note",
+        patient_facing: false,
+      },
+      onCancel: vi.fn(),
+      onSave,
+    }
+    const view = render(
+      <EntryEditor
+        {...props}
+        currentVersionId="version-1"
+        versionId="version-1"
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText("Entry title"), {
+      target: { value: "My draft based on version one" },
+    })
+    view.rerender(
+      <EntryEditor
+        {...props}
+        currentVersionId="version-2"
+        initialDraft={{
+          ...props.initialDraft,
+          title: "Another session's title",
+        }}
+        versionId="version-2"
+      />,
+    )
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "newer server version arrived",
+    )
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "My draft based on version one",
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save with If-Match" }))
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "My draft based on version one" }),
+        "version-1",
+      ),
+    )
   })
 })

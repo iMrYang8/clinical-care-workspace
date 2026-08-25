@@ -1,11 +1,7 @@
 import { CommentExtension } from "@sereneinserenade/tiptap-comment-extension"
 import type { Editor } from "@tiptap/core"
 
-import {
-  type CanonicalAnchor,
-  canonicalizeText,
-  codePointLength,
-} from "./anchors"
+import { type CanonicalAnchor, codePointLength } from "./anchors"
 
 export type ActiveCommentHandler = (commentId: string | null) => void
 
@@ -27,15 +23,11 @@ export function selectionToCanonicalAnchor(editor: Editor): CanonicalAnchor {
   }
 
   const documentEnd = editor.state.doc.content.size
-  const content = canonicalizeText(
-    editor.state.doc.textBetween(0, documentEnd, "\n", "\n"),
-  )
-  const before = canonicalizeText(
-    editor.state.doc.textBetween(0, from, "\n", "\n"),
-  )
-  const selected = canonicalizeText(
-    editor.state.doc.textBetween(from, to, "\n", "\n"),
-  )
+  // Preserve the immutable version byte-for-text representation. The backend
+  // validates Python code-point slices without NFC or newline normalization.
+  const content = editor.state.doc.textBetween(0, documentEnd, "\n", "\n")
+  const before = editor.state.doc.textBetween(0, from, "\n", "\n")
+  const selected = editor.state.doc.textBetween(from, to, "\n", "\n")
   const startOffset = codePointLength(before)
   const contentPoints = Array.from(content)
   const exactQuote = selected

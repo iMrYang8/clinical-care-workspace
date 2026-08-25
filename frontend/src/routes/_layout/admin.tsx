@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { FileLock2, LoaderCircle, ShieldCheck, Stethoscope } from "lucide-react"
 import { useEffect } from "react"
-
+import { SessionBoundaryError } from "@/components/Nightingale/SessionBoundaryError"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import useAuth, { roleHome } from "@/hooks/useAuth"
@@ -13,7 +13,7 @@ export const Route = createFileRoute("/_layout/admin")({
 
 function AdminBoundary() {
   const navigate = useNavigate()
-  const { user, meQuery } = useAuth()
+  const { user, meQuery, logout } = useAuth()
   const allowed = user?.role === "admin" || user?.role === "worker"
 
   useEffect(() => {
@@ -21,6 +21,9 @@ function AdminBoundary() {
       void navigate({ to: roleHome(user.role), replace: true })
   }, [allowed, navigate, user])
 
+  if (meQuery.isError) {
+    return <SessionBoundaryError error={meQuery.error} onClear={logout} />
+  }
   if (meQuery.isLoading || !user || !allowed) {
     return (
       <LoaderCircle className="mx-auto mt-24 animate-spin text-slate-600" />

@@ -41,4 +41,32 @@ describe("Serene comment extension adapter", () => {
     expect(markCommentSelection(editor, "comment-1")).toBe(true)
     expect(editor.getHTML()).toContain('data-comment-id="comment-1"')
   })
+
+  it("preserves the backend source representation for CRLF and NFD text", () => {
+    editor = new Editor({
+      extensions: [StarterKit, createCommentExtension()],
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Plan\r" }],
+          },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "cafe\u0301 review" }],
+          },
+        ],
+      },
+    })
+    editor.commands.setTextSelection({ from: 8, to: 13 })
+
+    expect(selectionToCanonicalAnchor(editor)).toEqual({
+      exact_quote: "cafe\u0301",
+      start_offset: 6,
+      end_offset: 11,
+      prefix: "Plan\r\n",
+      suffix: " review",
+    })
+  })
 })

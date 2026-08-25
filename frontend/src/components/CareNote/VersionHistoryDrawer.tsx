@@ -22,6 +22,7 @@ import { apiErrorMessage, clinicalApi } from "@/features/api"
 type VersionHistoryDrawerProps = {
   entryId: string
   currentVersionId: string
+  canRevert: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
   onReverted: () => void | Promise<void>
@@ -30,6 +31,7 @@ type VersionHistoryDrawerProps = {
 export function VersionHistoryDrawer({
   entryId,
   currentVersionId,
+  canRevert,
   open,
   onOpenChange,
   onReverted,
@@ -112,7 +114,7 @@ export function VersionHistoryDrawer({
                         SHA-256 {version.content_sha256.slice(0, 10)}…
                       </p>
                     </div>
-                    {version.id !== currentVersionId && (
+                    {canRevert && version.id !== currentVersionId && (
                       <Button
                         disabled={revertMutation.isPending}
                         onClick={() => revertMutation.mutate(version.id)}

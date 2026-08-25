@@ -352,7 +352,7 @@ export async function streamDomainEvents(
     {
       headers: {
         Authorization: `Bearer ${token}`,
-        ...(options.lastEventId
+        ...(options.lastEventId !== undefined
           ? { "Last-Event-ID": String(options.lastEventId) }
           : {}),
       },

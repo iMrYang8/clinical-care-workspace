@@ -26,6 +26,7 @@ import {
   type ClinicalTimelineEntry,
   clinicalApi,
 } from "@/features/api"
+import { useDomainEvents } from "@/hooks/useDomainEvents"
 import { CommentsRail } from "./CommentsRail"
 import { EntryComposer } from "./EntryComposer"
 import { GlanceTopCard } from "./GlanceTopCard"
@@ -44,11 +45,36 @@ type EvidenceView = {
   provenance: ProvenanceResolved
 }
 
+function highlightedEvidence(evidence: EvidenceView) {
+  const points = Array.from(evidence.entryContent)
+  const {
+    start_offset: start,
+    end_offset: end,
+    exact_quote: quote,
+  } = evidence.provenance
+  if (points.slice(start, end).join("") !== quote) return evidence.entryContent
+  return (
+    <>
+      {points.slice(0, start).join("")}
+      <mark
+        className="rounded bg-amber-200 px-0.5 text-slate-950"
+        data-source-span
+      >
+        {points.slice(start, end).join("")}
+      </mark>
+      {points.slice(end).join("")}
+    </>
+  )
+}
+
 export function ClinicalCareNote({
   patientId,
   currentUser,
 }: ClinicalCareNoteProps) {
   const queryClient = useQueryClient()
+  useDomainEvents(
+    currentUser.role === "staff" || currentUser.role === "clinician",
+  )
   const [selectedEntry, setSelectedEntry] =
     useState<ClinicalTimelineEntry | null>(null)
   const [versionEntry, setVersionEntry] =
@@ -314,7 +340,9 @@ export function ClinicalCareNote({
         <aside className="space-y-5 lg:sticky lg:top-24">
           <GlanceTopCard
             busyHighlightId={
-              highlightMutation.variables?.card.highlight_id ?? null
+              highlightMutation.isPending
+                ? (highlightMutation.variables?.card.highlight_id ?? null)
+                : null
             }
             canReview
             cards={glanceQuery.data?.cards ?? []}
@@ -347,10 +375,17 @@ export function ClinicalCareNote({
 
       {versionEntry && (
         <VersionHistoryDrawer
+          canRevert={
+            versionEntry.origin === "human" &&
+            versionEntry.section === currentUser.role
+          }
           currentVersionId={versionEntry.version_id}
           entryId={versionEntry.id}
           onOpenChange={(open) => !open && setVersionEntry(null)}
-          onReverted={refreshPatient}
+          onReverted={async () => {
+            await refreshPatient()
+            setVersionEntry(null)
+          }}
           open
         />
       )}
@@ -375,7 +410,7 @@ export function ClinicalCareNote({
               <div className="rounded-xl border bg-slate-50 p-4">
                 <p className="font-semibold">{evidence.entryTitle}</p>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                  {evidence.entryContent}
+                  {highlightedEvidence(evidence)}
                 </p>
               </div>
               <blockquote className="rounded-xl border-l-4 border-amber-400 bg-amber-50 p-4 text-amber-950">

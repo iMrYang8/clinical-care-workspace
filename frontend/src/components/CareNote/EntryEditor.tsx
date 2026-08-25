@@ -1,15 +1,7 @@
 import { EditorContent, useEditor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
-import {
-  Bold,
-  Italic,
-  Link2,
-  LoaderCircle,
-  MessageSquarePlus,
-  Save,
-  X,
-} from "lucide-react"
-import { useEffect, useState } from "react"
+import { Link2, LoaderCircle, MessageSquarePlus, Save, X } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 
 import type { CommentCreate, CommentPublic } from "@/client"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -38,7 +30,8 @@ export type EntryDraft = {
 type EntryEditorProps = {
   initialDraft: EntryDraft
   versionId: string
-  onSave: (draft: EntryDraft) => Promise<void>
+  currentVersionId?: string
+  onSave: (draft: EntryDraft, baseVersionId: string) => Promise<void>
   onCancel: () => void
   onCreateComment?: (body: CommentCreate) => Promise<CommentPublic>
   onReviewVersions?: () => void
@@ -63,11 +56,13 @@ function textDocument(content: string) {
 export function EntryEditor({
   initialDraft,
   versionId,
+  currentVersionId = versionId,
   onSave,
   onCancel,
   onCreateComment,
   onReviewVersions,
 }: EntryEditorProps) {
+  const baseVersionId = useRef(versionId).current
   const [draft, setDraft] = useState(initialDraft)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -80,7 +75,25 @@ export function EntryEditor({
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
 
   const editor = useEditor({
-    extensions: [StarterKit, createCommentExtension(setActiveCommentId)],
+    // Content is the backend's canonical plaintext projection. Disable visual
+    // formatting that cannot be round-tripped until rich JSON has a separate
+    // persisted field; the comment mark remains an interaction-only adapter.
+    extensions: [
+      StarterKit.configure({
+        blockquote: false,
+        bold: false,
+        bulletList: false,
+        code: false,
+        codeBlock: false,
+        heading: false,
+        horizontalRule: false,
+        italic: false,
+        listItem: false,
+        orderedList: false,
+        strike: false,
+      }),
+      createCommentExtension(setActiveCommentId),
+    ],
     content: textDocument(initialDraft.content),
     editorProps: {
       attributes: {
@@ -99,11 +112,21 @@ export function EntryEditor({
 
   useEffect(() => () => editor?.destroy(), [editor])
 
+  useEffect(() => {
+    if (currentVersionId === baseVersionId) return
+    setConflict({
+      code: "VERSION_CONFLICT",
+      message:
+        "A newer server version arrived while this draft was open. The original If-Match value remains frozen.",
+      current_version_id: currentVersionId,
+    })
+  }, [baseVersionId, currentVersionId])
+
   const save = async () => {
     setError(null)
     setIsSaving(true)
     try {
-      await onSave(draft)
+      await onSave(draft, baseVersionId)
     } catch (caught) {
       const nextConflict = versionConflictFrom(caught)
       if (nextConflict) setConflict(nextConflict)
@@ -115,6 +138,12 @@ export function EntryEditor({
 
   const captureComment = () => {
     if (!editor) return
+    if (draft.content !== initialDraft.content) {
+      setError(
+        "Save this text as a new immutable version before anchoring a comment.",
+      )
+      return
+    }
     try {
       const { from, to } = editor.state.selection
       setCaptured({ anchor: selectionToCanonicalAnchor(editor), from, to })
@@ -125,12 +154,19 @@ export function EntryEditor({
   }
 
   const submitComment = async () => {
-    if (!editor || !captured || !onCreateComment || !commentBody.trim()) return
+    if (
+      !editor ||
+      !captured ||
+      !onCreateComment ||
+      !commentBody.trim() ||
+      draft.content !== initialDraft.content
+    )
+      return
     setCommentPending(true)
     setError(null)
     try {
       const comment = await onCreateComment({
-        entry_version_id: versionId,
+        entry_version_id: baseVersionId,
         ...captured.anchor,
         body: commentBody.trim(),
         mentioned_user_ids: mentionUserId.trim() ? [mentionUserId.trim()] : [],
@@ -152,9 +188,9 @@ export function EntryEditor({
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
-        <Label htmlFor={`entry-title-${versionId}`}>Entry title</Label>
+        <Label htmlFor={`entry-title-${baseVersionId}`}>Entry title</Label>
         <Input
-          id={`entry-title-${versionId}`}
+          id={`entry-title-${baseVersionId}`}
           onChange={(event) =>
             setDraft((current) => ({ ...current, title: event.target.value }))
           }
@@ -163,30 +199,14 @@ export function EntryEditor({
       </div>
 
       <div>
-        <div className="flex flex-wrap items-center gap-1 rounded-t-xl border border-b-0 bg-slate-50 p-2">
-          <Button
-            aria-label="Bold"
-            className="min-h-11 min-w-11"
-            onClick={() => editor?.chain().focus().toggleBold().run()}
-            size="icon"
-            type="button"
-            variant={editor?.isActive("bold") ? "secondary" : "ghost"}
-          >
-            <Bold />
-          </Button>
-          <Button
-            aria-label="Italic"
-            className="min-h-11 min-w-11"
-            onClick={() => editor?.chain().focus().toggleItalic().run()}
-            size="icon"
-            type="button"
-            variant={editor?.isActive("italic") ? "secondary" : "ghost"}
-          >
-            <Italic />
-          </Button>
+        <div className="flex min-h-14 flex-wrap items-center gap-2 rounded-t-xl border border-b-0 bg-slate-50 p-2">
+          <span className="px-2 text-xs text-slate-500">
+            Canonical clinical text · source-safe offsets
+          </span>
           {onCreateComment && (
             <Button
               className="ml-auto min-h-11"
+              disabled={draft.content !== initialDraft.content}
               onClick={captureComment}
               type="button"
               variant="outline"
@@ -226,10 +246,10 @@ export function EntryEditor({
             </Button>
           </div>
           <div className="grid gap-2">
-            <Label htmlFor={`comment-${versionId}`}>Comment</Label>
+            <Label htmlFor={`comment-${baseVersionId}`}>Comment</Label>
             <textarea
               className="min-h-24 rounded-lg border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              id={`comment-${versionId}`}
+              id={`comment-${baseVersionId}`}
               onChange={(event) => setCommentBody(event.target.value)}
               placeholder="Add clinical context or a question…"
               value={commentBody}
@@ -237,22 +257,22 @@ export function EntryEditor({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor={`mention-${versionId}`}>
+              <Label htmlFor={`mention-${baseVersionId}`}>
                 Mention user ID (optional)
               </Label>
               <Input
-                id={`mention-${versionId}`}
+                id={`mention-${baseVersionId}`}
                 onChange={(event) => setMentionUserId(event.target.value)}
                 placeholder="Validated by clinic membership"
                 value={mentionUserId}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor={`assign-${versionId}`}>
+              <Label htmlFor={`assign-${baseVersionId}`}>
                 Assign membership ID (optional)
               </Label>
               <Input
-                id={`assign-${versionId}`}
+                id={`assign-${baseVersionId}`}
                 onChange={(event) =>
                   setAssignmentMembershipId(event.target.value)
                 }

@@ -8,10 +8,6 @@ export type CanonicalAnchor = {
 
 const DEFAULT_CONTEXT_CODE_POINTS = 32
 
-export function canonicalizeText(value: string): string {
-  return value.replace(/\r\n?/g, "\n").normalize("NFC")
-}
-
 export function codePointLength(value: string): number {
   return Array.from(value).length
 }
@@ -32,9 +28,9 @@ export function createCanonicalAnchor(
     throw new RangeError("Selection is outside the canonical care-note text")
   }
 
-  const before = canonicalizeText(rawContent.slice(0, rawStartUtf16))
-  const quote = canonicalizeText(rawContent.slice(rawStartUtf16, rawEndUtf16))
-  const after = canonicalizeText(rawContent.slice(rawEndUtf16))
+  const before = rawContent.slice(0, rawStartUtf16)
+  const quote = rawContent.slice(rawStartUtf16, rawEndUtf16)
+  const after = rawContent.slice(rawEndUtf16)
   const beforePoints = Array.from(before)
   const quotePoints = Array.from(quote)
 
@@ -52,8 +48,8 @@ export function locateExactQuote(
   rawQuote: string,
   occurrence = 0,
 ): CanonicalAnchor {
-  const content = canonicalizeText(rawContent)
-  const quote = canonicalizeText(rawQuote)
+  const content = rawContent
+  const quote = rawQuote
   if (!quote || occurrence < 0 || !Number.isInteger(occurrence)) {
     throw new RangeError("A non-empty quote and valid occurrence are required")
   }

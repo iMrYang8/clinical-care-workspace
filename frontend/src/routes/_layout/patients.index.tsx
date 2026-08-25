@@ -7,7 +7,7 @@ import {
   UsersRound,
 } from "lucide-react"
 import { useEffect } from "react"
-
+import { SessionBoundaryError } from "@/components/Nightingale/SessionBoundaryError"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -21,7 +21,7 @@ export const Route = createFileRoute("/_layout/patients/")({
 
 function PatientsIndex() {
   const navigate = useNavigate()
-  const { user, meQuery } = useAuth()
+  const { user, meQuery, logout } = useAuth()
   const allowed = user?.role === "staff" || user?.role === "clinician"
   const patientsQuery = useQuery({
     queryKey: ["patients"],
@@ -34,6 +34,9 @@ function PatientsIndex() {
       void navigate({ to: roleHome(user.role), replace: true })
   }, [allowed, navigate, user])
 
+  if (meQuery.isError) {
+    return <SessionBoundaryError error={meQuery.error} onClear={logout} />
+  }
   if (meQuery.isLoading || !user || !allowed) {
     return <LoaderCircle className="mx-auto mt-24 animate-spin text-teal-700" />
   }
