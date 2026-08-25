@@ -140,6 +140,11 @@ class CookieCsrfMiddleware(BaseHTTPMiddleware):
                 referer = request.headers.get("referer")
                 supplied = _origin(referer) if referer else None
             allowed = {_origin(settings.FRONTEND_HOST)}
+            allowed.update(
+                _origin(value.strip())
+                for value in settings.BROWSER_TRUSTED_ORIGINS.split(",")
+                if value.strip()
+            )
             if supplied is None or _origin(supplied) not in allowed:
                 return JSONResponse(
                     status_code=403, content={"detail": "CSRF origin rejected"}

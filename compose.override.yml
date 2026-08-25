@@ -58,6 +58,9 @@ services:
       # Production compose leaves ENABLE_DEMO_AUTH unset/false.
       ENABLE_DEMO_AUTH: "true"
       FRONTEND_HOST: https://${DOMAIN:-localhost}
+      BROWSER_TRUSTED_ORIGINS: https://${DOMAIN:-localhost},https://proxy
+      # Synthetic demo only; production base remains fail-safe dry-run=true.
+      DATA_DECAY_DRY_RUN: "false"
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"

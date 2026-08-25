@@ -118,8 +118,38 @@ def _seed_demo_domain(session: Session) -> None:
 
     clinic_id = demo_id("clinic-primary")
     patient_id = demo_id("patient-primary")
+    decay_patient_id = demo_id("patient-decay")
     staff_id = demo_id("user-staff")
     clinician_id = demo_id("user-clinician")
+
+    if session.get(Patient, decay_patient_id) is None:
+        session.add(
+            Patient(
+                id=decay_patient_id,
+                clinic_id=clinic_id,
+                display_name_ciphertext=field_codec.encrypt_text(
+                    clinic_id,
+                    "patient.display_name",
+                    decay_patient_id,
+                    "Jordan Archive Synthetic",
+                ),
+                external_ref_hash=hashlib.sha256(b"SYNTHETIC-DECAY-001").hexdigest(),
+                created_at=_fixture_time("2023-01-10T09:00:00"),
+            )
+        )
+        snapshot_id = demo_id("glance-decay")
+        session.add(
+            PatientGlanceSnapshot(
+                id=snapshot_id,
+                clinic_id=clinic_id,
+                patient_id=decay_patient_id,
+                payload_ciphertext=field_codec.encrypt_json(
+                    clinic_id, "glance.payload", snapshot_id, {"cards": []}
+                ),
+                generated_at=_fixture_time("2023-01-10T09:00:00"),
+            )
+        )
+        session.flush()
 
     _seed_entry(
         session,
@@ -190,7 +220,7 @@ def _seed_demo_domain(session: Session) -> None:
         session,
         name="decay-candidate-2023",
         clinic_id=clinic_id,
-        patient_id=patient_id,
+        patient_id=decay_patient_id,
         author_id=staff_id,
         section="staff",
         origin="human",
