@@ -482,10 +482,10 @@ if [[ "$run_e2e" == true || "$run_benchmark" == true || "$run_ffmpeg" == true ]]
   export FIELD_ENCRYPTION_MASTER_KEY="$(openssl rand -base64 32 | tr -d '\n')"
   export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
   export POSTGRES_APP_PASSWORD="$(openssl rand -hex 24)"
-  export SMTP_HOST=smtp.invalid
+  export SMTP_HOST=smtp.example.com
   export SMTP_USER=""
   export SMTP_PASSWORD=""
-  export EMAILS_FROM_EMAIL=nightingale@nightingale.invalid
+  export EMAILS_FROM_EMAIL=nightingale@example.com
   export NIGHTINGALE_BACKEND_IMAGE="$verified_backend_image_id"
   export NIGHTINGALE_PRODUCTION_BIND_ADDRESS=127.0.0.1
   export NIGHTINGALE_PRODUCTION_HTTP_PORT="$production_http_port"
@@ -495,10 +495,15 @@ if [[ "$run_e2e" == true || "$run_benchmark" == true || "$run_ffmpeg" == true ]]
 
   trap 'cleanup_production || true' EXIT INT TERM
   production_created=true
-  docker compose --project-name "$production_project" \
-    -f compose.yml -f compose.deploy.yml \
-    up --no-build --detach --wait --wait-timeout 180 \
-    proxy db prestart backend ai-worker
+  if ! docker compose --project-name "$production_project" \
+      -f compose.yml -f compose.deploy.yml \
+      up --no-build --detach --wait --wait-timeout 180 \
+      proxy db prestart backend ai-worker; then
+    docker compose --project-name "$production_project" \
+      -f compose.yml -f compose.deploy.yml logs --no-color \
+      proxy prestart backend ai-worker >&2 || true
+    exit 1
+  fi
   ./scripts/assert-production-project-ownership.sh "$production_project"
   assert_production_release_topology
   cleanup_production

@@ -31,6 +31,7 @@ def test_release_gate_runs_the_same_image_in_the_production_compose_topology() -
     assert "--no-build" in script
     assert "FASTAPI_ENV=production" in script
     assert "ENABLE_DEMO_AUTH=false" in script
+    assert "EMAILS_FROM_EMAIL=nightingale@example.com" in script
     assert "Production prestart unexpectedly seeded demo data." in script
     assert "Production demo-login unexpectedly succeeded" in script
     assert '"https://${DOMAIN}:${production_https_port}' in script
