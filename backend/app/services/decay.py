@@ -30,6 +30,10 @@ WARM_DAYS = 730
 MAX_REHYDRATED_BYTES = 5_000_000
 
 
+class ArchiveExpansionError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class DecayCandidate:
     entry_version_id: uuid.UUID
@@ -72,7 +76,7 @@ def protected_reasons(
     now: datetime,
 ) -> list[str]:
     reasons: list[str] = []
-    highlight = session.exec(
+    highlights = session.exec(
         select(Highlight).where(
             Highlight.clinic_id == context.clinic_id,
             Highlight.source_entry_version_id == version.id,
@@ -83,8 +87,8 @@ def protected_reasons(
                 | col(Highlight.clinician_confirmed).is_(True)
             ),
         )
-    ).first()
-    if highlight is not None:
+    ).all()
+    for highlight in highlights:
         if highlight.critical:
             reasons.append("critical")
         if highlight.unresolved:
@@ -189,8 +193,14 @@ def _zstd_decompress(payload: bytes) -> bytes:
     with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(payload)) as reader:
         output = reader.read(MAX_REHYDRATED_BYTES + 1)
     if len(output) > MAX_REHYDRATED_BYTES:
-        raise ValueError("ARCHIVE_EXPANSION_LIMIT")
+        raise ArchiveExpansionError("ARCHIVE_EXPANSION_LIMIT")
     return output
+
+
+def _archive_namespace(blob: ArchiveBlob) -> str:
+    """Bind an archive envelope to its immutable source version and hash."""
+
+    return f"archive.payload:{blob.entry_version_id}:{blob.plaintext_sha256}"
 
 
 def decode_archive(blob: ArchiveBlob) -> tuple[str, str]:
@@ -204,9 +214,14 @@ def decode_archive(blob: ArchiveBlob) -> tuple[str, str]:
         )
     try:
         compressed = field_codec.decrypt(
-            blob.clinic_id, "archive.payload", blob.id, blob.payload_ciphertext
+            blob.clinic_id,
+            _archive_namespace(blob),
+            blob.id,
+            blob.payload_ciphertext,
         )
         payload = _zstd_decompress(compressed)
+    except ArchiveExpansionError:
+        raise HTTPException(status_code=413, detail="Archive expands beyond limit")
     except Exception:
         raise HTTPException(
             status_code=409,
@@ -215,8 +230,6 @@ def decode_archive(blob: ArchiveBlob) -> tuple[str, str]:
                 "message": "Archive authentication failed",
             },
         )
-    if len(payload) > MAX_REHYDRATED_BYTES:
-        raise HTTPException(status_code=413, detail="Archive expands beyond limit")
     if hashlib.sha256(payload).hexdigest() != blob.plaintext_sha256:
         raise HTTPException(
             status_code=409,
@@ -281,15 +294,15 @@ def archive_version(
         return existing
     compressed = _zstd_compress(plaintext)
     blob_id = uuid.uuid4()
-    encrypted = field_codec.encrypt(
-        context.clinic_id, "archive.payload", blob_id, compressed
-    )
+    plaintext_sha256 = hashlib.sha256(plaintext).hexdigest()
+    namespace = f"archive.payload:{version.id}:{plaintext_sha256}"
+    encrypted = field_codec.encrypt(context.clinic_id, namespace, blob_id, compressed)
     blob = ArchiveBlob(
         id=blob_id,
         clinic_id=context.clinic_id,
         entry_version_id=version.id,
         payload_ciphertext=encrypted,
-        plaintext_sha256=hashlib.sha256(plaintext).hexdigest(),
+        plaintext_sha256=plaintext_sha256,
         ciphertext_sha256=hashlib.sha256(encrypted).hexdigest(),
         original_size=len(plaintext),
         compressed_size=len(compressed),

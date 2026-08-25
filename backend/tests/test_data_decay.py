@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import timedelta
 
@@ -8,7 +9,9 @@ from sqlmodel import Session, select
 
 from app.api.deps import RequestContext
 from app.core.db import engine
+from app.core.field_crypto import field_codec
 from app.models import (
+    ArchiveBlob,
     ClinicMembership,
     DecayRun,
     EntryVersion,
@@ -16,7 +19,13 @@ from app.models import (
     User,
 )
 from app.seed import demo_id
-from app.services.decay import archive_version, rehydrate_version
+from app.services.decay import (
+    MAX_REHYDRATED_BYTES,
+    archive_version,
+    decode_archive,
+    list_decay_candidates,
+    rehydrate_version,
+)
 from app.services.nightingale import resolve_pointer
 
 
@@ -75,6 +84,19 @@ def test_zstd_aes_archive_rehydrate_preserves_hash_and_provenance_and_rejects_ta
         assert version.title_ciphertext is None
         assert version.content_ciphertext is None
 
+        # The AEAD associated data binds the blob to the immutable version and
+        # canonical plaintext hash, so swapping either metadata field fails.
+        original_plaintext_hash = blob.plaintext_sha256
+        blob.plaintext_sha256 = "0" * 64
+        with pytest.raises(HTTPException) as aad_error:
+            rehydrate_version(session, context, version)
+        assert aad_error.value.detail["code"] == "ARCHIVE_INTEGRITY_ERROR"
+        session.rollback()
+        version = session.get(EntryVersion, uuid.UUID(entry.json()["version_id"]))
+        blob = session.get(type(blob), blob.id)
+        assert version is not None and blob is not None
+        assert blob.plaintext_sha256 == original_plaintext_hash
+
         rehydrate_version(session, context, version)
         session.commit()
         session.refresh(version)
@@ -116,3 +138,84 @@ def test_decay_api_is_dry_run_by_default_and_admin_cannot_write(
     with Session(engine) as session:
         run = session.exec(select(DecayRun)).one()
         assert run.dry_run is True
+
+
+def test_decay_preview_reports_every_protection_reason(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    entry = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Protected historical source",
+            "content": "AB",
+        },
+    ).json()
+    for start, end, quote, flags in (
+        (0, 1, "A", {"critical": True}),
+        (1, 2, "B", {"unresolved": True}),
+    ):
+        response = client.post(
+            f"/api/v1/entries/{entry['id']}/highlights",
+            headers=headers,
+            json={
+                "entry_version_id": entry["version_id"],
+                "start_offset": start,
+                "end_offset": end,
+                "exact_quote": quote,
+                "label": "Protection fixture",
+                **flags,
+            },
+        )
+        assert response.status_code == 201, response.text
+
+    with Session(engine) as session:
+        user = session.get(User, demo_id("user-clinician"))
+        membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+        version = session.get(EntryVersion, uuid.UUID(entry["version_id"]))
+        assert user is not None and membership is not None and version is not None
+        candidates = list_decay_candidates(
+            session,
+            RequestContext(user=user, membership=membership),
+            now=version.created_at + timedelta(days=731),
+        )
+        candidate = next(
+            item for item in candidates if item.entry_version_id == version.id
+        )
+        assert {"critical", "unresolved"} <= set(candidate.protected_reasons)
+        assert candidate.eligible_for_cold is False
+
+
+@pytest.mark.unit
+def test_archive_expansion_limit_returns_413() -> None:
+    import zstandard
+
+    clinic_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+    blob_id = uuid.uuid4()
+    plaintext = b"x" * (MAX_REHYDRATED_BYTES + 1)
+    plaintext_hash = hashlib.sha256(plaintext).hexdigest()
+    compressed = zstandard.ZstdCompressor(level=9).compress(plaintext)
+    encrypted = field_codec.encrypt(
+        clinic_id,
+        f"archive.payload:{version_id}:{plaintext_hash}",
+        blob_id,
+        compressed,
+    )
+    blob = ArchiveBlob(
+        id=blob_id,
+        clinic_id=clinic_id,
+        entry_version_id=version_id,
+        payload_ciphertext=encrypted,
+        plaintext_sha256=plaintext_hash,
+        ciphertext_sha256=hashlib.sha256(encrypted).hexdigest(),
+        original_size=len(plaintext),
+        compressed_size=len(compressed),
+    )
+    with pytest.raises(HTTPException) as error:
+        decode_archive(blob)
+    assert error.value.status_code == 413

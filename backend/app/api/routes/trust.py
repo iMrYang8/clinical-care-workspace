@@ -211,16 +211,23 @@ def _transition(
                 "message": "Resolve the immutable source anchor before promotion",
             },
         )
+    changed = False
     if action == "accept":
+        changed = highlight.status != "accepted"
         highlight.status = "accepted"
     elif action == "reject":
+        changed = highlight.status != "rejected" or highlight.pinned
         highlight.status = "rejected"
         highlight.pinned = False
     elif action == "pin":
+        changed = not highlight.pinned
         highlight.pinned = True
     if action == "accept" and context.role == "clinician":
+        changed = changed or not highlight.clinician_confirmed or highlight.unresolved
         highlight.clinician_confirmed = True
         highlight.unresolved = False
+    if not changed:
+        return _highlight_public(session, context, highlight)
     session.add(highlight)
     _, affected_patients = record_feedback(
         session,
@@ -282,6 +289,11 @@ def feedback(
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> HighlightPublic:
     highlight = _get_highlight(session, context, highlight_id)
+    if highlight.status == "dismissed":
+        return _highlight_public(session, context, highlight)
+    highlight.status = "dismissed"
+    highlight.pinned = False
+    session.add(highlight)
     _, affected_patients = record_feedback(
         session,
         context,

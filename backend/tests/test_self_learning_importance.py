@@ -6,8 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from app.core.db import engine
+from app.core.db import engine, set_rls_clinic
 from app.models import ImportanceFeatureStat, ImportanceFeedbackEvent
+from app.seed import demo_id
 from app.services.importance import (
     MAX_FEATURE_WEIGHT,
     apply_weight_delta,
@@ -108,11 +109,20 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
     second_b = _create_allergy_highlight(client, clinic_b, section="staff")
     assert second_a["learned_score"] > second_b["learned_score"]
 
-    for index in range(50):
+    forged = client.post(
+        f"/api/v1/highlights/{first_a['id']}/feedback",
+        headers=clinic_a | {"Idempotency-Key": "forged-positive-signal"},
+        json={"signal": "pin"},
+    )
+    assert forged.status_code == 422
+
+    # Positive signals come only from their real state transitions; separate
+    # synthetic highlights still drive the clinic statistic to its hard clamp.
+    for index in range(5):
+        candidate = _create_allergy_highlight(client, clinic_a, section="clinician")
         response = client.post(
-            f"/api/v1/highlights/{first_a['id']}/feedback",
+            f"/api/v1/highlights/{candidate['id']}/pin",
             headers=clinic_a | {"Idempotency-Key": f"bounded-{index}"},
-            json={"signal": "pin"},
         )
         assert response.status_code == 200, response.text
 
@@ -122,8 +132,8 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
                 ImportanceFeatureStat.feature_key == "entity:allergy"
             )
         ).all()
-        assert len(stats) == 2
-        assert max(item.weight for item in stats) == MAX_FEATURE_WEIGHT
+        assert len(stats) == 1
+        assert stats[0].weight == MAX_FEATURE_WEIGHT
         events = session.exec(
             select(ImportanceFeedbackEvent).where(
                 ImportanceFeedbackEvent.highlight_id == uuid.UUID(first_a["id"]),
@@ -133,6 +143,16 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
             )
         ).all()
         assert len(events) == 1
+
+    with Session(engine) as session:
+        set_rls_clinic(session, demo_id("clinic-other"))
+        other_stats = session.exec(
+            select(ImportanceFeatureStat).where(
+                ImportanceFeatureStat.feature_key == "entity:allergy"
+            )
+        ).all()
+        assert len(other_stats) == 1
+        assert other_stats[0].weight < MAX_FEATURE_WEIGHT
 
     accepted = client.post(
         f"/api/v1/highlights/{first_a['id']}/accept", headers=clinic_a
