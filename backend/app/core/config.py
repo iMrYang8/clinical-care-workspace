@@ -43,10 +43,19 @@ class Settings(BaseSettings):
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
     DATABASE_URL: PostgresDsn
+    # Only one-shot migration/bootstrap processes receive this credential.
+    # The long-running backend receives DATABASE_URL for the restricted runtime
+    # role and leaves MIGRATION_DATABASE_URL unset.
+    MIGRATION_DATABASE_URL: PostgresDsn | None = None
+    POSTGRES_APP_PASSWORD: str | None = None
 
-    @field_validator("DATABASE_URL", mode="before")
+    @field_validator("DATABASE_URL", "MIGRATION_DATABASE_URL", mode="before")
     @classmethod
-    def _use_psycopg_driver(cls, value: str | PostgresDsn) -> str:
+    def _use_psycopg_driver(
+        cls, value: str | PostgresDsn | None
+    ) -> str | PostgresDsn | None:
+        if value is None:
+            return value
         database_url = str(value)
         for scheme in ("postgres://", "postgresql://"):
             if database_url.startswith(scheme):
@@ -95,6 +104,15 @@ class Settings(BaseSettings):
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         for host in self.DATABASE_URL.hosts():
             self._check_default_secret("DATABASE_URL password", host["password"])
+        if self.MIGRATION_DATABASE_URL is not None:
+            for host in self.MIGRATION_DATABASE_URL.hosts():
+                self._check_default_secret(
+                    "MIGRATION_DATABASE_URL password", host["password"]
+                )
+        if self.POSTGRES_APP_PASSWORD is not None:
+            self._check_default_secret(
+                "POSTGRES_APP_PASSWORD", self.POSTGRES_APP_PASSWORD
+            )
         self._check_default_secret(
             "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
         )

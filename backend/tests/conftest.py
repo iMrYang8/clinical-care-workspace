@@ -2,12 +2,31 @@ from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import create_engine, event, text
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.core.db import engine
 from app.main import app
-from app.seed import seed_demo_data
+from app.seed import demo_id, seed_demo_data
+
+# Fixture lifecycle uses the migration owner; application requests still use the
+# restricted engine imported above.  Keeping these credentials separate makes
+# RLS observable in the normal API/test path while retaining deterministic reset.
+migration_engine = create_engine(
+    str(settings.MIGRATION_DATABASE_URL or settings.DATABASE_URL)
+)
+
+
+@event.listens_for(engine, "begin")
+def _default_direct_test_session_to_primary_clinic(connection) -> None:
+    """Scope legacy direct test inspections without granting an RLS bypass."""
+
+    if connection.dialect.name == "postgresql":
+        connection.execute(
+            text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
+            {"clinic_id": str(demo_id("clinic-primary"))},
+        )
 
 
 def reset_synthetic_fixture(session: Session) -> None:
@@ -39,7 +58,7 @@ def seeded_database(request: pytest.FixtureRequest) -> Generator[None]:
         yield
         return
 
-    with Session(engine) as session:
+    with Session(migration_engine) as session:
         reset_synthetic_fixture(session)
     yield
 

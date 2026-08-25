@@ -31,6 +31,29 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Variable not set}
       - POSTGRES_DB=app
 
+  prestart:
+    image: backend:latest
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    environment:
+      PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
+      SECRET_KEY: ${SECRET_KEY:?Variable not set}
+      FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Variable not set}@db:5432/app
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?Variable not set}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["bash", "scripts/prestart.sh"]
+    restart: "no"
+
   adminer:
     image: adminer
     depends_on:
@@ -52,6 +75,8 @@ services:
       db:
         condition: service_healthy
         restart: true
+      prestart:
+        condition: service_completed_successfully
     environment:
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
@@ -61,7 +86,8 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Variable not set}@db:5432/app
+      # The long-running API receives only the restricted, non-owner role.
+      DATABASE_URL: postgresql://nightingale_app:${POSTGRES_APP_PASSWORD:?Variable not set}@db:5432/app
       SENTRY_DSN: ${SENTRY_DSN:-}
 
     healthcheck:

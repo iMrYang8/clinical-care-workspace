@@ -1,10 +1,14 @@
 import logging
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, create_engine
 from sqlmodel import Session, select
 from tenacity import after_log, before_log, retry, stop_after_attempt, wait_fixed
 
-from app.core.db import engine
+from app.core.config import settings
+
+migration_engine = create_engine(
+    str(settings.MIGRATION_DATABASE_URL or settings.DATABASE_URL)
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,7 +35,8 @@ def init(db_engine: Engine) -> None:
 
 def main() -> None:
     logger.info("Initializing service")
-    init(engine)
+    init(migration_engine)
+    migration_engine.dispose()
     logger.info("Service finished initializing")
 
 

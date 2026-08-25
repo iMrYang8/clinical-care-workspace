@@ -31,6 +31,11 @@ services:
     ports:
       - "8080:8080"
 
+  prestart:
+    environment:
+      FASTAPI_ENV: "development"
+      ENABLE_DEMO_AUTH: "true"
+
   backend:
     ports:
       - "8000:8000"
