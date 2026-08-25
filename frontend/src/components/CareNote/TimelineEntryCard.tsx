@@ -41,12 +41,20 @@ const sectionStyle: Record<string, string> = {
   system: "border-violet-200 bg-violet-50 text-violet-800",
 }
 
+const entryTypeLabels: Record<string, string> = {
+  manual_staff_note: "Manual Staff",
+  manual_clinician_note: "Manual Clinician",
+  manual_patient_insight: "Manual Patient",
+  ai_doctor_consult_summary: "AI Doctor Consult",
+  ai_nurse_consult_summary: "AI Nurse Consult",
+  ai_patient_session_summary: "AI Patient Session",
+  voice_transcript_source: "Voice Transcript Source",
+  voice_reviewed_result: "Reviewed Voice Result",
+  system_record: "System Record",
+}
+
 function originLabel(entry: ClinicalTimelineEntry): string {
-  if (entry.origin === "ai" || entry.origin === "system") return "AI System"
-  if (entry.section === "staff") return "Manual Staff"
-  if (entry.section === "clinician") return "Manual Clinician"
-  if (entry.section === "patient") return "Manual Patient"
-  return "Manual entry"
+  return entryTypeLabels[entry.entry_type] ?? entry.entry_type
 }
 
 function highlightedContent(
@@ -132,8 +140,8 @@ export function TimelineEntryCard({
               </h3>
               <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
                 <Clock3 className="size-3" />
-                <time dateTime={entry.created_at}>
-                  {new Date(entry.created_at).toLocaleString()}
+                <time dateTime={entry.occurred_at}>
+                  {new Date(entry.occurred_at).toLocaleString()}
                 </time>
               </p>
             </div>

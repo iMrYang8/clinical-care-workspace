@@ -1,6 +1,8 @@
 import { AxiosError } from "axios"
 import type {
   AssignmentUpdate,
+  AuditEventPublic,
+  ClinicalGlancePublic,
   CommentCreate,
   CommentPublic,
   DiffPublic,
@@ -10,12 +12,15 @@ import type {
   EntryVersionPublic,
   GlancePublic,
   HighlightPublic,
+  MembershipCreate,
+  MembershipPublic,
   MePublic,
   PatientPublic,
   PatientTimelineEntry,
   ProvenanceResolved,
 } from "@/client"
 import {
+  AdminService,
   AuthService,
   CollaborationService,
   EntriesService,
@@ -119,6 +124,26 @@ async function logout(): Promise<void> {
   }
 }
 
+async function memberships(): Promise<MembershipPublic[]> {
+  return (await AdminService.memberships()).data.data
+}
+
+async function createMembership(
+  body: MembershipCreate,
+): Promise<MembershipPublic> {
+  return (await AdminService.createMembership({ body })).data
+}
+
+async function deactivateMembership(id: string): Promise<MembershipPublic> {
+  return (
+    await AdminService.deactivateMembership({ path: { membership_id: id } })
+  ).data
+}
+
+async function auditEvents(): Promise<AuditEventPublic[]> {
+  return (await AdminService.auditEvents()).data.data
+}
+
 async function patients(): Promise<PatientPublic[]> {
   return (await PatientsService.patients()).data.data
 }
@@ -149,16 +174,18 @@ async function clinicalTimeline(
   )
 }
 
-async function glance(patientId: string): Promise<GlancePublic> {
+async function glance(patientId: string): Promise<ClinicalGlancePublic> {
   return (
     await PatientsService.patientGlance({ path: { patient_id: patientId } })
-  ).data
+  ).data as ClinicalGlancePublic
 }
 
 async function patientSafeGlance(
   patientId: string,
 ): Promise<PatientSafeGlance> {
-  const response = await glance(patientId)
+  const response = (
+    await PatientsService.patientGlance({ path: { patient_id: patientId } })
+  ).data as GlancePublic
   return {
     patient_id: response.patient_id,
     source: response.source ?? "precomputed",
@@ -198,12 +225,14 @@ async function createPatientInsight(
     id: created.id,
     patient_id: created.patient_id,
     section: created.section,
+    entry_type: created.entry_type,
     patient_facing: created.patient_facing,
     version_id: created.version_id,
     version_no: created.version_no,
     title: created.title,
     content: created.content,
     created_at: created.created_at,
+    occurred_at: created.occurred_at,
   }
 }
 
@@ -376,6 +405,12 @@ export async function streamDomainEvents(
 }
 
 export const authApi = { demoLogin, me, logout }
+export const adminApi = {
+  memberships,
+  createMembership,
+  deactivateMembership,
+  auditEvents,
+}
 export const patientSafeApi = {
   me,
   patients,

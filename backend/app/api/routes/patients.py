@@ -7,8 +7,8 @@ from app.api.deps import CurrentContext, SessionDep
 from app.models import (
     ClinicalGlanceCard,
     ClinicalGlancePublic,
-    GlanceCard,
     GlancePublic,
+    PatientGlanceCard,
     PatientGlanceSnapshot,
     PatientsPublic,
     PatientTimeline,
@@ -62,12 +62,15 @@ def patient_glance(
     if context.role == "patient":
         # Defence in depth: old/internal snapshot cards never cross the patient DTO.
         cards = [card for card in cards if card.get("patient_facing") is True]
-        patient_cards = []
+        patient_cards: list[PatientGlanceCard] = []
         for card in cards[:5]:
-            safe = {
-                key: value for key, value in card.items() if key != "score_components"
-            }
-            patient_cards.append(GlanceCard.model_validate(safe))
+            patient_cards.append(
+                PatientGlanceCard(
+                    highlight_id=uuid.UUID(str(card["highlight_id"])),
+                    label=str(card["label"]),
+                    provenance_pointer_id=uuid.UUID(str(card["provenance_pointer_id"])),
+                )
+            )
         return GlancePublic(
             patient_id=patient_id,
             generated_at=generated_at,

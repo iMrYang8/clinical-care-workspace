@@ -1,15 +1,16 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
-import type { GlanceCard } from "@/client"
+import type { ClinicalGlanceCard } from "@/client"
 import { GlanceTopCard } from "./GlanceTopCard"
 
-const cards: GlanceCard[] = Array.from({ length: 7 }, (_, index) => ({
+const cards: ClinicalGlanceCard[] = Array.from({ length: 7 }, (_, index) => ({
   highlight_id: `highlight-${index}`,
   label: `Care signal ${index}`,
   critical: index === 0,
   pinned: index === 1,
   risk_reason: index === 0 ? "critical" : "clinician_accepted",
+  score_components: {},
   provenance_pointer_id: `pointer-${index}`,
 }))
 

@@ -18,6 +18,7 @@ from app.models import (
     EntryCreate,
     EntryPublic,
     EntryRelation,
+    EntryType,
     EntryVersion,
     EntryVersionPublic,
     Highlight,
@@ -148,21 +149,31 @@ def get_scoped_entry(
 
 def authorize_entry_create(
     context: RequestContext, data: EntryCreate
-) -> tuple[str, bool]:
+) -> tuple[str, bool, str]:
     role = context.role
     if role == "staff" and data.section == "staff":
-        return "human", data.patient_facing
+        return "human", data.patient_facing, "manual_staff_note"
     if role == "clinician" and data.section == "clinician":
-        return "human", data.patient_facing
+        return "human", data.patient_facing, "manual_clinician_note"
     if role == "patient" and data.section == "patient":
-        return "human", True
+        return "human", True, "manual_patient_insight"
     if (
         role == "worker"
         and context.job_id is not None
         and data.section == "system"
         and data.origin in {"ai", "system"}
     ):
-        return data.origin, False
+        if data.origin == "ai":
+            allowed_ai_types = {
+                "ai_doctor_consult_summary",
+                "ai_nurse_consult_summary",
+                "ai_patient_session_summary",
+            }
+            entry_type = data.entry_type or "ai_doctor_consult_summary"
+            if entry_type not in allowed_ai_types:
+                raise HTTPException(status_code=422, detail="Invalid AI entry type")
+            return data.origin, False, entry_type
+        return data.origin, False, "system_record"
     raise HTTPException(status_code=403, detail="Role cannot write this section")
 
 
@@ -302,6 +313,7 @@ def entry_public(session: Session, entry: Entry) -> EntryPublic:
         patient_id=entry.patient_id,
         section=entry.section,
         origin=entry.origin,
+        entry_type=cast(EntryType, entry.entry_type),
         patient_facing=entry.patient_facing,
         version_id=version.id,
         version_no=version.version_no,
@@ -309,6 +321,7 @@ def entry_public(session: Session, entry: Entry) -> EntryPublic:
         content=public.content,
         author_id=version.author_id,
         created_at=entry.created_at,
+        occurred_at=entry.occurred_at,
     )
 
 
@@ -316,15 +329,17 @@ def create_entry(
     session: Session, context: RequestContext, data: EntryCreate
 ) -> EntryPublic:
     get_patient(session, context, data.patient_id)
-    origin, patient_facing = authorize_entry_create(context, data)
+    origin, patient_facing, entry_type = authorize_entry_create(context, data)
     _assert_worker_job_write(session, context, data.patient_id)
     entry = Entry(
         clinic_id=context.clinic_id,
         patient_id=data.patient_id,
         section=data.section,
         origin=origin,
+        entry_type=entry_type,
         patient_facing=patient_facing,
         source_job_id=context.job_id if context.role == "worker" else None,
+        occurred_at=data.occurred_at or get_datetime_utc(),
     )
     session.add(entry)
     session.flush()
@@ -524,7 +539,7 @@ def timeline(
             col(Entry.patient_facing).is_(True),
             col(Entry.origin).not_in({"ai", "system"}),
         )
-    entries = session.exec(statement.order_by(desc(col(Entry.created_at)))).all()
+    entries = session.exec(statement.order_by(desc(col(Entry.occurred_at)))).all()
     output: list[PatientTimelineEntry] = []
     for entry in entries:
         public = entry_public(session, entry)
@@ -533,12 +548,14 @@ def timeline(
                 id=public.id,
                 patient_id=public.patient_id,
                 section=public.section,
+                entry_type=public.entry_type,
                 patient_facing=public.patient_facing,
                 version_id=public.version_id,
                 version_no=public.version_no,
                 title=public.title,
                 content=public.content,
                 created_at=public.created_at,
+                occurred_at=public.occurred_at,
             )
         )
     return output

@@ -37,6 +37,17 @@ InteractionType = Literal[
     "patient_insight",
     "voice_session",
 ]
+EntryType = Literal[
+    "manual_staff_note",
+    "manual_clinician_note",
+    "manual_patient_insight",
+    "ai_doctor_consult_summary",
+    "ai_nurse_consult_summary",
+    "ai_patient_session_summary",
+    "voice_transcript_source",
+    "voice_reviewed_result",
+    "system_record",
+]
 
 
 class TenantRow(SQLModel):
@@ -162,12 +173,17 @@ class Entry(TenantRow, table=True):
     patient_id: uuid.UUID
     section: str = Field(max_length=20)
     origin: str = Field(default="human", max_length=20)
+    entry_type: str = Field(default="system_record", max_length=60, index=True)
     patient_facing: bool = Field(default=False)
     source_job_id: uuid.UUID | None = Field(default=None, index=True)
     current_version_id: uuid.UUID | None = None
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    occurred_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
     )
 
 
@@ -1296,6 +1312,43 @@ class MePublic(SQLModel):
     role: Role
 
 
+class MembershipPublic(SQLModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    email: EmailStr
+    full_name: str | None
+    role: Role
+    is_active: bool
+    created_at: datetime
+
+
+class MembershipsPublic(SQLModel):
+    data: list[MembershipPublic]
+    count: int
+
+
+class MembershipCreate(SQLModel):
+    email: EmailStr
+    full_name: str | None = Field(default=None, max_length=255)
+    role: Literal["patient", "staff", "clinician", "admin"]
+    temporary_password: str = Field(min_length=12, max_length=200)
+
+
+class AuditEventPublic(SQLModel):
+    id: uuid.UUID
+    actor_id: uuid.UUID
+    action: str
+    resource_type: str
+    resource_id: uuid.UUID
+    version_id: uuid.UUID | None
+    created_at: datetime
+
+
+class AuditEventsPublic(SQLModel):
+    data: list[AuditEventPublic]
+    count: int
+
+
 class PatientPublic(SQLModel):
     id: uuid.UUID
     display_name: str
@@ -1313,6 +1366,8 @@ class EntryCreate(SQLModel):
     content: str = Field(min_length=1, max_length=200_000)
     patient_facing: bool = False
     origin: EntryOrigin = "human"
+    entry_type: EntryType | None = None
+    occurred_at: datetime | None = None
     supersedes_entry_id: uuid.UUID | None = None
     conflicts_with_entry_id: uuid.UUID | None = None
 
@@ -1329,6 +1384,7 @@ class EntryPublic(SQLModel):
     patient_id: uuid.UUID
     section: str
     origin: str
+    entry_type: EntryType
     patient_facing: bool
     version_id: uuid.UUID
     version_no: int
@@ -1336,18 +1392,21 @@ class EntryPublic(SQLModel):
     content: str
     author_id: uuid.UUID
     created_at: datetime
+    occurred_at: datetime
 
 
 class PatientTimelineEntry(SQLModel):
     id: uuid.UUID
     patient_id: uuid.UUID
     section: str
+    entry_type: EntryType
     patient_facing: bool
     version_id: uuid.UUID
     version_no: int
     title: str
     content: str
     created_at: datetime
+    occurred_at: datetime
 
 
 class PatientTimeline(SQLModel):
@@ -1460,16 +1519,19 @@ class ProvenanceResolved(SQLModel):
     audio_end_ms: int | None
 
 
-class GlanceCard(SQLModel):
+class PatientGlanceCard(SQLModel):
+    highlight_id: uuid.UUID
+    label: str
+    provenance_pointer_id: uuid.UUID
+
+
+class ClinicalGlanceCard(SQLModel):
     highlight_id: uuid.UUID
     label: str
     critical: bool
     pinned: bool
     risk_reason: str
     provenance_pointer_id: uuid.UUID
-
-
-class ClinicalGlanceCard(GlanceCard):
     score_components: dict[str, float]
 
 
@@ -1477,7 +1539,7 @@ class GlancePublic(SQLModel):
     patient_id: uuid.UUID
     source: Literal["precomputed"] = "precomputed"
     generated_at: datetime
-    cards: list[GlanceCard]
+    cards: list[PatientGlanceCard]
 
 
 class ClinicalGlancePublic(SQLModel):

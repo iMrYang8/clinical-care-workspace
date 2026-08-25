@@ -1,6 +1,6 @@
 import { AlertTriangle, Check, Link2, Pin, ShieldCheck, X } from "lucide-react"
 
-import type { GlanceCard } from "@/client"
+import type { ClinicalGlanceCard } from "@/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,10 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 type HighlightAction = "accept" | "reject" | "pin"
 
 type GlanceTopCardProps = {
-  cards: GlanceCard[]
+  cards: ClinicalGlanceCard[]
   canReview?: boolean
-  onSource: (card: GlanceCard) => void | Promise<void>
-  onAction?: (card: GlanceCard, action: HighlightAction) => void | Promise<void>
+  onSource: (card: ClinicalGlanceCard) => void | Promise<void>
+  onAction?: (
+    card: ClinicalGlanceCard,
+    action: HighlightAction,
+  ) => void | Promise<void>
   busyHighlightId?: string | null
 }
 

@@ -10,7 +10,7 @@ import {
 } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import type { GlanceCard, MePublic, ProvenanceResolved } from "@/client"
+import type { ClinicalGlanceCard, MePublic, ProvenanceResolved } from "@/client"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -128,7 +128,7 @@ export function ClinicalCareNote({
       card,
       action,
     }: {
-      card: GlanceCard
+      card: ClinicalGlanceCard
       action: "accept" | "reject" | "pin"
     }) => {
       if (action === "accept")
@@ -147,7 +147,7 @@ export function ClinicalCareNote({
     },
   })
 
-  const showSource = async (card: GlanceCard) => {
+  const showSource = async (card: ClinicalGlanceCard) => {
     setLiveMessage("Resolving immutable source…")
     try {
       const provenance = await clinicalApi.resolveProvenance(

@@ -1092,6 +1092,7 @@ def publish_voice_result(
         patient_id=voice_session.patient_id,
         section="system",
         origin="system",
+        entry_type="voice_transcript_source",
         patient_facing=False,
         source_job_id=voice_session.processing_job_id,
     )
@@ -1121,6 +1122,7 @@ def publish_voice_result(
         patient_id=voice_session.patient_id,
         section="system",
         origin="ai",
+        entry_type="voice_reviewed_result",
         patient_facing=False,
         source_job_id=voice_session.processing_job_id,
     )

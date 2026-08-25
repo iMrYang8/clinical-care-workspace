@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    admin,
     ai,
     auth,
     collaboration,
@@ -15,6 +16,7 @@ from app.api.routes import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+api_router.include_router(admin.router)
 api_router.include_router(ai.router)
 api_router.include_router(utils.router)
 api_router.include_router(patients.router)

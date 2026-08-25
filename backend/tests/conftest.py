@@ -49,7 +49,9 @@ def reset_synthetic_fixture(session: Session) -> None:
         )
     )
     session.commit()
-    seed_demo_data(session)
+    # Contract tests add their own focused rows. Full Scenario A-E fixtures are
+    # loaded by the development bootstrap and exercised in a dedicated test.
+    seed_demo_data(session, include_scenarios=False)
 
 
 @pytest.fixture(autouse=True)

@@ -53,12 +53,14 @@ def _entry_response(
         id=public.id,
         patient_id=public.patient_id,
         section=public.section,
+        entry_type=public.entry_type,
         patient_facing=public.patient_facing,
         version_id=public.version_id,
         version_no=public.version_no,
         title=public.title,
         content=public.content,
         created_at=public.created_at,
+        occurred_at=public.occurred_at,
     )
 
 

@@ -433,11 +433,20 @@ def _create_ai_entry(
     facts: list[ClinicalFact],
     interaction_type: str,
 ) -> tuple[Entry, EntryVersion]:
+    entry_type_by_interaction = {
+        "doctor_consult": "ai_doctor_consult_summary",
+        "care_note": "ai_nurse_consult_summary",
+        "patient_insight": "ai_patient_session_summary",
+        "voice_session": "ai_patient_session_summary",
+    }
     entry = Entry(
         clinic_id=context.clinic_id,
         patient_id=job.patient_id,
         section="system",
         origin="ai",
+        entry_type=entry_type_by_interaction.get(
+            interaction_type, "ai_doctor_consult_summary"
+        ),
         patient_facing=False,
         source_job_id=job.id,
     )

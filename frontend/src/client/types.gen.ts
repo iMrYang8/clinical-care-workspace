@@ -113,6 +113,54 @@ export type AudioChunkAck = {
 };
 
 /**
+ * AuditEventPublic
+ */
+export type AuditEventPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Actor Id
+     */
+    actor_id: string;
+    /**
+     * Action
+     */
+    action: string;
+    /**
+     * Resource Type
+     */
+    resource_type: string;
+    /**
+     * Resource Id
+     */
+    resource_id: string;
+    /**
+     * Version Id
+     */
+    version_id: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * AuditEventsPublic
+ */
+export type AuditEventsPublic = {
+    /**
+     * Data
+     */
+    data: Array<AuditEventPublic>;
+    /**
+     * Count
+     */
+    count: number;
+};
+
+/**
  * Body_auth-password_login
  */
 export type Body_auth_password_login = {
@@ -495,6 +543,14 @@ export type EntryCreate = {
      */
     origin?: 'human' | 'ai' | 'system';
     /**
+     * Entry Type
+     */
+    entry_type?: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'system_record' | null;
+    /**
+     * Occurred At
+     */
+    occurred_at?: string | null;
+    /**
      * Supersedes Entry Id
      */
     supersedes_entry_id?: string | null;
@@ -547,6 +603,10 @@ export type EntryPublic = {
      */
     origin: string;
     /**
+     * Entry Type
+     */
+    entry_type: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'system_record';
+    /**
      * Patient Facing
      */
     patient_facing: boolean;
@@ -574,6 +634,10 @@ export type EntryPublic = {
      * Created At
      */
     created_at: string;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
 };
 
 /**
@@ -633,36 +697,6 @@ export type EntryVersionsPublic = {
 };
 
 /**
- * GlanceCard
- */
-export type GlanceCard = {
-    /**
-     * Highlight Id
-     */
-    highlight_id: string;
-    /**
-     * Label
-     */
-    label: string;
-    /**
-     * Critical
-     */
-    critical: boolean;
-    /**
-     * Pinned
-     */
-    pinned: boolean;
-    /**
-     * Risk Reason
-     */
-    risk_reason: string;
-    /**
-     * Provenance Pointer Id
-     */
-    provenance_pointer_id: string;
-};
-
-/**
  * GlancePublic
  */
 export type GlancePublic = {
@@ -681,7 +715,7 @@ export type GlancePublic = {
     /**
      * Cards
      */
-    cards: Array<GlanceCard>;
+    cards: Array<PatientGlanceCard>;
 };
 
 /**
@@ -932,6 +966,76 @@ export type MePublic = {
 };
 
 /**
+ * MembershipCreate
+ */
+export type MembershipCreate = {
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Full Name
+     */
+    full_name?: string | null;
+    /**
+     * Role
+     */
+    role: 'patient' | 'staff' | 'clinician' | 'admin';
+    /**
+     * Temporary Password
+     */
+    temporary_password: string;
+};
+
+/**
+ * MembershipPublic
+ */
+export type MembershipPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * User Id
+     */
+    user_id: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Full Name
+     */
+    full_name: string | null;
+    /**
+     * Role
+     */
+    role: 'patient' | 'staff' | 'clinician' | 'admin' | 'worker';
+    /**
+     * Is Active
+     */
+    is_active: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * MembershipsPublic
+ */
+export type MembershipsPublic = {
+    /**
+     * Data
+     */
+    data: Array<MembershipPublic>;
+    /**
+     * Count
+     */
+    count: number;
+};
+
+/**
  * Message
  */
 export type Message = {
@@ -939,6 +1043,24 @@ export type Message = {
      * Message
      */
     message: string;
+};
+
+/**
+ * PatientGlanceCard
+ */
+export type PatientGlanceCard = {
+    /**
+     * Highlight Id
+     */
+    highlight_id: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Provenance Pointer Id
+     */
+    provenance_pointer_id: string;
 };
 
 /**
@@ -986,6 +1108,10 @@ export type PatientTimelineEntry = {
      */
     section: string;
     /**
+     * Entry Type
+     */
+    entry_type: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'system_record';
+    /**
      * Patient Facing
      */
     patient_facing: boolean;
@@ -1009,6 +1135,10 @@ export type PatientTimelineEntry = {
      * Created At
      */
     created_at: string;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
 };
 
 /**
@@ -1660,6 +1790,15 @@ export type authMeData = {
     url: '/api/v1/auth/me';
 };
 
+export type authMeErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type authMeError = authMeErrors[keyof authMeErrors];
+
 export type authMeResponses = {
     /**
      * Successful Response
@@ -1676,6 +1815,15 @@ export type authLogoutData = {
     url: '/api/v1/auth/logout';
 };
 
+export type authLogoutErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type authLogoutError = authLogoutErrors[keyof authLogoutErrors];
+
 export type authLogoutResponses = {
     /**
      * Successful Response
@@ -1684,6 +1832,116 @@ export type authLogoutResponses = {
 };
 
 export type authLogoutResponse = authLogoutResponses[keyof authLogoutResponses];
+
+export type adminMembershipsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/memberships';
+};
+
+export type adminMembershipsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminMembershipsError = adminMembershipsErrors[keyof adminMembershipsErrors];
+
+export type adminMembershipsResponses = {
+    /**
+     * Successful Response
+     */
+    200: MembershipsPublic;
+};
+
+export type adminMembershipsResponse = adminMembershipsResponses[keyof adminMembershipsResponses];
+
+export type adminCreateMembershipData = {
+    body: MembershipCreate;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/memberships';
+};
+
+export type adminCreateMembershipErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminCreateMembershipError = adminCreateMembershipErrors[keyof adminCreateMembershipErrors];
+
+export type adminCreateMembershipResponses = {
+    /**
+     * Successful Response
+     */
+    201: MembershipPublic;
+};
+
+export type adminCreateMembershipResponse = adminCreateMembershipResponses[keyof adminCreateMembershipResponses];
+
+export type adminDeactivateMembershipData = {
+    body?: never;
+    path: {
+        /**
+         * Membership Id
+         */
+        membership_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/memberships/{membership_id}/deactivate';
+};
+
+export type adminDeactivateMembershipErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminDeactivateMembershipError = adminDeactivateMembershipErrors[keyof adminDeactivateMembershipErrors];
+
+export type adminDeactivateMembershipResponses = {
+    /**
+     * Successful Response
+     */
+    200: MembershipPublic;
+};
+
+export type adminDeactivateMembershipResponse = adminDeactivateMembershipResponses[keyof adminDeactivateMembershipResponses];
+
+export type adminAuditEventsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/api/v1/admin/audit';
+};
+
+export type adminAuditEventsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminAuditEventsError = adminAuditEventsErrors[keyof adminAuditEventsErrors];
+
+export type adminAuditEventsResponses = {
+    /**
+     * Successful Response
+     */
+    200: AuditEventsPublic;
+};
+
+export type adminAuditEventsResponse = adminAuditEventsResponses[keyof adminAuditEventsResponses];
 
 export type aiIngestData = {
     body: AIIngestRequest;
@@ -1841,6 +2099,15 @@ export type patientsPatientsData = {
     query?: never;
     url: '/api/v1/patients';
 };
+
+export type patientsPatientsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientsPatientsError = patientsPatientsErrors[keyof patientsPatientsErrors];
 
 export type patientsPatientsResponses = {
     /**
@@ -2517,6 +2784,15 @@ export type decayPreviewData = {
     query?: never;
     url: '/api/v1/decay/preview';
 };
+
+export type decayPreviewErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type decayPreviewError = decayPreviewErrors[keyof decayPreviewErrors];
 
 export type decayPreviewResponses = {
     /**

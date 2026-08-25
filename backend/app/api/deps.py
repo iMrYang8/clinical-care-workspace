@@ -27,9 +27,7 @@ def get_db() -> Generator[Session]:
 
 SessionDep = Annotated[Session, Depends(get_db)]
 BearerTokenDep = Annotated[str | None, Depends(reusable_oauth2)]
-CookieTokenDep = Annotated[
-    str | None, Cookie(default=None, alias=settings.AUTH_COOKIE_NAME)
-]
+CookieTokenDep = Annotated[str | None, Cookie(alias=settings.AUTH_COOKIE_NAME)]
 
 
 @dataclass(frozen=True)
@@ -99,13 +97,13 @@ def _trusted_token(bearer: str | None, cookie: str | None) -> str:
 
 
 def get_request_context(
-    session: SessionDep, bearer: BearerTokenDep, cookie: CookieTokenDep
+    session: SessionDep, bearer: BearerTokenDep, cookie: CookieTokenDep = None
 ) -> RequestContext:
     return _resolve_request_context(session, _trusted_token(bearer, cookie))
 
 
 def get_detached_request_context(
-    bearer: BearerTokenDep, cookie: CookieTokenDep
+    bearer: BearerTokenDep, cookie: CookieTokenDep = None
 ) -> RequestContext:
     """Resolve SSE auth in a bounded session released before streaming starts."""
 
