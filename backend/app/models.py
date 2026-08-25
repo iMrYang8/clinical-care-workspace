@@ -22,6 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+from sqlmodel._compat import SQLModelConfig
 
 
 def get_datetime_utc() -> datetime:
@@ -29,6 +30,7 @@ def get_datetime_utc() -> datetime:
 
 
 Role = Literal["patient", "staff", "clinician", "admin", "worker"]
+MembershipRole = Literal["patient", "staff", "clinician", "admin"]
 Section = Literal["patient", "staff", "clinician", "system"]
 EntryOrigin = Literal["human", "ai", "system"]
 InteractionType = Literal[
@@ -46,6 +48,7 @@ EntryType = Literal[
     "ai_patient_session_summary",
     "voice_transcript_source",
     "voice_reviewed_result",
+    "legacy_review_required",
     "system_record",
 ]
 
@@ -98,6 +101,40 @@ class ClinicMembership(TenantRow, table=True):
     user_id: uuid.UUID = Field(foreign_key="users.id", ondelete="CASCADE")
     role: str = Field(max_length=20)
     is_active: bool = True
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class ClinicInvitation(TenantRow, table=True):
+    __tablename__ = "clinic_invitations"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="clinic_invitations_token_hash_key"),
+        Index(
+            "ix_clinic_invitations_pending_email",
+            "clinic_id",
+            "email",
+            "accepted_at",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "created_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_clinic_invitation_creator_tenant",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    email: EmailStr = Field(max_length=255)
+    invited_full_name: str | None = Field(default=None, max_length=255)
+    role: str = Field(max_length=20)
+    token_hash: str = Field(max_length=64)
+    created_by_membership_id: uuid.UUID
+    expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    accepted_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -173,7 +210,7 @@ class Entry(TenantRow, table=True):
     patient_id: uuid.UUID
     section: str = Field(max_length=20)
     origin: str = Field(default="human", max_length=20)
-    entry_type: str = Field(default="system_record", max_length=60, index=True)
+    entry_type: str = Field(default="legacy_review_required", max_length=60, index=True)
     patient_facing: bool = Field(default=False)
     source_job_id: uuid.UUID | None = Field(default=None, index=True)
     current_version_id: uuid.UUID | None = None
@@ -1328,10 +1365,29 @@ class MembershipsPublic(SQLModel):
 
 
 class MembershipCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
     email: EmailStr
     full_name: str | None = Field(default=None, max_length=255)
-    role: Literal["patient", "staff", "clinician", "admin"]
-    temporary_password: str = Field(min_length=12, max_length=200)
+    role: MembershipRole
+
+
+class MembershipInvitationPublic(SQLModel):
+    id: uuid.UUID
+    email: EmailStr
+    full_name: str | None
+    role: MembershipRole
+    state: Literal["pending"] = "pending"
+    expires_at: datetime
+    created_at: datetime
+
+
+class MembershipInvitationAccept(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    token: str = Field(min_length=64, max_length=200)
+    password: str = Field(min_length=16, max_length=200)
+    full_name: str | None = Field(default=None, max_length=255)
 
 
 class AuditEventPublic(SQLModel):

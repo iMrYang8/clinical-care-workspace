@@ -41,6 +41,20 @@ interface VoiceCaptureDatabase extends DBSchema {
 }
 
 let databasePromise: Promise<IDBPDatabase<VoiceCaptureDatabase>> | undefined
+let databaseInstance: IDBPDatabase<VoiceCaptureDatabase> | undefined
+
+/**
+ * Close this tab's app-managed IndexedDB handle without waiting for deletion.
+ *
+ * Logout calls this as soon as a cross-tab logout intent is observed. Keeping
+ * it synchronous is deliberate: no held Nightingale handle may delay the
+ * HttpOnly-cookie deletion request made by the initiating tab.
+ */
+export function closeVoiceDatabaseForLogout(): void {
+  databaseInstance?.close()
+  databaseInstance = undefined
+  databasePromise = undefined
+}
 
 function database(): Promise<IDBPDatabase<VoiceCaptureDatabase>> {
   databasePromise ??= openDB<VoiceCaptureDatabase>("nightingale-voice-v1", 2, {
@@ -60,6 +74,11 @@ function database(): Promise<IDBPDatabase<VoiceCaptureDatabase>> {
           .createIndex("by-capture-index", ["captureId", "chunkIndex"])
       }
     },
+    blocking: closeVoiceDatabaseForLogout,
+    terminated: closeVoiceDatabaseForLogout,
+  }).then((opened) => {
+    databaseInstance = opened
+    return opened
   })
   return databasePromise
 }
@@ -67,12 +86,29 @@ function database(): Promise<IDBPDatabase<VoiceCaptureDatabase>> {
 export async function resetVoiceDatabaseForTests(): Promise<void> {
   const existing = databasePromise
   databasePromise = undefined
-  if (existing) (await existing).close()
+  const opened = databaseInstance ?? (existing ? await existing : undefined)
+  databaseInstance = undefined
+  opened?.close()
 }
 
-export async function purgeVoiceDatabase(): Promise<void> {
+export async function purgeVoiceDatabase(timeoutMs = 2_000): Promise<void> {
   await resetVoiceDatabaseForTests()
-  await deleteDB("nightingale-voice-v1")
+  let timeoutId: number | undefined
+  try {
+    await Promise.race([
+      deleteDB("nightingale-voice-v1", {
+        blocked: closeVoiceDatabaseForLogout,
+      }),
+      new Promise<never>((_resolve, reject) => {
+        timeoutId = window.setTimeout(
+          () => reject(new Error("Local voice database deletion timed out")),
+          timeoutMs,
+        )
+      }),
+    ])
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+  }
 }
 
 function hex(buffer: ArrayBuffer): string {

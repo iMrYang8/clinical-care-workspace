@@ -2,7 +2,7 @@
 
 import { type Client, type Options as Options2, type TDataShape, urlSearchParamsBodySerializer } from './client';
 import { client } from './client.gen';
-import type { adminAuditEventsData, adminAuditEventsErrors, adminAuditEventsResponses, adminCreateMembershipData, adminCreateMembershipErrors, adminCreateMembershipResponses, adminDeactivateMembershipData, adminDeactivateMembershipErrors, adminDeactivateMembershipResponses, adminMembershipsData, adminMembershipsErrors, adminMembershipsResponses, aiGetJobData, aiGetJobErrors, aiGetJobResponses, aiIngestData, aiIngestErrors, aiIngestResponses, aiReanalyzeData, aiReanalyzeErrors, aiReanalyzeResponses, aiRetryJobData, aiRetryJobErrors, aiRetryJobResponses, authDemoLoginData, authDemoLoginErrors, authDemoLoginResponses, authLogoutData, authLogoutErrors, authLogoutResponses, authMeData, authMeErrors, authMeResponses, authPasswordLoginData, authPasswordLoginErrors, authPasswordLoginResponses, collaborationAssignData, collaborationAssignErrors, collaborationAssignResponses, collaborationCreateCommentData, collaborationCreateCommentErrors, collaborationCreateCommentResponses, collaborationListCommentsData, collaborationListCommentsErrors, collaborationListCommentsResponses, collaborationReplyData, collaborationReplyErrors, collaborationReplyResponses, collaborationResolveData, collaborationResolveErrors, collaborationResolveResponses, decayArchiveData, decayArchiveErrors, decayArchiveResponses, decayPreviewData, decayPreviewErrors, decayPreviewResponses, decayRehydrateData, decayRehydrateErrors, decayRehydrateResponses, entriesCreateData, entriesCreateErrors, entriesCreateResponses, entriesDiffData, entriesDiffErrors, entriesDiffResponses, entriesPatchData, entriesPatchErrors, entriesPatchResponses, entriesReadData, entriesReadErrors, entriesReadResponses, entriesRevertData, entriesRevertErrors, entriesRevertResponses, entriesVersionsData, entriesVersionsErrors, entriesVersionsResponses, eventsEventStreamData, eventsEventStreamErrors, eventsEventStreamResponses, patientsPatientGlanceData, patientsPatientGlanceErrors, patientsPatientGlanceResponses, patientsPatientsData, patientsPatientsErrors, patientsPatientsResponses, patientsPatientTimelineData, patientsPatientTimelineErrors, patientsPatientTimelineResponses, trustAcceptData, trustAcceptErrors, trustAcceptResponses, trustCreateHighlightData, trustCreateHighlightErrors, trustCreateHighlightResponses, trustFeedbackData, trustFeedbackErrors, trustFeedbackResponses, trustPinData, trustPinErrors, trustPinResponses, trustProvenanceResolveData, trustProvenanceResolveErrors, trustProvenanceResolveResponses, trustRejectData, trustRejectErrors, trustRejectResponses, utilsHealthCheckData, utilsHealthCheckResponses, voiceAbandonDeviceData, voiceAbandonDeviceErrors, voiceAbandonDeviceResponses, voiceAudioData, voiceAudioErrors, voiceAudioResponses, voiceCorrectData, voiceCorrectErrors, voiceCorrectResponses, voiceCreateSessionData, voiceCreateSessionErrors, voiceCreateSessionResponses, voiceFinalizeData, voiceFinalizeErrors, voiceFinalizeResponses, voiceGetChunkStatusData, voiceGetChunkStatusErrors, voiceGetChunkStatusResponses, voiceJoinDeviceData, voiceJoinDeviceErrors, voiceJoinDeviceResponses, voiceLiveStatusData, voiceLiveStatusErrors, voiceLiveStatusResponses, voicePublishData, voicePublishErrors, voicePublishResponses, voicePutChunkData, voicePutChunkErrors, voicePutChunkResponses, voiceReanalyzeData, voiceReanalyzeErrors, voiceReanalyzeResponses, voiceSealDeviceData, voiceSealDeviceErrors, voiceSealDeviceResponses, voiceSessionStatusData, voiceSessionStatusErrors, voiceSessionStatusResponses, voiceTranscriptData, voiceTranscriptErrors, voiceTranscriptResponses } from './types.gen';
+import type { adminAuditEventsData, adminAuditEventsErrors, adminAuditEventsResponses, adminCreateMembershipData, adminCreateMembershipErrors, adminCreateMembershipResponses, adminDeactivateMembershipData, adminDeactivateMembershipErrors, adminDeactivateMembershipResponses, adminMembershipsData, adminMembershipsErrors, adminMembershipsResponses, aiGetJobData, aiGetJobErrors, aiGetJobResponses, aiIngestData, aiIngestErrors, aiIngestResponses, aiReanalyzeData, aiReanalyzeErrors, aiReanalyzeResponses, aiRetryJobData, aiRetryJobErrors, aiRetryJobResponses, authAcceptMembershipInvitationData, authAcceptMembershipInvitationErrors, authAcceptMembershipInvitationResponses, authDemoLoginData, authDemoLoginErrors, authDemoLoginResponses, authLogoutData, authLogoutResponses, authMeData, authMeErrors, authMeResponses, authPasswordLoginData, authPasswordLoginErrors, authPasswordLoginResponses, collaborationAssignData, collaborationAssignErrors, collaborationAssignResponses, collaborationCreateCommentData, collaborationCreateCommentErrors, collaborationCreateCommentResponses, collaborationListCommentsData, collaborationListCommentsErrors, collaborationListCommentsResponses, collaborationReplyData, collaborationReplyErrors, collaborationReplyResponses, collaborationResolveData, collaborationResolveErrors, collaborationResolveResponses, decayArchiveData, decayArchiveErrors, decayArchiveResponses, decayPreviewData, decayPreviewErrors, decayPreviewResponses, decayRehydrateData, decayRehydrateErrors, decayRehydrateResponses, entriesCreateData, entriesCreateErrors, entriesCreateResponses, entriesDiffData, entriesDiffErrors, entriesDiffResponses, entriesPatchData, entriesPatchErrors, entriesPatchResponses, entriesReadData, entriesReadErrors, entriesReadResponses, entriesRevertData, entriesRevertErrors, entriesRevertResponses, entriesVersionsData, entriesVersionsErrors, entriesVersionsResponses, eventsEventStreamData, eventsEventStreamErrors, eventsEventStreamResponses, patientsPatientGlanceData, patientsPatientGlanceErrors, patientsPatientGlanceResponses, patientsPatientsData, patientsPatientsErrors, patientsPatientsResponses, patientsPatientTimelineData, patientsPatientTimelineErrors, patientsPatientTimelineResponses, trustAcceptData, trustAcceptErrors, trustAcceptResponses, trustCreateHighlightData, trustCreateHighlightErrors, trustCreateHighlightResponses, trustFeedbackData, trustFeedbackErrors, trustFeedbackResponses, trustPinData, trustPinErrors, trustPinResponses, trustProvenanceResolveData, trustProvenanceResolveErrors, trustProvenanceResolveResponses, trustRejectData, trustRejectErrors, trustRejectResponses, utilsHealthCheckData, utilsHealthCheckResponses, voiceAbandonDeviceData, voiceAbandonDeviceErrors, voiceAbandonDeviceResponses, voiceAudioData, voiceAudioErrors, voiceAudioResponses, voiceCorrectData, voiceCorrectErrors, voiceCorrectResponses, voiceCreateSessionData, voiceCreateSessionErrors, voiceCreateSessionResponses, voiceFinalizeData, voiceFinalizeErrors, voiceFinalizeResponses, voiceGetChunkStatusData, voiceGetChunkStatusErrors, voiceGetChunkStatusResponses, voiceJoinDeviceData, voiceJoinDeviceErrors, voiceJoinDeviceResponses, voiceLiveStatusData, voiceLiveStatusErrors, voiceLiveStatusResponses, voicePublishData, voicePublishErrors, voicePublishResponses, voicePutChunkData, voicePutChunkErrors, voicePutChunkResponses, voiceReanalyzeData, voiceReanalyzeErrors, voiceReanalyzeResponses, voiceSealDeviceData, voiceSealDeviceErrors, voiceSealDeviceResponses, voiceSessionStatusData, voiceSessionStatusErrors, voiceSessionStatusResponses, voiceTranscriptData, voiceTranscriptErrors, voiceTranscriptResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -53,6 +53,23 @@ export class AuthService {
     }
 
     /**
+     * Accept Membership Invitation
+     *
+     * Verify one emailed secret before binding a global identity to a clinic.
+     */
+    public static acceptMembershipInvitation<ThrowOnError extends boolean = true>(options: Options<authAcceptMembershipInvitationData, ThrowOnError>) {
+        return (options.client ?? client).post<authAcceptMembershipInvitationResponses, authAcceptMembershipInvitationErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/auth/invitations/accept',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
      * Me
      */
     public static me<ThrowOnError extends boolean = true>(options?: Options<authMeData, ThrowOnError>) {
@@ -66,11 +83,16 @@ export class AuthService {
 
     /**
      * Logout
+     *
+     * Idempotently clear the browser credential, even when it is stale.
+     *
+     * Cookie-authenticated calls still pass the same-origin CSRF middleware. The
+     * route intentionally does not resolve a membership: an expired or corrupt
+     * cookie must never trap a user on a shared device.
      */
     public static logout<ThrowOnError extends boolean = true>(options?: Options<authLogoutData, ThrowOnError>) {
-        return (options?.client ?? client).post<authLogoutResponses, authLogoutErrors, ThrowOnError>({
+        return (options?.client ?? client).post<authLogoutResponses, unknown, ThrowOnError>({
             responseType: 'json',
-            security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/auth/logout',
             ...options
         });

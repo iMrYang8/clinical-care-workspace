@@ -11,6 +11,7 @@ def test_delivery_openapi_surface_is_complete() -> None:
         "/api/v1/auth/demo-login",
         "/api/v1/auth/me",
         "/api/v1/auth/logout",
+        "/api/v1/auth/invitations/accept",
         "/api/v1/patients/{patient_id}/ai/ingest",
         "/api/v1/jobs/{job_id}",
         "/api/v1/highlights/{highlight_id}/feedback",

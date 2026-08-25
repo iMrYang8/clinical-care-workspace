@@ -3,8 +3,9 @@ services:
   proxy:
     image: traefik:3.6
     ports:
-      - "80:80"
-      - "443:443"
+      # Demo persona auth must never be reachable from the local LAN.
+      - "127.0.0.1:${LOCAL_HTTP_PORT:-80}:80"
+      - "127.0.0.1:${LOCAL_HTTPS_PORT:-443}:443"
 
   adminer:
     profiles: ["dev-tools"]
@@ -96,3 +97,13 @@ services:
     volumes:
       - ./frontend/blob-report:/app/frontend/blob-report
       - ./frontend/test-results:/app/frontend/test-results
+
+volumes:
+  nightingale-db-data:
+    labels:
+      com.nightingale.checkout_fingerprint: ${NIGHTINGALE_CHECKOUT_FINGERPRINT:-unscoped}
+
+networks:
+  default:
+    labels:
+      com.nightingale.checkout_fingerprint: ${NIGHTINGALE_CHECKOUT_FINGERPRINT:-unscoped}

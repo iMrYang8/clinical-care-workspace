@@ -50,6 +50,7 @@ const entryTypeLabels: Record<string, string> = {
   ai_patient_session_summary: "AI Patient Session",
   voice_transcript_source: "Voice Transcript Source",
   voice_reviewed_result: "Reviewed Voice Result",
+  legacy_review_required: "Legacy · Review Required",
   system_record: "System Record",
 }
 

@@ -241,6 +241,49 @@ def test_browser_cookie_flags_cookie_auth_logout_and_csrf() -> None:
         assert browser.get("/api/v1/auth/me").status_code == 401
 
 
+def test_logout_clears_an_invalid_browser_cookie_when_same_origin() -> None:
+    """An expired/corrupt HttpOnly cookie must not trap a shared browser."""
+
+    with TestClient(app, base_url="https://testserver") as browser:
+        logout = browser.post(
+            "/api/v1/auth/logout",
+            headers={
+                "Cookie": f"{settings.AUTH_COOKIE_NAME}=invalid-token",
+                "Origin": str(settings.FRONTEND_HOST).rstrip("/"),
+            },
+        )
+
+        assert logout.status_code == 200
+        assert f'{settings.AUTH_COOKIE_NAME}=""' in logout.headers["set-cookie"]
+
+
+def test_logout_rejects_csrf_without_claiming_cookie_deletion_then_retries() -> None:
+    with TestClient(app, base_url="https://testserver") as browser:
+        login = browser.post("/api/v1/auth/demo-login", json={"persona": "staff"})
+        assert login.status_code == 200
+
+        rejected = browser.post(
+            "/api/v1/auth/logout",
+            headers={"Origin": "https://csrf.invalid"},
+        )
+        assert rejected.status_code == 403
+        assert "set-cookie" not in rejected.headers
+        assert browser.get("/api/v1/auth/me").status_code == 200
+
+        retried = browser.post(
+            "/api/v1/auth/logout",
+            headers={"Origin": str(settings.FRONTEND_HOST).rstrip("/")},
+        )
+        assert retried.status_code == 200
+        assert browser.get("/api/v1/auth/me").status_code == 401
+
+        repeated = browser.post(
+            "/api/v1/auth/logout",
+            headers={"Origin": str(settings.FRONTEND_HOST).rstrip("/")},
+        )
+        assert repeated.status_code == 200
+
+
 def test_bearer_mutation_remains_available_without_browser_origin(
     client, auth_headers
 ) -> None:

@@ -13,6 +13,7 @@ import type {
   GlancePublic,
   HighlightPublic,
   MembershipCreate,
+  MembershipInvitationPublic,
   MembershipPublic,
   MePublic,
   PatientPublic,
@@ -130,7 +131,7 @@ async function memberships(): Promise<MembershipPublic[]> {
 
 async function createMembership(
   body: MembershipCreate,
-): Promise<MembershipPublic> {
+): Promise<MembershipInvitationPublic> {
   return (await AdminService.createMembership({ body })).data
 }
 

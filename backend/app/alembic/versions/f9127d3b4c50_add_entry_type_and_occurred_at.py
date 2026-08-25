@@ -99,31 +99,34 @@ def upgrade() -> None:
         """
     )
 
-    # An unlinked AI row or an unsupported human section needs an explicit
-    # operator review. Abort the upgrade instead of silently inventing its
-    # provenance.
+    # An unlinked AI row or unsupported legacy combination gets an explicit
+    # review state rather than a guessed clinical type. This keeps the rolling
+    # upgrade available while making the uncertainty visible to operators.
     op.execute(
         """
-        DO $$
-        DECLARE
-            unresolved_count BIGINT;
-        BEGIN
-            SELECT count(*) INTO unresolved_count
-            FROM entries
-            WHERE entry_type IS NULL OR occurred_at IS NULL;
-
-            IF unresolved_count > 0 THEN
-                RAISE EXCEPTION
-                    'entry metadata backfill requires review for % legacy row(s)',
-                    unresolved_count;
-            END IF;
-        END
-        $$
+        UPDATE entries
+        SET entry_type = 'legacy_review_required'
+        WHERE entry_type IS NULL
         """
     )
 
-    op.alter_column("entries", "entry_type", nullable=False)
-    op.alter_column("entries", "occurred_at", nullable=False)
+    # Expand-compatible defaults remain while an older API binary can still be
+    # serving during a rolling deployment. Such writes are never mislabeled as
+    # a formal clinical type: they are explicit review-required legacy rows.
+    # New application code always supplies both fields. A later contract-only
+    # migration may remove these defaults after the old binary is retired.
+    op.alter_column(
+        "entries",
+        "entry_type",
+        nullable=False,
+        server_default=sa.text("'legacy_review_required'"),
+    )
+    op.alter_column(
+        "entries",
+        "occurred_at",
+        nullable=False,
+        server_default=sa.text("CURRENT_TIMESTAMP"),
+    )
     op.create_index("ix_entries_entry_type", "entries", ["entry_type"])
     op.create_index("ix_entries_occurred_at", "entries", ["occurred_at"])
 

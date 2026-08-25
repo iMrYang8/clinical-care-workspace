@@ -11,6 +11,7 @@ import ReactDOM from "react-dom/client"
 import { client } from "./client/client.gen"
 import { ThemeProvider } from "./components/theme-provider"
 import { Toaster } from "./components/ui/sonner"
+import { terminateUnauthorizedSession } from "./hooks/useAuth"
 import "./index.css"
 import { routeTree } from "./routeTree.gen"
 
@@ -21,7 +22,10 @@ client.setConfig({
 
 const handleApiError = (error: Error) => {
   if (error instanceof AxiosError && error.response?.status === 401) {
-    if (window.location.pathname !== "/login") window.location.href = "/login"
+    if (window.location.pathname !== "/login") {
+      queryClient.clear()
+      void terminateUnauthorizedSession()
+    }
   }
 }
 export const queryClient = new QueryClient({

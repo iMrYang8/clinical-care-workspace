@@ -1,22 +1,31 @@
+import hashlib
+import secrets
 import uuid
+from datetime import timedelta
 from typing import cast
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import func
 from sqlmodel import col, select
 
 from app.api.deps import CurrentContext, SessionDep
-from app.core.security import get_password_hash
 from app.models import (
     AuditEvent,
     AuditEventPublic,
     AuditEventsPublic,
+    Clinic,
+    ClinicInvitation,
     ClinicMembership,
     MembershipCreate,
+    MembershipInvitationPublic,
     MembershipPublic,
+    MembershipRole,
     MembershipsPublic,
     Role,
     User,
+    get_datetime_utc,
 )
+from app.services.invitations import deliver_membership_invitation
 from app.services.nightingale import emit_change
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -52,50 +61,70 @@ def memberships(session: SessionDep, context: CurrentContext) -> MembershipsPubl
     return MembershipsPublic(data=data, count=len(data))
 
 
-@router.post("/memberships", status_code=201, response_model=MembershipPublic)
+@router.post("/memberships", status_code=201, response_model=MembershipInvitationPublic)
 def create_membership(
     body: MembershipCreate, session: SessionDep, context: CurrentContext
-) -> MembershipPublic:
+) -> MembershipInvitationPublic:
     _require_admin(context)
-    user = session.exec(select(User).where(User.email == body.email)).first()
-    if user is None:
-        user = User(
-            email=body.email,
-            full_name=body.full_name,
-            hashed_password=get_password_hash(body.temporary_password),
-        )
-        session.add(user)
-        session.flush()
-    membership = session.exec(
-        select(ClinicMembership).where(
-            ClinicMembership.clinic_id == context.clinic_id,
-            ClinicMembership.user_id == user.id,
+    normalized_email = str(body.email).strip().lower()
+    now = get_datetime_utc()
+    pending = session.exec(
+        select(ClinicInvitation).where(
+            ClinicInvitation.clinic_id == context.clinic_id,
+            ClinicInvitation.email == normalized_email,
+            col(ClinicInvitation.accepted_at).is_(None),
+            ClinicInvitation.expires_at > now,
         )
     ).first()
-    if membership is not None and membership.is_active:
-        raise HTTPException(status_code=409, detail="Membership already exists")
-    if membership is None:
-        membership = ClinicMembership(
-            clinic_id=context.clinic_id,
-            user_id=user.id,
-            role=body.role,
-        )
-    else:
-        membership.is_active = True
-        membership.role = body.role
-    session.add(membership)
+    if pending is not None:
+        raise HTTPException(status_code=409, detail="Active invitation already exists")
+
+    # The admin never looks up or mutates a global User here. That would reveal
+    # cross-clinic identity data and let an attacker pre-claim an email. Only
+    # the recipient who receives this one-time secret can bind the membership.
+    secret = secrets.token_urlsafe(32)
+    raw_token = f"{context.clinic_id}.{secret}"
+    invitation = ClinicInvitation(
+        clinic_id=context.clinic_id,
+        email=normalized_email,
+        invited_full_name=body.full_name,
+        role=body.role,
+        token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+        created_by_membership_id=context.membership.id,
+        expires_at=now + timedelta(hours=24),
+    )
+    session.add(invitation)
     session.flush()
     emit_change(
         session,
         context,
-        action="membership.created",
-        resource_type="membership",
-        resource_id=membership.id,
+        action="membership.invited",
+        resource_type="clinic_invitation",
+        resource_id=invitation.id,
         metadata={"role": body.role},
     )
+    try:
+        deliver_membership_invitation(
+            recipient=normalized_email,
+            token=raw_token,
+        )
+    except Exception:
+        # No token, existing-user fact, or SMTP detail is returned to the admin.
+        session.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="Invitation delivery did not complete",
+        )
     session.commit()
-    session.refresh(membership)
-    return _public(user, membership)
+    session.refresh(invitation)
+    return MembershipInvitationPublic(
+        id=invitation.id,
+        email=invitation.email,
+        full_name=invitation.invited_full_name,
+        role=cast(MembershipRole, invitation.role),
+        expires_at=invitation.expires_at,
+        created_at=invitation.created_at,
+    )
 
 
 @router.post("/memberships/{membership_id}/deactivate", response_model=MembershipPublic)
@@ -103,6 +132,13 @@ def deactivate_membership(
     membership_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> MembershipPublic:
     _require_admin(context)
+    # Serialize admin removals on a stable clinic row. Without this lock, two
+    # admins can concurrently observe count=2 and deactivate each other.
+    clinic = session.exec(
+        select(Clinic).where(Clinic.id == context.clinic_id).with_for_update()
+    ).first()
+    if clinic is None:
+        raise HTTPException(status_code=404, detail="Clinic not found")
     membership = session.exec(
         select(ClinicMembership).where(
             ClinicMembership.id == membership_id,
@@ -113,6 +149,21 @@ def deactivate_membership(
         raise HTTPException(status_code=404, detail="Membership not found")
     if membership.id == context.membership.id:
         raise HTTPException(status_code=409, detail="Admin cannot deactivate self")
+    if membership.role == "admin" and membership.is_active:
+        active_admins = session.exec(
+            select(func.count())
+            .select_from(ClinicMembership)
+            .where(
+                ClinicMembership.clinic_id == context.clinic_id,
+                ClinicMembership.role == "admin",
+                col(ClinicMembership.is_active).is_(True),
+            )
+        ).one()
+        if active_admins <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Clinic must retain at least one active admin",
+            )
     user = session.get(User, membership.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="Membership not found")

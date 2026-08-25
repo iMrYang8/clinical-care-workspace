@@ -6,7 +6,7 @@ import { apiErrorMessage } from "@/features/api"
 
 type SessionBoundaryErrorProps = {
   error: unknown
-  onClear: () => void | Promise<void>
+  onClear: () => Promise<boolean>
 }
 
 export function SessionBoundaryError({

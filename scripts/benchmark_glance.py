@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -34,8 +35,160 @@ def git_commit(root: Path) -> str:
     ).strip()
 
 
+def git_is_dirty(root: Path) -> bool:
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=root,
+        text=True,
+    )
+    return bool(status.strip())
+
+
+def command_output(command: list[str], *, cwd: Path) -> str | None:
+    try:
+        value = subprocess.check_output(
+            command, cwd=cwd, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    return value or None
+
+
+def compose_identity(root: Path, project: str | None) -> dict[str, str]:
+    if not project:
+        return {
+            "project": "not reported",
+            "config_sha256": "not available",
+            "backend_image_digest": "not available",
+        }
+    config = command_output(
+        [
+            "docker",
+            "compose",
+            "--project-name",
+            project,
+            "-f",
+            "compose.yml",
+            "-f",
+            "compose.override.yml",
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=root,
+    )
+    image_ref = command_output(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--filter",
+            "label=com.docker.compose.service=backend",
+            "--format",
+            "{{.Image}}",
+        ],
+        cwd=root,
+    )
+    image_digest = (
+        command_output(
+            ["docker", "image", "inspect", image_ref, "--format", "{{.Id}}"],
+            cwd=root,
+        )
+        if image_ref
+        else None
+    )
+    return {
+        "project": project,
+        "config_sha256": (
+            hashlib.sha256(config.encode()).hexdigest() if config else "not available"
+        ),
+        "backend_image_digest": image_digest or "not available",
+    }
+
+
+def select_fixture_patient(
+    patients: list[dict[str, Any]],
+    *,
+    display_name: str,
+    patient_id: str | None,
+) -> dict[str, Any]:
+    """Resolve one named synthetic fixture; list ordering is not an identity."""
+
+    matches = [
+        patient
+        for patient in patients
+        if patient.get("display_name") == display_name
+        and (patient_id is None or str(patient.get("id")) == patient_id)
+    ]
+    if len(matches) != 1:
+        qualifier = f" and id {patient_id!r}" if patient_id else ""
+        raise RuntimeError(
+            "Glance benchmark requires exactly one patient fixture named "
+            f"{display_name!r}{qualifier}; found {len(matches)}"
+        )
+    if not matches[0].get("id"):
+        raise RuntimeError("Glance benchmark fixture has no patient id")
+    return matches[0]
+
+
+def validate_glance(
+    payload: dict[str, Any],
+    *,
+    expected_card_count: int,
+    expected_patient_id: str,
+) -> int:
+    if payload.get("source") != "precomputed":
+        raise RuntimeError("Glance benchmark hit a non-precomputed read path")
+    cards = payload.get("cards")
+    if not isinstance(cards, list):
+        raise RuntimeError("Glance benchmark response has no cards list")
+    if not cards:
+        raise RuntimeError("Glance benchmark fixture returned an empty card list")
+    if len(cards) != expected_card_count:
+        raise RuntimeError(
+            "Glance benchmark fixture returned "
+            f"{len(cards)} cards; expected {expected_card_count}"
+        )
+    if str(payload.get("patient_id")) != expected_patient_id:
+        raise RuntimeError(
+            "Glance benchmark response patient mismatch: "
+            f"expected {expected_patient_id}, got {payload.get('patient_id')}"
+        )
+    return len(cards)
+
+
+def response_fingerprint(payload: dict[str, Any]) -> dict[str, Any]:
+    cards = payload.get("cards")
+    card_keys = sorted(
+        {key for card in cards if isinstance(card, dict) for key in card}
+        if isinstance(cards, list)
+        else set()
+    )
+    schema = {
+        "top_level_keys": sorted(payload),
+        "card_keys": card_keys,
+    }
+    canonical_body = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    canonical_schema = json.dumps(
+        schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    return {
+        "schema": schema,
+        "schema_sha256": hashlib.sha256(canonical_schema).hexdigest(),
+        "body_sha256": hashlib.sha256(canonical_body).hexdigest(),
+    }
+
+
 def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
+    dirty = git_is_dirty(root)
+    if dirty and not args.allow_dirty:
+        raise RuntimeError(
+            "Release benchmark requires a clean Git worktree; commit or stash changes"
+        )
     verify = args.base_url.startswith("https://") and not args.insecure
     with httpx.Client(base_url=args.base_url, verify=verify, timeout=10.0) as client:
         login = client.post("/api/v1/auth/demo-login", json={"persona": args.persona})
@@ -44,26 +197,48 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {token}"}
         patients = client.get("/api/v1/patients", headers=headers)
         patients.raise_for_status()
-        patient_id = patients.json()["data"][0]["id"]
+        patient = select_fixture_patient(
+            patients.json()["data"],
+            display_name=args.patient_display_name,
+            patient_id=args.patient_id,
+        )
+        patient_id = str(patient["id"])
         path = f"/api/v1/patients/{patient_id}/glance"
+        target = client.get(path, headers=headers)
+        target.raise_for_status()
+        target_payload = target.json()
+        card_count = validate_glance(
+            target_payload,
+            expected_card_count=args.expected_card_count,
+            expected_patient_id=patient_id,
+        )
         for _ in range(args.warmup):
             response = client.get(path, headers=headers)
             response.raise_for_status()
+            validate_glance(
+                response.json(),
+                expected_card_count=args.expected_card_count,
+                expected_patient_id=patient_id,
+            )
         durations: list[float] = []
         for _ in range(args.samples):
             started = time.perf_counter_ns()
             response = client.get(path, headers=headers)
             elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
             response.raise_for_status()
-            if response.json().get("source") != "precomputed":
-                raise RuntimeError("Glance benchmark hit a non-precomputed read path")
+            validate_glance(
+                response.json(),
+                expected_card_count=args.expected_card_count,
+                expected_patient_id=patient_id,
+            )
             durations.append(elapsed_ms)
 
     p95 = percentile(durations, 0.95)
     result: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "measured_at": datetime.now(UTC).isoformat(),
         "commit": git_commit(root),
+        "dirty": dirty,
         "hardware": {
             "platform": platform.platform(),
             "machine": platform.machine(),
@@ -79,6 +254,14 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "tls_verification": verify,
             "threshold_ms": args.threshold_ms,
         },
+        "target": {
+            "patient_id": patient_id,
+            "patient_display_name": patient["display_name"],
+            "card_count": card_count,
+            "expected_card_count": args.expected_card_count,
+        },
+        "response": response_fingerprint(target_payload),
+        "compose": compose_identity(root, args.compose_project),
         "latency_ms": {
             "median": round(statistics.median(durations), 3),
             "p95": round(p95, 3),
@@ -95,6 +278,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="https://localhost")
     parser.add_argument("--persona", default="staff", choices=("staff", "clinician"))
+    parser.add_argument("--patient-display-name", default="Alex Synthetic")
+    parser.add_argument(
+        "--patient-id",
+        help="Optionally pin the deterministic fixture UUID in addition to its name.",
+    )
+    parser.add_argument("--expected-card-count", type=int, default=4)
+    parser.add_argument(
+        "--compose-project",
+        default=os.environ.get("NIGHTINGALE_BENCHMARK_COMPOSE_PROJECT"),
+        help="Record the exact local Compose project/config/image identity.",
+    )
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--threshold-ms", type=float, default=300.0)
@@ -108,9 +302,16 @@ def main() -> None:
         action="store_true",
         help="Allow the generated local Traefik certificate only.",
     )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Exploratory-only mode; release evidence must omit this flag.",
+    )
     args = parser.parse_args()
-    if args.warmup < 0 or args.samples < 1:
-        parser.error("warmup must be >= 0 and samples must be >= 1")
+    if args.warmup < 0 or args.samples < 1 or args.expected_card_count < 1:
+        parser.error(
+            "warmup must be >= 0, samples must be >= 1, and expected-card-count must be >= 1"
+        )
     result = benchmark(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")

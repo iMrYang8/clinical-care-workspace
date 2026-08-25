@@ -60,6 +60,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       args:
+        NIGHTINGALE_SOURCE_COMMIT: ${NIGHTINGALE_SOURCE_COMMIT:-unknown}
         INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
         INSTALL_LOCAL_ASR: ${INSTALL_LOCAL_ASR:-false}
         INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}
@@ -118,6 +119,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       args:
+        NIGHTINGALE_SOURCE_COMMIT: ${NIGHTINGALE_SOURCE_COMMIT:-unknown}
         INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
         INSTALL_LOCAL_ASR: ${INSTALL_LOCAL_ASR:-false}
         INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}
@@ -177,6 +179,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       args:
+        NIGHTINGALE_SOURCE_COMMIT: ${NIGHTINGALE_SOURCE_COMMIT:-unknown}
         INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
         INSTALL_LOCAL_ASR: ${INSTALL_LOCAL_ASR:-false}
         INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}

@@ -10,17 +10,21 @@ Requirements: Docker Desktop/Compose and free host ports 80 and 443.
 
 Open `https://localhost` and accept the generated local-certificate warning.
 The local override explicitly enables development-only demo authentication and
-synthetic fixtures. The production Compose selection does not seed them.
+synthetic fixtures. Ports 80/443 bind only to `127.0.0.1`, so fixed personas
+are not exposed to the LAN. The production Compose selection binds public
+HTTP/HTTPS explicitly and does not seed synthetic personas.
 
 Scenarios B, C, D, and F create new immutable data. Before a recorded demo run,
 reset only the current Compose project's containers and database volume:
 
 ```bash
-NIGHTINGALE_RESET_CONFIRM=YES ./scripts/reset-demo.sh
+RESET_NIGHTINGALE_LOCAL_DEMO="$(./scripts/demo-project-name.sh --fingerprint)" \
+  ./scripts/reset-demo.sh
 ```
 
-Use the same `COMPOSE_PROJECT_NAME` for start and reset if the default
-`nightingale` name is not used.
+`demo-project-name.sh` hashes this checkout's canonical path. Start/reset reject
+any unrelated project override, and reset validates existing container working
+directory/config-file labels before touching its path-bound volume.
 
 ## 2. Scenario A — Glance to exact source
 
@@ -74,7 +78,7 @@ only the eligible encrypted payload. Production defaults to
 This is clearest as the two-context Playwright scenario:
 
 ```bash
-docker compose --project-name "${COMPOSE_PROJECT_NAME:-nightingale}" run --rm --build \
+docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm --build \
   -e CI=1 playwright bun run test:e2e --grep "Scenario D"
 ```
 
@@ -113,7 +117,7 @@ WAV bytes, forces a network outage, reloads the page, resumes the encrypted
 IndexedDB queue, finalizes the session, and enters Review Mode:
 
 ```bash
-docker compose --project-name "${COMPOSE_PROJECT_NAME:-nightingale}" run --rm --build \
+docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm --build \
   -e CI=1 playwright bun run test:e2e --grep "Scenario F"
 ```
 
@@ -133,8 +137,8 @@ pyannote diarization.
 ## 8. Run all browser scenarios
 
 ```bash
-docker compose --project-name "${COMPOSE_PROJECT_NAME:-nightingale}" build playwright
-docker compose --project-name "${COMPOSE_PROJECT_NAME:-nightingale}" run --rm \
+docker compose --project-name "$(./scripts/demo-project-name.sh)" build playwright
+docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm \
   -e CI=1 playwright bun run test:e2e
 ```
 
@@ -143,8 +147,9 @@ For three clean consecutive rehearsals:
 ```bash
 for round in 1 2 3; do
   echo "Demo round ${round}"
-  NIGHTINGALE_RESET_CONFIRM=YES ./scripts/reset-demo.sh
-  docker compose --project-name "${COMPOSE_PROJECT_NAME:-nightingale}" run --rm \
+  RESET_NIGHTINGALE_LOCAL_DEMO="$(./scripts/demo-project-name.sh --fingerprint)" \
+    ./scripts/reset-demo.sh
+  docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm \
     -e CI=1 playwright bun run test:e2e
 done
 ```
@@ -163,7 +168,7 @@ The orchestrated check is:
 
 The default verifies the frozen Python and Bun locks, backend Ruff/mypy/ty,
 pytest with a 90% coverage gate, an Alembic downgrade/upgrade roundtrip,
-frontend type/lint/unit/build, generated OpenAPI client synchronization, and
+frontend type/lint/unit/build, tracked OpenAPI schema/client synchronization, and
 both development and production Compose rendering. It uses a temporary
 `nightingale-verify-*` Compose project for PostgreSQL tests and removes only
 that temporary project's containers/volume on exit.
@@ -187,6 +192,7 @@ bun run build
 
 cd ..
 BUN_BIN="$(command -v bun)" ./scripts/generate-client.sh
+git ls-files --error-unmatch frontend/openapi.json
 git diff --exit-code -- frontend/openapi.json frontend/src/client
 docker compose config --quiet
 DOMAIN=nightingale.invalid \
@@ -199,9 +205,27 @@ Glance performance:
 uv run --frozen --package app python scripts/benchmark_glance.py --insecure
 ```
 
-The benchmark authenticates, warms the precomputed endpoint, verifies the
-response source is `precomputed`, records hardware/commit/sample counts, and
-fails if warm p95 exceeds 300 ms. It does not measure a model call.
+The benchmark uniquely resolves **Alex Synthetic** rather than trusting list
+order, requires the expected four non-empty cards on every read, and records
+the fixture patient ID plus observed card count. It warms the precomputed
+endpoint, records hardware/commit/sample counts, and fails if warm p95 exceeds
+300 ms. It does not measure a model call.
+
+## Production migration/deploy ordering
+
+The GitHub production workflow uses the `production-${{ github.ref }}`
+concurrency group with `cancel-in-progress: false`; one migration/deploy
+finishes before the newest pending main SHA begins, preventing an older SHA
+from deploying later. Both deployment workflows skip every non-main ref, run
+release gates without production secrets, and bind deployment to an uploaded
+verified-SHA artifact. Repository operators must additionally protect the
+GitHub `production` environment with required reviewers and a main-only
+deployment-branch rule; the YAML environment name cannot configure those
+repository settings. The `f9127d3b4c50` entry-metadata migration is an expand
+step: existing rows use trusted backfill, while old API binaries may still
+insert using `legacy_review_required` and `CURRENT_TIMESTAMP` server defaults.
+New code supplies formal metadata. Remove those compatibility defaults only in
+a later contract migration after every old API process has been retired.
 
 Container FFmpeg evidence:
 
@@ -218,9 +242,9 @@ FFmpeg build as **not tested** rather than copying host output.
 Stop containers while preserving the demo database:
 
 ```bash
-docker compose --project-name "${COMPOSE_PROJECT_NAME:-nightingale}" down
+docker compose --project-name "$(./scripts/demo-project-name.sh)" down
 ```
 
-Use `reset-demo.sh` when the project database volume must also be recreated;
-it has an explicit confirmation and never performs host filesystem or disk
-cleanup.
+Use `reset-demo.sh` when the verified path-bound local database volume must also
+be recreated. It requires an exact checkout fingerprint, validates Compose
+labels/config files, and never performs host filesystem or disk cleanup.

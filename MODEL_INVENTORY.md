@@ -17,7 +17,7 @@ evaluation has occurred.
 | Voice transcription | Disabled | **Default.** | `VOICE_TRANSCRIPTION_PROVIDER=disabled` | Ordinary audio is encrypted and retained with an explicit `needs_review`/provider-disabled state. No transcript is invented. |
 | Voice transcript fixture | `code-switch-overlap-v1` synthetic provider | Available only in development demo mode for a session explicitly marked synthetic. | `FASTAPI_ENV=development`, `ENABLE_DEMO_AUTH=true`, `synthetic_fixture=true`, exact fixture ID. | Exercises speaker, timestamp, language, overlap, confidence, review, and provenance UI. It is fixed fixture data, never ASR and never a quality measurement. |
 | Voice transcription | OpenAI audio transcription adapter | Implemented; **disabled by default**. | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, `OPENAI_API_KEY`, `OPENAI_TRANSCRIBE_MODEL`; `STRICT_NO_AUDIO_EGRESS` must be false. | Adapter validates diarized/timestamped segments. No live request, accuracy evaluation, supported-language matrix, latency, or cost evidence is committed here. |
-| Voice transcription | faster-whisper 1.2.1 / CTranslate2 | Optional `local-asr` profile; not default-installed; no weights bundled. | Build optional group, mount a non-empty pre-cached `LOCAL_ASR_MODEL_DIR`; provider uses CPU/int8 and `local_files_only=True`. | Process timeout/cancellation and adapter contracts are implemented. A particular weight set remains **not tested** until its exact path/digest, license, hardware, and evaluation output are recorded. No diarization is claimed. |
+| Voice transcription | faster-whisper `1.2.1`, CTranslate2 `4.8.1`, PyAV `18.1.0` | Optional `local-asr` profile; all three are lock-resolved but not default-installed; no weights bundled. | Build optional group, mount a non-empty pre-cached `LOCAL_ASR_MODEL_DIR`; provider uses CPU/int8 and `local_files_only=True`. | Process timeout/cancellation and adapter contracts are implemented. CTranslate2/PyAV runtime import and a particular weight set remain **not tested**. PyAV wheel FFmpeg composition is release-platform-specific. No diarization is claimed. |
 | Speaker/overlap experiment | pyannote.audio 4.0.7 | Experimental optional profile; no model/token bundled. | Accepted model terms and pre-cached `PYANNOTE_MODEL_DIR`, plus explicit enablement. | Current code exposes readiness only; it does not apply or validate a pyannote diarization pipeline. Multi-device/provider overlap is preserved as a review signal, not blind-source separation. |
 | Live captions | Live capability gate | Configuration field and capability endpoint exist; **no live provider/transport in this build**. | `LIVE_TRANSCRIPT_ENABLED` alone is insufficient. | Endpoint reports unavailable. The UI must not present fabricated provisional captions. |
 
@@ -43,7 +43,9 @@ The repository evidence path is:
 docs/evidence/ffmpeg-container-version.txt
 ```
 
-The committed record was generated from the local release-candidate backend
+The evidence generator now requires a backend image labeled with the current
+Git commit and records that image ID. A reused global `backend:latest` is
+rejected. The previously committed record was generated from the local release-candidate backend
 image on 2026-08-26: FFmpeg `7.1.5-0+deb13u1`, Debian arm64, with
 `--enable-gpl`; its file SHA-256 is
 `e3379e95264b2189b027f0fae31698e1f6ce48dbac76548a3cb6fc65d1cc7f87`.

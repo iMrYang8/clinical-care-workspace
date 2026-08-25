@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto"
 
-import { deleteDB } from "idb"
+import { deleteDB, openDB } from "idb"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
@@ -11,6 +11,7 @@ import {
   enqueueEncryptedChunk,
   nextPendingChunk,
   pendingChunkCount,
+  purgeVoiceDatabase,
   recoverableCaptures,
   resetVoiceDatabaseForTests,
 } from "./offlineQueue"
@@ -105,5 +106,19 @@ describe("encrypted voice offline queue", () => {
     expect(result).toEqual({ uploaded: 16, remaining: 0 })
     expect(fetchMock).toHaveBeenCalledTimes(16)
     expect(getAllSpy).not.toHaveBeenCalled()
+  })
+
+  it("bounds deletion when an uncooperative tab holds IndexedDB open", async () => {
+    const held = await openDB("nightingale-voice-v1", 2, {
+      upgrade(db) {
+        db.createObjectStore("held")
+      },
+    })
+
+    await expect(purgeVoiceDatabase(10)).rejects.toThrow(
+      "Local voice database deletion timed out",
+    )
+
+    held.close()
   })
 })

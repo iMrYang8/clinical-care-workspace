@@ -1,6 +1,8 @@
 .vscode/*
 !.vscode/extensions.json
 node_modules/
+__pycache__/
+*.py[cod]
 backend/app/frontend/
 /test-results/
 /playwright-report/

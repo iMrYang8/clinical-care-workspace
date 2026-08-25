@@ -545,7 +545,7 @@ export type EntryCreate = {
     /**
      * Entry Type
      */
-    entry_type?: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'system_record' | null;
+    entry_type?: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'legacy_review_required' | 'system_record' | null;
     /**
      * Occurred At
      */
@@ -605,7 +605,7 @@ export type EntryPublic = {
     /**
      * Entry Type
      */
-    entry_type: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'system_record';
+    entry_type: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'legacy_review_required' | 'system_record';
     /**
      * Patient Facing
      */
@@ -981,10 +981,58 @@ export type MembershipCreate = {
      * Role
      */
     role: 'patient' | 'staff' | 'clinician' | 'admin';
+};
+
+/**
+ * MembershipInvitationAccept
+ */
+export type MembershipInvitationAccept = {
     /**
-     * Temporary Password
+     * Token
      */
-    temporary_password: string;
+    token: string;
+    /**
+     * Password
+     */
+    password: string;
+    /**
+     * Full Name
+     */
+    full_name?: string | null;
+};
+
+/**
+ * MembershipInvitationPublic
+ */
+export type MembershipInvitationPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Full Name
+     */
+    full_name: string | null;
+    /**
+     * Role
+     */
+    role: 'patient' | 'staff' | 'clinician' | 'admin';
+    /**
+     * State
+     */
+    state?: 'pending';
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Created At
+     */
+    created_at: string;
 };
 
 /**
@@ -1110,7 +1158,7 @@ export type PatientTimelineEntry = {
     /**
      * Entry Type
      */
-    entry_type: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'system_record';
+    entry_type: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'legacy_review_required' | 'system_record';
     /**
      * Patient Facing
      */
@@ -1783,6 +1831,31 @@ export type authPasswordLoginResponses = {
 
 export type authPasswordLoginResponse = authPasswordLoginResponses[keyof authPasswordLoginResponses];
 
+export type authAcceptMembershipInvitationData = {
+    body: MembershipInvitationAccept;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/invitations/accept';
+};
+
+export type authAcceptMembershipInvitationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type authAcceptMembershipInvitationError = authAcceptMembershipInvitationErrors[keyof authAcceptMembershipInvitationErrors];
+
+export type authAcceptMembershipInvitationResponses = {
+    /**
+     * Successful Response
+     */
+    200: MembershipPublic;
+};
+
+export type authAcceptMembershipInvitationResponse = authAcceptMembershipInvitationResponses[keyof authAcceptMembershipInvitationResponses];
+
 export type authMeData = {
     body?: never;
     path?: never;
@@ -1814,15 +1887,6 @@ export type authLogoutData = {
     query?: never;
     url: '/api/v1/auth/logout';
 };
-
-export type authLogoutErrors = {
-    /**
-     * Validation Error
-     */
-    422: HTTPValidationError;
-};
-
-export type authLogoutError = authLogoutErrors[keyof authLogoutErrors];
 
 export type authLogoutResponses = {
     /**
@@ -1878,7 +1942,7 @@ export type adminCreateMembershipResponses = {
     /**
      * Successful Response
      */
-    201: MembershipPublic;
+    201: MembershipInvitationPublic;
 };
 
 export type adminCreateMembershipResponse = adminCreateMembershipResponses[keyof adminCreateMembershipResponses];

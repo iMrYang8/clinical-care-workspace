@@ -1,6 +1,7 @@
+import hashlib
 import uuid
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
@@ -12,11 +13,18 @@ from app.core import security
 from app.core.config import settings
 from app.core.db import set_rls_clinic
 from app.models import (
+    AuditEvent,
+    ClinicInvitation,
     ClinicMembership,
     DemoLoginRequest,
+    MembershipInvitationAccept,
+    MembershipPublic,
     MePublic,
     Message,
+    Role,
     Token,
+    User,
+    get_datetime_utc,
 )
 from app.seed import demo_id, membership_for_persona
 
@@ -101,6 +109,104 @@ def password_login(
     return token
 
 
+@router.post("/invitations/accept", response_model=MembershipPublic)
+def accept_membership_invitation(
+    body: MembershipInvitationAccept,
+    session: SessionDep,
+) -> MembershipPublic:
+    """Verify one emailed secret before binding a global identity to a clinic."""
+
+    clinic_text, separator, _secret = body.token.partition(".")
+    if not separator:
+        raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
+    try:
+        clinic_id = uuid.UUID(clinic_text)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
+    _set_rls_clinic(session, clinic_id)
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    invitation = session.exec(
+        select(ClinicInvitation)
+        .where(
+            ClinicInvitation.clinic_id == clinic_id,
+            ClinicInvitation.token_hash == token_hash,
+        )
+        .with_for_update()
+    ).first()
+    now = get_datetime_utc()
+    if (
+        invitation is None
+        or invitation.accepted_at is not None
+        or invitation.expires_at <= now
+    ):
+        raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
+
+    normalized_email = str(invitation.email).strip().lower()
+    user = session.exec(select(User).where(User.email == normalized_email)).first()
+    if user is None:
+        user = User(
+            email=normalized_email,
+            full_name=body.full_name or invitation.invited_full_name,
+            hashed_password=security.get_password_hash(body.password),
+        )
+        session.add(user)
+        session.flush()
+    else:
+        # Possession of the secret delivered to this email is the identity
+        # verification step. Replacing the password evicts an attacker who
+        # globally pre-registered someone else's address.
+        user.hashed_password = security.get_password_hash(body.password)
+        user.is_active = True
+        if body.full_name is not None:
+            user.full_name = body.full_name
+        session.add(user)
+        session.flush()
+
+    membership = session.exec(
+        select(ClinicMembership).where(
+            ClinicMembership.clinic_id == clinic_id,
+            ClinicMembership.user_id == user.id,
+        )
+    ).first()
+    if membership is not None and membership.is_active:
+        raise HTTPException(status_code=409, detail="Active membership already exists")
+    if membership is None:
+        membership = ClinicMembership(
+            clinic_id=clinic_id,
+            user_id=user.id,
+            role=invitation.role,
+        )
+    else:
+        membership.role = invitation.role
+        membership.is_active = True
+    session.add(membership)
+    session.flush()
+
+    invitation.accepted_at = now
+    session.add(invitation)
+    session.add(
+        AuditEvent(
+            clinic_id=clinic_id,
+            actor_id=user.id,
+            action="membership.invitation_accepted",
+            resource_type="membership",
+            resource_id=membership.id,
+            metadata_json={"role": invitation.role},
+        )
+    )
+    session.commit()
+    session.refresh(membership)
+    return MembershipPublic(
+        id=membership.id,
+        user_id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=cast(Role, membership.role),
+        is_active=membership.is_active,
+        created_at=membership.created_at,
+    )
+
+
 @router.get("/me", response_model=MePublic)
 def me(context: CurrentContext) -> MePublic:
     return MePublic(
@@ -114,7 +220,14 @@ def me(context: CurrentContext) -> MePublic:
 
 
 @router.post("/logout", response_model=Message)
-def logout(context: CurrentContext, response: Response) -> Message:
+def logout(response: Response) -> Message:
+    """Idempotently clear the browser credential, even when it is stale.
+
+    Cookie-authenticated calls still pass the same-origin CSRF middleware. The
+    route intentionally does not resolve a membership: an expired or corrupt
+    cookie must never trap a user on a shared device.
+    """
+
     response.delete_cookie(
         settings.AUTH_COOKIE_NAME,
         path="/",
@@ -122,4 +235,4 @@ def logout(context: CurrentContext, response: Response) -> Message:
         httponly=True,
         samesite=settings.AUTH_COOKIE_SAMESITE,
     )
-    return Message(message=f"Logged out membership {context.membership.id}")
+    return Message(message="Browser session cookie cleared")

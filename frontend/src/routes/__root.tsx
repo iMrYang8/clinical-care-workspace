@@ -3,9 +3,25 @@ import { createRootRoute, HeadContent, Outlet } from "@tanstack/react-router"
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools"
 import ErrorComponent from "@/components/Common/ErrorComponent"
 import NotFound from "@/components/Common/NotFound"
+import { SessionTerminationScreen } from "@/components/Nightingale/SessionTerminationScreen"
+import { useSessionTerminationBoundary } from "@/hooks/useAuth"
 
 export const Route = createRootRoute({
-  component: () => (
+  component: RootComponent,
+  notFoundComponent: () => <NotFound />,
+  errorComponent: () => <ErrorComponent />,
+})
+
+function RootComponent() {
+  const { logout, sessionTermination } = useSessionTerminationBoundary()
+
+  if (sessionTermination.phase !== "idle") {
+    return (
+      <SessionTerminationScreen onRetry={logout} state={sessionTermination} />
+    )
+  }
+
+  return (
     <>
       <HeadContent />
       <a
@@ -22,7 +38,5 @@ export const Route = createRootRoute({
         </>
       )}
     </>
-  ),
-  notFoundComponent: () => <NotFound />,
-  errorComponent: () => <ErrorComponent />,
-})
+  )
+}

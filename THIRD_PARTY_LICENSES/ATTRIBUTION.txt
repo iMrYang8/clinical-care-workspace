@@ -1,0 +1,32 @@
+Nightingale attribution
+=======================
+
+This repository began as an adaptation of the FastAPI Full Stack FastAPI
+Template at upstream commit 68adb40d:
+https://github.com/fastapi/full-stack-fastapi-template/commit/68adb40d
+
+Upstream copyright: Copyright (c) 2019 Sebastián Ramírez and FastAPI
+contributors.
+Upstream license: MIT. The MIT license text is retained in LICENSE.
+
+The Nightingale name and the baseline configuration changes in this repository
+do not remove the upstream attribution or its MIT notice.
+
+The care-note editor directly uses the MIT-licensed Tiptap open-source packages
+at version 3.30.3 and the MIT-licensed Serene in Serenade Tiptap Comment
+Extension at version 0.2.0:
+https://github.com/ueberdosis/tiptap
+https://github.com/sereneinserenade/tiptap-comment-extension
+
+The third-party comment extension is isolated behind Nightingale's
+CommentAnchorAdapter. No extension source is vendored or modified in this
+repository.
+
+The voice capture queue directly uses idb 8.0.3 under the ISC license. The
+test-only fake-indexeddb 6.2.5 package is Apache-2.0. FFmpeg is installed as a
+separate executable in the backend container and records the exact distributed
+build configuration in /usr/share/doc/nightingale/ffmpeg-build.txt.
+
+THIRD_PARTY_NOTICES.md records direct dependencies, planned integrations, and
+design references. Entries marked planned, optional, or design reference are
+not bundled dependencies, vendored source, or shipped assets in this baseline.

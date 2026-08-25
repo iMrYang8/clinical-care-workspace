@@ -17,6 +17,7 @@ from app.seed import demo_id
 
 TENANT_TABLES = {
     "clinic_memberships",
+    "clinic_invitations",
     "patients",
     "patient_user_links",
     "entries",

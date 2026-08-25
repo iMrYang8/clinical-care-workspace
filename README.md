@@ -23,14 +23,17 @@ certificate, so the browser will show a certificate warning on first use. The
 four visible personas are Care staff, Clinician, Patient, and Clinic admin. All
 records and identities are synthetic.
 
-The script uses the Compose project name `nightingale` unless
-`COMPOSE_PROJECT_NAME` is set. To recreate only that project's containers and
-database volume, with an explicit confirmation:
+The script derives a dedicated Compose name from this checkout's canonical path
+and rejects unrelated `COMPOSE_PROJECT_NAME` overrides. Before a reset it also
+verifies every matching container's Compose working-directory/config labels and
+rejects production deployment files. To recreate the verified local demo
+containers and database volume with an explicit path-bound confirmation:
 
 ```bash
 ./scripts/reset-demo.sh
-# non-interactive, same project-only boundary:
-NIGHTINGALE_RESET_CONFIRM=YES ./scripts/reset-demo.sh
+# non-interactive CI/operator form; the value is unique to this checkout:
+RESET_NIGHTINGALE_LOCAL_DEMO="$(./scripts/demo-project-name.sh --fingerprint)" \
+  ./scripts/reset-demo.sh
 ```
 
 See [`docs/DEMO_RUNBOOK.md`](./docs/DEMO_RUNBOOK.md) for the Scenario A-F
@@ -73,8 +76,18 @@ receive the owner connection.
 Browser sessions use a `Secure`, `HttpOnly`, `SameSite=Lax` cookie over
 same-origin TLS. Cookie-authenticated mutations have an Origin check. The
 frontend does not keep a bearer token in local storage, and logout clears the
-session plus the local encrypted voice queue. Bearer JWTs remain available for
+session plus the local encrypted voice queue. Logout intent, failure, and
+confirmation are broadcast to every tab: PHI is masked immediately, while a
+failed server logout remains visibly retryable. An authenticated `401` uses the
+same path before another persona may sign in. Bearer JWTs remain available for
 non-browser API compatibility.
+
+Clinic admins invite an email but never create its global user, choose a
+temporary password, or silently attach an identity already used by another
+clinic. A 24-hour high-entropy one-time code is stored only as a hash; the
+recipient verifies that code and chooses the password before the membership is
+activated. Admin removal is serialized and cannot remove the final active
+admin.
 
 Clinical text, comments, Glance payloads, transcript/facts, and audio payloads
 use a clinic-derived AES-256-GCM envelope. `FIELD_ENCRYPTION_MASTER_KEY` is
@@ -120,20 +133,23 @@ states are in [`docs/VOICE_PIPELINE.md`](./docs/VOICE_PIPELINE.md).
 ## Verification
 
 Run the release checks (lock, backend static/tests/coverage, frontend
-type/lint/unit/build, generated OpenAPI sync, and development/production Compose
+type/lint/unit/build, tracked OpenAPI schema/client sync, and development/production Compose
 rendering):
 
 ```bash
 ./scripts/verify-release.sh
 ```
 
-Optional live checks start or reuse the synthetic demo:
+Optional live checks create a collision-resistant, checkout-bound temporary
+synthetic demo on dynamically selected loopback ports:
 
 ```bash
 ./scripts/verify-release.sh --e2e --benchmark --ffmpeg
 ```
 
-`--ffmpeg` archives the **container's** raw `ffmpeg -version` output at
+`--ffmpeg` builds an image labeled with the current Git commit, rejects a stale
+image, and archives its immutable image ID plus **container** `ffmpeg -version`
+output at
 `docs/evidence/ffmpeg-container-version.txt`. If that command has not been run
 for a release image, the container build must be recorded as **not tested**;
 host FFmpeg output is not a substitute.
@@ -146,8 +162,9 @@ rerun the benchmark for the actual release commit and hardware.
 ## Production boundary
 
 The no-`-f` command is deliberately the local development path because Docker
-Compose automatically loads `compose.override.yml`. Production explicitly
-selects only the base and deployment files:
+Compose automatically loads `compose.override.yml`; its demo-auth HTTP/HTTPS
+ports bind to `127.0.0.1` only. Production explicitly selects only the base and
+deployment files and publishes 80/443:
 
 ```bash
 docker compose -f compose.yml -f compose.deploy.yml build
@@ -165,6 +182,17 @@ tracked development secret, persist and back up the field-encryption key, and
 review provider/model/license terms before enabling any egress or optional
 profile.
 
+Production GitHub deployments share one non-cancelling `production-main`
+concurrency lane. The entry-metadata Alembic revision retains explicit
+`legacy_review_required`/timestamp server defaults as an expand-compatible
+bridge for an old API process during migration; a later contract migration may
+remove them only after old binaries are retired.
+
+Both deploy workflows run release gates without production secrets, upload an
+immutable verified-SHA artifact, and deploy only that exact SHA on `main`.
+Repository operators must configure required reviewers and a main-only branch
+rule on the GitHub `production` environment before enabling deployment.
+
 ## Repository map
 
 ```text
@@ -175,9 +203,10 @@ scripts/                 start/reset/verification/evidence utilities
 compose*.yml             base, development, production, and opt-in profiles
 ATTRIBUTION.txt          upstream attribution
 THIRD_PARTY_NOTICES.md   dependency and design-reference register
+THIRD_PARTY_LICENSES/    distributable full license texts and image notices
 ```
 
 Nightingale is MIT licensed. It began from FastAPI Full Stack Template commit
 `68adb40d`; see [`ATTRIBUTION.txt`](./ATTRIBUTION.txt),
 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md), and
-[`LICENSE`](./LICENSE).
+[`THIRD_PARTY_LICENSES`](./THIRD_PARTY_LICENSES), and [`LICENSE`](./LICENSE).

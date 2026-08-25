@@ -65,6 +65,17 @@ RUN set -eu; \
     if [ "$INSTALL_DIARIZATION" = "true" ]; then set -- "$@" --group diarization; fi; \
     "$@"
 
+COPY ./LICENSE ./ATTRIBUTION.txt ./THIRD_PARTY_NOTICES.md ./MODEL_INVENTORY.md \
+  /usr/share/doc/nightingale/
+COPY ./THIRD_PARTY_LICENSES /usr/share/doc/nightingale/THIRD_PARTY_LICENSES
+RUN test -s /usr/share/doc/nightingale/LICENSE \
+    && test -s /usr/share/doc/nightingale/ATTRIBUTION.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Serene-Comment-Extension-MIT.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Tiptap-MIT.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/idb-ISC.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/CTranslate2-MIT.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/PyAV-BSD-3-Clause.txt
+
 COPY ./backend/scripts /app/backend/scripts
 
 COPY ./backend/alembic.ini /app/backend/
@@ -81,6 +92,9 @@ RUN set -eu; \
     if [ "$INSTALL_LOCAL_ASR" = "true" ]; then set -- "$@" --group local-asr; fi; \
     if [ "$INSTALL_DIARIZATION" = "true" ]; then set -- "$@" --group diarization; fi; \
     "$@"
+
+ARG NIGHTINGALE_SOURCE_COMMIT=unknown
+LABEL org.opencontainers.image.revision=$NIGHTINGALE_SOURCE_COMMIT
 
 WORKDIR /app/backend/
 

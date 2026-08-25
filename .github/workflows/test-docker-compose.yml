@@ -13,17 +13,30 @@ jobs:
   test-docker-compose:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      COMPOSE_PROJECT_NAME: nightingale-compose-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      NIGHTINGALE_SOURCE_COMMIT: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: docker compose build
-      - run: docker compose down -v --remove-orphans
-      # backend depends on the owner-only, one-shot prestart service.
-      - run: docker compose up -d --wait backend
-      - name: Test backend is up
-        run: curl --fail --insecure https://localhost/api/v1/utils/health-check/
-      - name: Test frontend is up
-        run: curl --fail --insecure https://localhost/
-      - run: docker compose down -v --remove-orphans
+      - name: Development ports are loopback-only
+        run: docker compose config --format json | python3 scripts/assert_compose_ports.py development
+      - name: Demo reset scripts are path-bound
+        run: bash scripts/test-demo-script-safety.sh
+      - name: Production ports are explicitly public
+        run: DOMAIN=nightingale.invalid docker compose -f compose.yml -f compose.deploy.yml config --format json | python3 scripts/assert_compose_ports.py production
+      - name: Build and test the complete HTTPS route
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker compose down --volumes --remove-orphans || true
+          }
+          trap cleanup EXIT INT TERM
+          docker compose build
+          # HTTPS curls require Traefik; keep the worker live for the same
+          # durable topology used by browser and voice release checks.
+          docker compose up -d --wait proxy backend ai-worker
+          curl --fail --insecure https://localhost/api/v1/utils/health-check/
+          curl --fail --insecure https://localhost/

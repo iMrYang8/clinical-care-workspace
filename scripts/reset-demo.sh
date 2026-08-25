@@ -2,18 +2,19 @@
 
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-project="${COMPOSE_PROJECT_NAME:-nightingale}"
-expected="RESET $project"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+project="$("$root/scripts/demo-project-name.sh")"
+fingerprint="$("$root/scripts/demo-project-name.sh" --fingerprint)"
+expected="RESET $project FROM $root"
 
-if [[ ! "$project" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
-  echo "Invalid COMPOSE_PROJECT_NAME: $project" >&2
+if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
+  echo "Refusing inherited COMPOSE_PROJECT_NAME; this checkout always selects $project itself" >&2
   exit 2
 fi
 
-if [[ "${NIGHTINGALE_RESET_CONFIRM:-}" != "YES" ]]; then
+if [[ "${RESET_NIGHTINGALE_LOCAL_DEMO:-}" != "$fingerprint" ]]; then
   if [[ ! -t 0 ]]; then
-    echo "A non-interactive reset requires NIGHTINGALE_RESET_CONFIRM=YES." >&2
+    echo "A non-interactive reset requires RESET_NIGHTINGALE_LOCAL_DEMO=$fingerprint." >&2
     exit 2
   fi
   cat <<EOF
@@ -32,5 +33,10 @@ EOF
 fi
 
 cd "$root"
-docker compose --project-name "$project" down --volumes --remove-orphans
-COMPOSE_PROJECT_NAME="$project" "$root/scripts/demo-up.sh"
+export NIGHTINGALE_CHECKOUT_FINGERPRINT="$fingerprint"
+"$root/scripts/assert-demo-project-ownership.sh" "$project"
+
+docker compose --project-name "$project" \
+  -f "$root/compose.yml" -f "$root/compose.override.yml" \
+  down --volumes --remove-orphans
+"$root/scripts/demo-up.sh"

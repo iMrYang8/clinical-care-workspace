@@ -23,7 +23,6 @@ const initialInvite: MembershipCreate = {
   email: "",
   full_name: "",
   role: "staff",
-  temporary_password: "",
 }
 
 function AdminBoundary() {
@@ -31,6 +30,7 @@ function AdminBoundary() {
   const queryClient = useQueryClient()
   const { user, meQuery, logout } = useAuth()
   const [invite, setInvite] = useState<MembershipCreate>(initialInvite)
+  const [inviteStatus, setInviteStatus] = useState<string>()
   const allowed = user?.role === "admin"
 
   useEffect(() => {
@@ -52,7 +52,10 @@ function AdminBoundary() {
     queryClient.invalidateQueries({ queryKey: ["admin", "memberships"] })
   const createMembership = useMutation({
     mutationFn: adminApi.createMembership,
-    onSuccess: async () => {
+    onSuccess: async (created) => {
+      setInviteStatus(
+        `Invitation sent to ${created.email}; no membership exists until the recipient verifies the one-time code.`,
+      )
       setInvite(initialInvite)
       await Promise.all([
         refreshMemberships(),
@@ -205,34 +208,26 @@ function AdminBoundary() {
               </select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="invite-password">Temporary password</Label>
-              <Input
-                autoComplete="new-password"
-                id="invite-password"
-                minLength={12}
-                onChange={(event) =>
-                  setInvite({
-                    ...invite,
-                    temporary_password: event.target.value,
-                  })
-                }
-                type="password"
-                value={invite.temporary_password}
-              />
+              <p className="rounded-md border border-teal-100 bg-teal-50 p-3 text-sm text-teal-950">
+                Nightingale emails a 24-hour one-time code. The recipient—not
+                the admin—verifies the address and chooses the account password
+                before the membership becomes active.
+              </p>
             </div>
+            {inviteStatus && (
+              <Alert className="border-emerald-200 bg-emerald-50 text-emerald-950">
+                <AlertDescription>{inviteStatus}</AlertDescription>
+              </Alert>
+            )}
             <Button
               className="w-full"
-              disabled={
-                createMembership.isPending ||
-                !invite.email ||
-                invite.temporary_password.length < 12
-              }
+              disabled={createMembership.isPending || !invite.email}
               onClick={() => createMembership.mutate(invite)}
             >
               {createMembership.isPending && (
                 <LoaderCircle className="animate-spin" />
               )}
-              Create membership
+              Send verified invitation
             </Button>
           </CardContent>
         </Card>

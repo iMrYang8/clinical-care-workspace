@@ -1,30 +1,71 @@
-from fastapi.testclient import TestClient
+from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from typing import Any
+
+from fastapi.testclient import TestClient
+from sqlmodel import col, select
+
+from app.core.security import create_access_token, get_password_hash
+from app.main import app
+from app.models import ClinicMembership, User
 from app.seed import demo_id
 
 
-def test_admin_manages_only_clinic_membership_metadata(
-    client: TestClient, auth_headers
-) -> None:
+def _capture_invitation(monkeypatch) -> dict[str, str]:  # type: ignore[no-untyped-def]
+    delivered: dict[str, str] = {}
+
+    def capture(*, recipient: str, token: str) -> None:
+        delivered.update(recipient=recipient, token=token)
+
+    monkeypatch.setattr("app.api.routes.admin.deliver_membership_invitation", capture)
+    return delivered
+
+
+def test_admin_invites_then_recipient_accepts_before_membership_exists(
+    client: TestClient, auth_headers, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
     admin = auth_headers("admin")
+    delivered = _capture_invitation(monkeypatch)
     listed = client.get("/api/v1/admin/memberships", headers=admin)
     assert listed.status_code == 200, listed.text
     assert listed.json()["count"] == 5
     assert all("hashed_password" not in item for item in listed.json()["data"])
 
-    created = client.post(
+    invited = client.post(
         "/api/v1/admin/memberships",
         headers=admin,
         json={
             "email": "invited-clinician@nightingale.synthetic",
             "full_name": "Invited Synthetic Clinician",
             "role": "clinician",
-            "temporary_password": "synthetic-temporary-only",
         },
     )
-    assert created.status_code == 201, created.text
-    assert created.json()["role"] == "clinician"
-    assert created.json()["is_active"] is True
+    assert invited.status_code == 201, invited.text
+    assert invited.json()["role"] == "clinician"
+    assert invited.json()["state"] == "pending"
+    assert {
+        "token",
+        "token_hash",
+        "temporary_password",
+        "user_id",
+        "is_active",
+    }.isdisjoint(invited.json())
+    assert delivered["recipient"] == "invited-clinician@nightingale.synthetic"
+
+    # The admin cannot set a password through an ignored legacy field.
+    forbidden_password = client.post(
+        "/api/v1/admin/memberships",
+        headers=admin,
+        json={
+            "email": "ignored-password@nightingale.synthetic",
+            "role": "staff",
+            "temporary_password": "attacker-controlled-password",
+        },
+    )
+    assert forbidden_password.status_code == 422
 
     duplicate = client.post(
         "/api/v1/admin/memberships",
@@ -32,13 +73,37 @@ def test_admin_manages_only_clinic_membership_metadata(
         json={
             "email": "invited-clinician@nightingale.synthetic",
             "role": "staff",
-            "temporary_password": "synthetic-temporary-only",
         },
     )
     assert duplicate.status_code == 409
+    assert client.get("/api/v1/admin/memberships", headers=admin).json()["count"] == 5
+
+    accepted = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json={
+            "token": delivered["token"],
+            "password": "recipient-chosen-password",
+            "full_name": "Recipient Verified Name",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["role"] == "clinician"
+    assert accepted.json()["is_active"] is True
+    assert client.get("/api/v1/admin/memberships", headers=admin).json()["count"] == 6
+
+    replay = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json={
+            "token": delivered["token"],
+            "password": "recipient-chosen-password",
+        },
+    )
+    assert replay.status_code == 400
 
     deactivated = client.post(
-        f"/api/v1/admin/memberships/{created.json()['id']}/deactivate",
+        f"/api/v1/admin/memberships/{accepted.json()['id']}/deactivate",
         headers=admin,
     )
     assert deactivated.status_code == 200
@@ -50,6 +115,76 @@ def test_admin_manages_only_clinic_membership_metadata(
         ).status_code
         == 409
     )
+
+
+def test_cross_clinic_email_preoccupation_cannot_bind_victim_membership(
+    client: TestClient,
+    auth_headers,
+    monkeypatch,
+    owner_session,
+) -> None:  # type: ignore[no-untyped-def]
+    victim_email = "victim@example.com"
+    attacker = User(
+        email=victim_email,
+        full_name="Attacker Chosen Name",
+        hashed_password=get_password_hash("attacker-password-long"),
+    )
+    owner_session.add(attacker)
+    owner_session.flush()
+    owner_session.add(
+        ClinicMembership(
+            clinic_id=demo_id("clinic-other"),
+            user_id=attacker.id,
+            role="admin",
+        )
+    )
+    owner_session.commit()
+
+    delivered = _capture_invitation(monkeypatch)
+    invited = client.post(
+        "/api/v1/admin/memberships",
+        headers=auth_headers("admin"),
+        json={"email": victim_email, "full_name": None, "role": "clinician"},
+    )
+    assert invited.status_code == 201, invited.text
+    assert invited.json()["full_name"] is None
+    assert "Attacker Chosen Name" not in invited.text
+
+    form: dict[str, Any] = {
+        "username": victim_email,
+        "password": "attacker-password-long",
+    }
+    before_accept = client.post(
+        "/api/v1/auth/login",
+        data=form,
+        headers={"X-Clinic-ID": str(demo_id("clinic-primary"))},
+    )
+    assert before_accept.status_code == 403
+
+    accepted = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json={
+            "token": delivered["token"],
+            "password": "victim-controlled-password",
+            "full_name": "Verified Victim",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["user_id"] == str(attacker.id)
+
+    old_password = client.post(
+        "/api/v1/auth/login",
+        data=form,
+        headers={"X-Clinic-ID": str(demo_id("clinic-primary"))},
+    )
+    assert old_password.status_code == 400
+    victim_login = client.post(
+        "/api/v1/auth/login",
+        data={"username": victim_email, "password": "victim-controlled-password"},
+        headers={"X-Clinic-ID": str(demo_id("clinic-primary"))},
+    )
+    assert victim_login.status_code == 200
 
 
 def test_admin_audit_is_metadata_only_and_cross_clinic_hidden(
@@ -95,3 +230,64 @@ def test_admin_audit_is_metadata_only_and_cross_clinic_hidden(
         ).status_code
         == 404
     )
+
+
+def test_concurrent_admin_deactivation_cannot_remove_every_admin(
+    owner_session,
+) -> None:  # type: ignore[no-untyped-def]
+    primary_user = owner_session.get(User, demo_id("user-admin"))
+    primary_membership = owner_session.get(
+        ClinicMembership, demo_id("membership-admin")
+    )
+    assert primary_user is not None and primary_membership is not None
+    second_user = User(
+        email="second-admin@example.com",
+        full_name="Second Admin",
+        hashed_password=get_password_hash("second-admin-password"),
+    )
+    owner_session.add(second_user)
+    owner_session.flush()
+    second_membership = ClinicMembership(
+        clinic_id=demo_id("clinic-primary"),
+        user_id=second_user.id,
+        role="admin",
+    )
+    owner_session.add(second_membership)
+    owner_session.commit()
+
+    def token(user: User, membership: ClinicMembership) -> str:
+        return create_access_token(
+            user.id,
+            timedelta(minutes=5),
+            membership_id=membership.id,
+            clinic_id=membership.clinic_id,
+        )
+
+    primary_token = token(primary_user, primary_membership)
+    second_token = token(second_user, second_membership)
+    barrier = threading.Barrier(2)
+
+    def deactivate(target_id: str, bearer: str) -> int:
+        barrier.wait(timeout=5)
+        with TestClient(app) as isolated:
+            return isolated.post(
+                f"/api/v1/admin/memberships/{target_id}/deactivate",
+                headers={"Authorization": f"Bearer {bearer}"},
+            ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(deactivate, str(second_membership.id), primary_token)
+        second = pool.submit(deactivate, str(primary_membership.id), second_token)
+        statuses = [first.result(timeout=10), second.result(timeout=10)]
+
+    assert statuses.count(200) == 1
+    assert all(status in {200, 403, 409} for status in statuses)
+    owner_session.expire_all()
+    active_admins = owner_session.exec(
+        select(ClinicMembership).where(
+            ClinicMembership.clinic_id == demo_id("clinic-primary"),
+            ClinicMembership.role == "admin",
+            col(ClinicMembership.is_active).is_(True),
+        )
+    ).all()
+    assert len(active_admins) == 1

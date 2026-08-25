@@ -339,7 +339,6 @@ def _seed_demo_domain(session: Session) -> None:
         ),
         ("sleep", "Daughter reports improved sleep", False, False, "recency"),
     )
-    cards: list[dict[str, object]] = []
     for index, (name, quote, critical, pinned, reason) in enumerate(highlight_specs):
         highlight_id = demo_id(f"highlight-{name}")
         pointer_id = demo_id(f"provenance-{name}")
@@ -394,22 +393,6 @@ def _seed_demo_domain(session: Session) -> None:
                     quote_sha256=hashlib.sha256(quote.encode()).hexdigest(),
                 )
             )
-        cards.append(
-            {
-                "highlight_id": str(highlight_id),
-                "label": quote,
-                "critical": critical,
-                "pinned": pinned,
-                "patient_facing": index < 3,
-                "risk_reason": reason,
-                "score_components": {
-                    "base": round(0.7 - index * 0.05, 2),
-                    "learned": 0.05 if index == 2 else 0.0,
-                },
-                "provenance_pointer_id": str(pointer_id),
-            }
-        )
-
     comment_id = demo_id("comment-clinician-assignment")
     quote = "Fall risk remains elevated"
     start = source.index(quote)
@@ -516,13 +499,23 @@ def _seed_demo_domain(session: Session) -> None:
             )
         )
 
-    snapshot = session.get(PatientGlanceSnapshot, demo_id("glance-primary"))
-    assert snapshot is not None
-    snapshot.payload_ciphertext = field_codec.encrypt_json(
-        clinic_id, "glance.payload", snapshot.id, {"cards": cards}
+    # Re-seeding must never replay the original card payload over user feedback
+    # or highlight state. Build the projection from the current rows instead;
+    # on first seed this produces the four deterministic cards, and on restart
+    # it preserves accept/reject/pin/learning changes without count growth.
+    from app.api.deps import RequestContext
+    from app.services.nightingale import rebuild_glance
+
+    clinician = session.get(User, clinician_id)
+    clinician_membership = session.get(
+        ClinicMembership, demo_id("membership-clinician")
     )
-    snapshot.generated_at = _fixture_time("2026-02-06T14:20:00")
-    session.add(snapshot)
+    assert clinician is not None and clinician_membership is not None
+    rebuild_glance(
+        session,
+        RequestContext(user=clinician, membership=clinician_membership),
+        patient_id,
+    )
 
 
 def seed_demo_data(session: Session, *, include_scenarios: bool = True) -> None:
