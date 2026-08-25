@@ -2,7 +2,7 @@
 
 import { type Client, type Options as Options2, type TDataShape, urlSearchParamsBodySerializer } from './client';
 import { client } from './client.gen';
-import type { authDemoLoginData, authDemoLoginErrors, authDemoLoginResponses, authLogoutData, authLogoutResponses, authMeData, authMeResponses, authPasswordLoginData, authPasswordLoginErrors, authPasswordLoginResponses, collaborationAssignData, collaborationAssignErrors, collaborationAssignResponses, collaborationCreateCommentData, collaborationCreateCommentErrors, collaborationCreateCommentResponses, collaborationListCommentsData, collaborationListCommentsErrors, collaborationListCommentsResponses, collaborationReplyData, collaborationReplyErrors, collaborationReplyResponses, collaborationResolveData, collaborationResolveErrors, collaborationResolveResponses, entriesCreateData, entriesCreateErrors, entriesCreateResponses, entriesDiffData, entriesDiffErrors, entriesDiffResponses, entriesPatchData, entriesPatchErrors, entriesPatchResponses, entriesReadData, entriesReadErrors, entriesReadResponses, entriesRevertData, entriesRevertErrors, entriesRevertResponses, entriesVersionsData, entriesVersionsErrors, entriesVersionsResponses, eventsEventStreamData, eventsEventStreamErrors, eventsEventStreamResponses, patientsPatientGlanceData, patientsPatientGlanceErrors, patientsPatientGlanceResponses, patientsPatientsData, patientsPatientsResponses, patientsPatientTimelineData, patientsPatientTimelineErrors, patientsPatientTimelineResponses, trustAcceptData, trustAcceptErrors, trustAcceptResponses, trustCreateHighlightData, trustCreateHighlightErrors, trustCreateHighlightResponses, trustPinData, trustPinErrors, trustPinResponses, trustProvenanceResolveData, trustProvenanceResolveErrors, trustProvenanceResolveResponses, trustRejectData, trustRejectErrors, trustRejectResponses, utilsHealthCheckData, utilsHealthCheckResponses } from './types.gen';
+import type { aiGetJobData, aiGetJobErrors, aiGetJobResponses, aiIngestData, aiIngestErrors, aiIngestResponses, aiReanalyzeData, aiReanalyzeErrors, aiReanalyzeResponses, aiRetryJobData, aiRetryJobErrors, aiRetryJobResponses, authDemoLoginData, authDemoLoginErrors, authDemoLoginResponses, authLogoutData, authLogoutResponses, authMeData, authMeResponses, authPasswordLoginData, authPasswordLoginErrors, authPasswordLoginResponses, collaborationAssignData, collaborationAssignErrors, collaborationAssignResponses, collaborationCreateCommentData, collaborationCreateCommentErrors, collaborationCreateCommentResponses, collaborationListCommentsData, collaborationListCommentsErrors, collaborationListCommentsResponses, collaborationReplyData, collaborationReplyErrors, collaborationReplyResponses, collaborationResolveData, collaborationResolveErrors, collaborationResolveResponses, decayArchiveData, decayArchiveErrors, decayArchiveResponses, decayPreviewData, decayPreviewResponses, decayRehydrateData, decayRehydrateErrors, decayRehydrateResponses, entriesCreateData, entriesCreateErrors, entriesCreateResponses, entriesDiffData, entriesDiffErrors, entriesDiffResponses, entriesPatchData, entriesPatchErrors, entriesPatchResponses, entriesReadData, entriesReadErrors, entriesReadResponses, entriesRevertData, entriesRevertErrors, entriesRevertResponses, entriesVersionsData, entriesVersionsErrors, entriesVersionsResponses, eventsEventStreamData, eventsEventStreamErrors, eventsEventStreamResponses, patientsPatientGlanceData, patientsPatientGlanceErrors, patientsPatientGlanceResponses, patientsPatientsData, patientsPatientsResponses, patientsPatientTimelineData, patientsPatientTimelineErrors, patientsPatientTimelineResponses, trustAcceptData, trustAcceptErrors, trustAcceptResponses, trustCreateHighlightData, trustCreateHighlightErrors, trustCreateHighlightResponses, trustFeedbackData, trustFeedbackErrors, trustFeedbackResponses, trustPinData, trustPinErrors, trustPinResponses, trustProvenanceResolveData, trustProvenanceResolveErrors, trustProvenanceResolveResponses, trustRejectData, trustRejectErrors, trustRejectResponses, utilsHealthCheckData, utilsHealthCheckResponses, voiceAudioData, voiceAudioErrors, voiceAudioResponses, voiceCorrectData, voiceCorrectErrors, voiceCorrectResponses, voiceCreateSessionData, voiceCreateSessionErrors, voiceCreateSessionResponses, voiceFinalizeData, voiceFinalizeErrors, voiceFinalizeResponses, voiceGetChunkStatusData, voiceGetChunkStatusErrors, voiceGetChunkStatusResponses, voiceJoinDeviceData, voiceJoinDeviceErrors, voiceJoinDeviceResponses, voiceLiveStatusData, voiceLiveStatusErrors, voiceLiveStatusResponses, voicePublishData, voicePublishErrors, voicePublishResponses, voicePutChunkData, voicePutChunkErrors, voicePutChunkResponses, voiceReanalyzeData, voiceReanalyzeErrors, voiceReanalyzeResponses, voiceSessionStatusData, voiceSessionStatusErrors, voiceSessionStatusResponses, voiceTranscriptData, voiceTranscriptErrors, voiceTranscriptResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -35,7 +35,7 @@ export class AuthService {
             }
         });
     }
-    
+
     /**
      * Password Login
      */
@@ -51,7 +51,7 @@ export class AuthService {
             }
         });
     }
-    
+
     /**
      * Me
      */
@@ -63,7 +63,7 @@ export class AuthService {
             ...options
         });
     }
-    
+
     /**
      * Logout
      */
@@ -72,6 +72,64 @@ export class AuthService {
             responseType: 'json',
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/auth/logout',
+            ...options
+        });
+    }
+}
+
+export class AiService {
+    /**
+     * Ingest
+     */
+    public static ingest<ThrowOnError extends boolean = true>(options: Options<aiIngestData, ThrowOnError>) {
+        return (options.client ?? client).post<aiIngestResponses, aiIngestErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/ai/ingest',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Reanalyze
+     */
+    public static reanalyze<ThrowOnError extends boolean = true>(options: Options<aiReanalyzeData, ThrowOnError>) {
+        return (options.client ?? client).post<aiReanalyzeResponses, aiReanalyzeErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/ai/reanalyze',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Get Job
+     */
+    public static getJob<ThrowOnError extends boolean = true>(options: Options<aiGetJobData, ThrowOnError>) {
+        return (options.client ?? client).get<aiGetJobResponses, aiGetJobErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/jobs/{job_id}',
+            ...options
+        });
+    }
+
+    /**
+     * Retry Job
+     */
+    public static retryJob<ThrowOnError extends boolean = true>(options: Options<aiRetryJobData, ThrowOnError>) {
+        return (options.client ?? client).post<aiRetryJobResponses, aiRetryJobErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/jobs/{job_id}/retry',
             ...options
         });
     }
@@ -102,7 +160,7 @@ export class PatientsService {
             ...options
         });
     }
-    
+
     /**
      * Patient Timeline
      */
@@ -114,7 +172,7 @@ export class PatientsService {
             ...options
         });
     }
-    
+
     /**
      * Patient Glance
      */
@@ -144,7 +202,7 @@ export class EntriesService {
             }
         });
     }
-    
+
     /**
      * Read
      */
@@ -156,7 +214,7 @@ export class EntriesService {
             ...options
         });
     }
-    
+
     /**
      * Patch
      */
@@ -172,7 +230,7 @@ export class EntriesService {
             }
         });
     }
-    
+
     /**
      * Versions
      */
@@ -184,7 +242,7 @@ export class EntriesService {
             ...options
         });
     }
-    
+
     /**
      * Diff
      */
@@ -196,7 +254,7 @@ export class EntriesService {
             ...options
         });
     }
-    
+
     /**
      * Revert
      */
@@ -222,7 +280,7 @@ export class CollaborationService {
             ...options
         });
     }
-    
+
     /**
      * Create Comment
      */
@@ -238,7 +296,7 @@ export class CollaborationService {
             }
         });
     }
-    
+
     /**
      * Reply
      */
@@ -254,7 +312,7 @@ export class CollaborationService {
             }
         });
     }
-    
+
     /**
      * Resolve
      */
@@ -266,7 +324,7 @@ export class CollaborationService {
             ...options
         });
     }
-    
+
     /**
      * Assign
      */
@@ -300,7 +358,7 @@ export class TrustService {
             }
         });
     }
-    
+
     /**
      * Accept
      */
@@ -312,7 +370,7 @@ export class TrustService {
             ...options
         });
     }
-    
+
     /**
      * Reject
      */
@@ -324,7 +382,7 @@ export class TrustService {
             ...options
         });
     }
-    
+
     /**
      * Pin
      */
@@ -336,7 +394,23 @@ export class TrustService {
             ...options
         });
     }
-    
+
+    /**
+     * Feedback
+     */
+    public static feedback<ThrowOnError extends boolean = true>(options: Options<trustFeedbackData, ThrowOnError>) {
+        return (options.client ?? client).post<trustFeedbackResponses, trustFeedbackErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/highlights/{highlight_id}/feedback',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
     /**
      * Provenance Resolve
      */
@@ -359,6 +433,210 @@ export class EventsService {
             responseType: 'json',
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/events/stream',
+            ...options
+        });
+    }
+}
+
+export class DecayService {
+    /**
+     * Preview
+     */
+    public static preview<ThrowOnError extends boolean = true>(options?: Options<decayPreviewData, ThrowOnError>) {
+        return (options?.client ?? client).get<decayPreviewResponses, unknown, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/decay/preview',
+            ...options
+        });
+    }
+
+    /**
+     * Archive
+     */
+    public static archive<ThrowOnError extends boolean = true>(options: Options<decayArchiveData, ThrowOnError>) {
+        return (options.client ?? client).post<decayArchiveResponses, decayArchiveErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/decay/archive',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Rehydrate
+     */
+    public static rehydrate<ThrowOnError extends boolean = true>(options: Options<decayRehydrateData, ThrowOnError>) {
+        return (options.client ?? client).post<decayRehydrateResponses, decayRehydrateErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/decay/entries/{version_id}/rehydrate',
+            ...options
+        });
+    }
+}
+
+export class VoiceService {
+    /**
+     * Create Session
+     */
+    public static createSession<ThrowOnError extends boolean = true>(options: Options<voiceCreateSessionData, ThrowOnError>) {
+        return (options.client ?? client).post<voiceCreateSessionResponses, voiceCreateSessionErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Session Status
+     */
+    public static sessionStatus<ThrowOnError extends boolean = true>(options: Options<voiceSessionStatusData, ThrowOnError>) {
+        return (options.client ?? client).get<voiceSessionStatusResponses, voiceSessionStatusErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}',
+            ...options
+        });
+    }
+
+    /**
+     * Join Device
+     */
+    public static joinDevice<ThrowOnError extends boolean = true>(options: Options<voiceJoinDeviceData, ThrowOnError>) {
+        return (options.client ?? client).post<voiceJoinDeviceResponses, voiceJoinDeviceErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/devices',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Put Chunk
+     */
+    public static putChunk<ThrowOnError extends boolean = true>(options: Options<voicePutChunkData, ThrowOnError>) {
+        return (options.client ?? client).put<voicePutChunkResponses, voicePutChunkErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/devices/{device_id}/chunks/{chunk_index}',
+            ...options
+        });
+    }
+
+    /**
+     * Get Chunk Status
+     */
+    public static getChunkStatus<ThrowOnError extends boolean = true>(options: Options<voiceGetChunkStatusData, ThrowOnError>) {
+        return (options.client ?? client).get<voiceGetChunkStatusResponses, voiceGetChunkStatusErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/chunks/status',
+            ...options
+        });
+    }
+
+    /**
+     * Finalize
+     */
+    public static finalize<ThrowOnError extends boolean = true>(options: Options<voiceFinalizeData, ThrowOnError>) {
+        return (options.client ?? client).post<voiceFinalizeResponses, voiceFinalizeErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/finalize',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Transcript
+     */
+    public static transcript<ThrowOnError extends boolean = true>(options: Options<voiceTranscriptData, ThrowOnError>) {
+        return (options.client ?? client).get<voiceTranscriptResponses, voiceTranscriptErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/transcript',
+            ...options
+        });
+    }
+
+    /**
+     * Correct
+     */
+    public static correct<ThrowOnError extends boolean = true>(options: Options<voiceCorrectData, ThrowOnError>) {
+        return (options.client ?? client).post<voiceCorrectResponses, voiceCorrectErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/transcript/correct',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Reanalyze
+     */
+    public static reanalyze<ThrowOnError extends boolean = true>(options: Options<voiceReanalyzeData, ThrowOnError>) {
+        return (options.client ?? client).post<voiceReanalyzeResponses, voiceReanalyzeErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/reanalyze',
+            ...options
+        });
+    }
+
+    /**
+     * Publish
+     */
+    public static publish<ThrowOnError extends boolean = true>(options: Options<voicePublishData, ThrowOnError>) {
+        return (options.client ?? client).post<voicePublishResponses, voicePublishErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/publish',
+            ...options
+        });
+    }
+
+    /**
+     * Audio
+     */
+    public static audio<ThrowOnError extends boolean = true>(options: Options<voiceAudioData, ThrowOnError>) {
+        return (options.client ?? client).get<voiceAudioResponses, voiceAudioErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/audio',
+            ...options
+        });
+    }
+
+    /**
+     * Live Status
+     */
+    public static liveStatus<ThrowOnError extends boolean = true>(options: Options<voiceLiveStatusData, ThrowOnError>) {
+        return (options.client ?? client).get<voiceLiveStatusResponses, voiceLiveStatusErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/live',
             ...options
         });
     }

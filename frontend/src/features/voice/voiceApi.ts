@@ -1,0 +1,123 @@
+import type {
+  TranscriptRevisionPublic,
+  VoiceFinalizePublic,
+  VoiceSessionPublic,
+} from "@/client"
+import { VoiceService } from "@/client"
+import { ACCESS_TOKEN_KEY } from "@/features/api"
+import {
+  acknowledgeChunk,
+  completeLocalCapture,
+  decryptQueuedChunk,
+  localCapture,
+  pendingChunks,
+} from "./offlineQueue"
+
+function token(): string {
+  const value = localStorage.getItem(ACCESS_TOKEN_KEY)
+  if (!value) throw new Error("A signed-in membership is required")
+  return value
+}
+
+function apiUrl(path: string): string {
+  return `${import.meta.env.VITE_API_URL ?? ""}${path}`
+}
+
+export async function uploadPendingChunks(captureId: string): Promise<{
+  uploaded: number
+  remaining: number
+}> {
+  const capture = await localCapture(captureId)
+  if (!capture) throw new Error("Local voice capture is missing")
+  let uploaded = 0
+  for (const chunk of await pendingChunks(captureId)) {
+    const plaintext = await decryptQueuedChunk(chunk)
+    const response = await fetch(
+      apiUrl(
+        `/api/v1/voice/sessions/${capture.serverSessionId}/devices/${capture.serverDeviceId}/chunks/${chunk.chunkIndex}`,
+      ),
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": chunk.mediaType,
+          "X-Chunk-SHA256": chunk.sha256,
+          "X-Chunk-Start-Ms": String(chunk.startMs),
+          "X-Chunk-End-Ms": String(chunk.endMs),
+        },
+        body: plaintext,
+      },
+    )
+    if (!response.ok) {
+      if (response.status === 409) {
+        const payload = (await response.json()) as {
+          detail?: { code?: string }
+        }
+        if (payload.detail?.code === "AUDIO_CHUNK_HASH_CONFLICT") {
+          throw new Error(
+            "The server rejected a changed chunk at the same index",
+          )
+        }
+      }
+      throw new Error(`Chunk upload paused (${response.status})`)
+    }
+    await acknowledgeChunk(chunk.id)
+    uploaded += 1
+  }
+  return { uploaded, remaining: (await pendingChunks(captureId)).length }
+}
+
+export async function finalizeCapture(
+  captureId: string,
+): Promise<VoiceFinalizePublic> {
+  const capture = await localCapture(captureId)
+  if (!capture || capture.nextChunkIndex < 1) {
+    throw new Error("No captured audio is available to finalize")
+  }
+  const status = (
+    await VoiceService.getChunkStatus({
+      path: { session_id: capture.serverSessionId },
+    })
+  ).data
+  const devices = status.devices
+    .filter((device) => device.received_indices.length > 0)
+    .map((device) => ({
+      device_id: device.device_id,
+      last_chunk_index: Math.max(...device.received_indices),
+    }))
+  if (devices.length < 1)
+    throw new Error("No uploaded device tracks are available")
+  const response = await VoiceService.finalize({
+    path: { session_id: capture.serverSessionId },
+    headers: { "Idempotency-Key": `voice-finalize-${capture.serverSessionId}` },
+    body: { devices },
+  })
+  await completeLocalCapture(captureId)
+  return response.data
+}
+
+export async function voiceSession(
+  sessionId: string,
+): Promise<VoiceSessionPublic> {
+  return (await VoiceService.sessionStatus({ path: { session_id: sessionId } }))
+    .data
+}
+
+export async function voiceTranscript(
+  sessionId: string,
+): Promise<TranscriptRevisionPublic> {
+  return (await VoiceService.transcript({ path: { session_id: sessionId } }))
+    .data
+}
+
+export function voiceAudioUrl(sessionId: string): string {
+  return apiUrl(`/api/v1/voice/sessions/${sessionId}/audio`)
+}
+
+export async function loadAuthorizedAudio(sessionId: string): Promise<string> {
+  const response = await fetch(voiceAudioUrl(sessionId), {
+    headers: { Authorization: `Bearer ${token()}` },
+  })
+  if (!response.ok) throw new Error(`Audio unavailable (${response.status})`)
+  return URL.createObjectURL(await response.blob())
+}

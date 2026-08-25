@@ -5,6 +5,86 @@ export type ClientOptions = {
 };
 
 /**
+ * AIIngestRequest
+ */
+export type AIIngestRequest = {
+    /**
+     * Source Entry Version Id
+     */
+    source_entry_version_id: string;
+    /**
+     * Interaction Type
+     */
+    interaction_type?: 'care_note' | 'doctor_consult' | 'patient_insight' | 'voice_session';
+};
+
+/**
+ * AIRunPublic
+ */
+export type AIRunPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Source Entry Version Id
+     */
+    source_entry_version_id: string;
+    /**
+     * Provider
+     */
+    provider: string;
+    /**
+     * Model
+     */
+    model: string;
+    /**
+     * Review Model
+     */
+    review_model: string | null;
+    /**
+     * Review Status
+     */
+    review_status: string;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Risk Tier
+     */
+    risk_tier: string;
+    /**
+     * Fallback Reason
+     */
+    fallback_reason: string | null;
+    /**
+     * Needs Review
+     */
+    needs_review: boolean;
+    /**
+     * Output Entry Id
+     */
+    output_entry_id: string | null;
+    /**
+     * Output Entry Version Id
+     */
+    output_entry_version_id: string | null;
+    /**
+     * Warnings
+     */
+    warnings: Array<string>;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
  * AssignmentUpdate
  */
 export type AssignmentUpdate = {
@@ -12,6 +92,24 @@ export type AssignmentUpdate = {
      * Assigned Membership Id
      */
     assigned_membership_id: string | null;
+};
+
+/**
+ * AudioChunkAck
+ */
+export type AudioChunkAck = {
+    /**
+     * Chunk Index
+     */
+    chunk_index: number;
+    /**
+     * Acknowledged
+     */
+    acknowledged?: boolean;
+    /**
+     * Duplicate
+     */
+    duplicate?: boolean;
 };
 
 /**
@@ -42,6 +140,118 @@ export type Body_auth_password_login = {
      * Client Secret
      */
     client_secret?: string | null;
+};
+
+/**
+ * ClinicalFactPublic
+ */
+export type ClinicalFactPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Ordinal
+     */
+    ordinal: number;
+    /**
+     * Fact Type
+     */
+    fact_type: string;
+    /**
+     * Value
+     */
+    value: string;
+    /**
+     * Exact Quote
+     */
+    exact_quote: string;
+    /**
+     * Transcript Start
+     */
+    transcript_start: number;
+    /**
+     * Transcript End
+     */
+    transcript_end: number;
+    /**
+     * Audio Asset Id
+     */
+    audio_asset_id: string;
+    /**
+     * Audio Start Ms
+     */
+    audio_start_ms: number;
+    /**
+     * Audio End Ms
+     */
+    audio_end_ms: number;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Stale
+     */
+    stale: boolean;
+};
+
+/**
+ * ClinicalGlanceCard
+ */
+export type ClinicalGlanceCard = {
+    /**
+     * Highlight Id
+     */
+    highlight_id: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Critical
+     */
+    critical: boolean;
+    /**
+     * Pinned
+     */
+    pinned: boolean;
+    /**
+     * Risk Reason
+     */
+    risk_reason: string;
+    /**
+     * Provenance Pointer Id
+     */
+    provenance_pointer_id: string;
+    /**
+     * Score Components
+     */
+    score_components: {
+        [key: string]: number;
+    };
+};
+
+/**
+ * ClinicalGlancePublic
+ */
+export type ClinicalGlancePublic = {
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Source
+     */
+    source?: 'precomputed';
+    /**
+     * Generated At
+     */
+    generated_at: string;
+    /**
+     * Cards
+     */
+    cards: Array<ClinicalGlanceCard>;
 };
 
 /**
@@ -142,6 +352,90 @@ export type CommentPublic = {
      * Created At
      */
     created_at: string;
+};
+
+/**
+ * DecayArchivePublic
+ */
+export type DecayArchivePublic = {
+    /**
+     * Decay Run Id
+     */
+    decay_run_id: string;
+    /**
+     * Candidate Count
+     */
+    candidate_count: number;
+    /**
+     * Archived Count
+     */
+    archived_count: number;
+    /**
+     * Error Count
+     */
+    error_count: number;
+};
+
+/**
+ * DecayArchiveRequest
+ */
+export type DecayArchiveRequest = {
+    /**
+     * Entry Version Ids
+     */
+    entry_version_ids?: Array<string>;
+    /**
+     * Dry Run
+     */
+    dry_run?: boolean;
+};
+
+/**
+ * DecayCandidatePublic
+ */
+export type DecayCandidatePublic = {
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+    /**
+     * Entry Id
+     */
+    entry_id: string;
+    /**
+     * Storage Tier
+     */
+    storage_tier: 'hot' | 'warm' | 'cold';
+    /**
+     * Age Days
+     */
+    age_days: number;
+    /**
+     * Eligible For Cold
+     */
+    eligible_for_cold: boolean;
+    /**
+     * Protected Reasons
+     */
+    protected_reasons: Array<string>;
+};
+
+/**
+ * DecayPreviewPublic
+ */
+export type DecayPreviewPublic = {
+    /**
+     * Policy Version
+     */
+    policy_version?: string;
+    /**
+     * Candidates
+     */
+    candidates: Array<DecayCandidatePublic>;
+    /**
+     * Count
+     */
+    count: number;
 };
 
 /**
@@ -440,6 +734,18 @@ export type HighlightCreate = {
      * Patient Facing
      */
     patient_facing?: boolean;
+    /**
+     * Feature Keys
+     */
+    feature_keys?: Array<string>;
+    /**
+     * Unresolved
+     */
+    unresolved?: boolean;
+    /**
+     * Clinician Confirmed
+     */
+    clinician_confirmed?: boolean;
 };
 
 /**
@@ -491,9 +797,108 @@ export type HighlightPublic = {
      */
     review_required: boolean;
     /**
+     * Feature Keys
+     */
+    feature_keys: Array<string>;
+    /**
+     * Base Score
+     */
+    base_score: number;
+    /**
+     * Learned Score
+     */
+    learned_score: number;
+    /**
+     * Final Score
+     */
+    final_score: number;
+    /**
+     * Risk Reason
+     */
+    risk_reason: string;
+    /**
+     * Unresolved
+     */
+    unresolved: boolean;
+    /**
+     * Clinician Confirmed
+     */
+    clinician_confirmed: boolean;
+    /**
      * Provenance Pointer Id
      */
     provenance_pointer_id: string;
+};
+
+/**
+ * ImportanceFeedbackCreate
+ */
+export type ImportanceFeedbackCreate = {
+    /**
+     * Signal
+     */
+    signal: 'dismiss';
+};
+
+/**
+ * JobPublic
+ */
+export type JobPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Kind
+     */
+    kind: string;
+    /**
+     * State
+     */
+    state: string;
+    /**
+     * Attempt Count
+     */
+    attempt_count: number;
+    /**
+     * Max Attempts
+     */
+    max_attempts: number;
+    /**
+     * Error Code
+     */
+    error_code: string | null;
+    ai_run?: AIRunPublic | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
+ * LiveTranscriptAvailability
+ */
+export type LiveTranscriptAvailability = {
+    /**
+     * Available
+     */
+    available: boolean;
+    /**
+     * Status
+     */
+    status: 'available' | 'unavailable';
+    /**
+     * Reason Code
+     */
+    reason_code?: string | null;
 };
 
 /**
@@ -679,6 +1084,24 @@ export type ProvenanceResolved = {
 };
 
 /**
+ * RehydratePublic
+ */
+export type RehydratePublic = {
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+    /**
+     * Storage Tier
+     */
+    storage_tier: string;
+    /**
+     * Content Sha256
+     */
+    content_sha256: string;
+};
+
+/**
  * Token
  */
 export type Token = {
@@ -690,6 +1113,156 @@ export type Token = {
      * Token Type
      */
     token_type?: string;
+};
+
+/**
+ * TranscriptCorrection
+ */
+export type TranscriptCorrection = {
+    /**
+     * Text
+     */
+    text: string;
+};
+
+/**
+ * TranscriptRevisionPublic
+ */
+export type TranscriptRevisionPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Revision No
+     */
+    revision_no: number;
+    /**
+     * Previous Revision Id
+     */
+    previous_revision_id: string | null;
+    /**
+     * Text
+     */
+    text: string;
+    /**
+     * Text Sha256
+     */
+    text_sha256: string;
+    /**
+     * Summary
+     */
+    summary: string | null;
+    /**
+     * Provider
+     */
+    provider: string;
+    /**
+     * Model
+     */
+    model: string;
+    /**
+     * Detected Language
+     */
+    detected_language: string | null;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Needs Review
+     */
+    needs_review: boolean;
+    /**
+     * Stale
+     */
+    stale: boolean;
+    /**
+     * Fallback
+     */
+    fallback: boolean;
+    /**
+     * Warning Codes
+     */
+    warning_codes: Array<string>;
+    /**
+     * Segments
+     */
+    segments: Array<TranscriptSegmentPublic>;
+    /**
+     * Facts
+     */
+    facts: Array<ClinicalFactPublic>;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * TranscriptSegmentPublic
+ */
+export type TranscriptSegmentPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Ordinal
+     */
+    ordinal: number;
+    /**
+     * Text
+     */
+    text: string;
+    /**
+     * Text Start
+     */
+    text_start: number;
+    /**
+     * Text End
+     */
+    text_end: number;
+    /**
+     * Start Ms
+     */
+    start_ms: number;
+    /**
+     * End Ms
+     */
+    end_ms: number;
+    /**
+     * Speaker Id
+     */
+    speaker_id: string | null;
+    /**
+     * Detected Language
+     */
+    detected_language: string | null;
+    /**
+     * Confidence
+     */
+    confidence: number | null;
+    /**
+     * Confidence Source
+     */
+    confidence_source: string;
+    /**
+     * Overlap Group Id
+     */
+    overlap_group_id: string | null;
+    /**
+     * Provider
+     */
+    provider: string;
+    /**
+     * Model
+     */
+    model: string;
 };
 
 /**
@@ -718,6 +1291,236 @@ export type ValidationError = {
     ctx?: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * VoiceChunkStatus
+ */
+export type VoiceChunkStatus = {
+    /**
+     * Uploaded Chunks
+     */
+    uploaded_chunks: number;
+    /**
+     * Devices
+     */
+    devices: Array<VoiceDeviceChunkStatus>;
+};
+
+/**
+ * VoiceDeviceChunkStatus
+ */
+export type VoiceDeviceChunkStatus = {
+    /**
+     * Device Id
+     */
+    device_id: string;
+    /**
+     * Client Device Id
+     */
+    client_device_id: string;
+    /**
+     * Received Indices
+     */
+    received_indices: Array<number>;
+    /**
+     * Last Declared Chunk Index
+     */
+    last_declared_chunk_index: number | null;
+};
+
+/**
+ * VoiceDeviceJoin
+ */
+export type VoiceDeviceJoin = {
+    /**
+     * Client Device Id
+     */
+    client_device_id: string;
+    /**
+     * Capture Role
+     */
+    capture_role: 'patient' | 'staff' | 'clinician';
+};
+
+/**
+ * VoiceDevicePublic
+ */
+export type VoiceDevicePublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Client Device Id
+     */
+    client_device_id: string;
+    /**
+     * Capture Role
+     */
+    capture_role: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * VoiceFinalizeDevice
+ */
+export type VoiceFinalizeDevice = {
+    /**
+     * Device Id
+     */
+    device_id: string;
+    /**
+     * Last Chunk Index
+     */
+    last_chunk_index: number;
+};
+
+/**
+ * VoiceFinalizePublic
+ */
+export type VoiceFinalizePublic = {
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * State
+     */
+    state: string;
+    /**
+     * Job Id
+     */
+    job_id: string;
+};
+
+/**
+ * VoiceFinalizeRequest
+ */
+export type VoiceFinalizeRequest = {
+    /**
+     * Devices
+     */
+    devices: Array<VoiceFinalizeDevice>;
+};
+
+/**
+ * VoicePublishPublic
+ */
+export type VoicePublishPublic = {
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Entry Id
+     */
+    entry_id: string;
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+    /**
+     * State
+     */
+    state?: 'published';
+};
+
+/**
+ * VoiceReanalyzePublic
+ */
+export type VoiceReanalyzePublic = {
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Job Id
+     */
+    job_id: string;
+    /**
+     * State
+     */
+    state: string;
+};
+
+/**
+ * VoiceSessionCreate
+ */
+export type VoiceSessionCreate = {
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Capture Kind
+     */
+    capture_kind: 'patient' | 'clinical';
+    /**
+     * Synthetic Fixture
+     */
+    synthetic_fixture?: boolean;
+    /**
+     * Fixture Id
+     */
+    fixture_id?: string | null;
+};
+
+/**
+ * VoiceSessionPublic
+ */
+export type VoiceSessionPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Capture Kind
+     */
+    capture_kind: string;
+    /**
+     * State
+     */
+    state: string;
+    /**
+     * Patient Summary
+     */
+    patient_summary?: string | null;
+    /**
+     * Warning Codes
+     */
+    warning_codes?: Array<string>;
+    /**
+     * Error Code
+     */
+    error_code?: string | null;
+    /**
+     * Current Transcript Revision Id
+     */
+    current_transcript_revision_id?: string | null;
+    /**
+     * Published Entry Id
+     */
+    published_entry_id?: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
 };
 
 export type authDemoLoginData = {
@@ -808,6 +1611,138 @@ export type authLogoutResponses = {
 
 export type authLogoutResponse = authLogoutResponses[keyof authLogoutResponses];
 
+export type aiIngestData = {
+    body: AIIngestRequest;
+    headers: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key': string;
+    };
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/ai/ingest';
+};
+
+export type aiIngestErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type aiIngestError = aiIngestErrors[keyof aiIngestErrors];
+
+export type aiIngestResponses = {
+    /**
+     * Successful Response
+     */
+    200: JobPublic;
+};
+
+export type aiIngestResponse = aiIngestResponses[keyof aiIngestResponses];
+
+export type aiReanalyzeData = {
+    body: AIIngestRequest;
+    headers: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key': string;
+    };
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/ai/reanalyze';
+};
+
+export type aiReanalyzeErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type aiReanalyzeError = aiReanalyzeErrors[keyof aiReanalyzeErrors];
+
+export type aiReanalyzeResponses = {
+    /**
+     * Successful Response
+     */
+    200: JobPublic;
+};
+
+export type aiReanalyzeResponse = aiReanalyzeResponses[keyof aiReanalyzeResponses];
+
+export type aiGetJobData = {
+    body?: never;
+    path: {
+        /**
+         * Job Id
+         */
+        job_id: string;
+    };
+    query?: never;
+    url: '/api/v1/jobs/{job_id}';
+};
+
+export type aiGetJobErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type aiGetJobError = aiGetJobErrors[keyof aiGetJobErrors];
+
+export type aiGetJobResponses = {
+    /**
+     * Successful Response
+     */
+    200: JobPublic;
+};
+
+export type aiGetJobResponse = aiGetJobResponses[keyof aiGetJobResponses];
+
+export type aiRetryJobData = {
+    body?: never;
+    path: {
+        /**
+         * Job Id
+         */
+        job_id: string;
+    };
+    query?: never;
+    url: '/api/v1/jobs/{job_id}/retry';
+};
+
+export type aiRetryJobErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type aiRetryJobError = aiRetryJobErrors[keyof aiRetryJobErrors];
+
+export type aiRetryJobResponses = {
+    /**
+     * Successful Response
+     */
+    200: JobPublic;
+};
+
+export type aiRetryJobResponse = aiRetryJobResponses[keyof aiRetryJobResponses];
+
 export type utilsHealthCheckData = {
     body?: never;
     path?: never;
@@ -895,9 +1830,11 @@ export type patientsPatientGlanceError = patientsPatientGlanceErrors[keyof patie
 
 export type patientsPatientGlanceResponses = {
     /**
+     * Response Patients-Patient Glance
+     *
      * Successful Response
      */
-    200: GlancePublic;
+    200: GlancePublic | ClinicalGlancePublic;
 };
 
 export type patientsPatientGlanceResponse = patientsPatientGlanceResponses[keyof patientsPatientGlanceResponses];
@@ -1294,6 +2231,12 @@ export type trustCreateHighlightResponse = trustCreateHighlightResponses[keyof t
 
 export type trustAcceptData = {
     body?: never;
+    headers?: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path: {
         /**
          * Highlight Id
@@ -1324,6 +2267,12 @@ export type trustAcceptResponse = trustAcceptResponses[keyof trustAcceptResponse
 
 export type trustRejectData = {
     body?: never;
+    headers?: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path: {
         /**
          * Highlight Id
@@ -1354,6 +2303,12 @@ export type trustRejectResponse = trustRejectResponses[keyof trustRejectResponse
 
 export type trustPinData = {
     body?: never;
+    headers?: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key'?: string | null;
+    };
     path: {
         /**
          * Highlight Id
@@ -1381,6 +2336,42 @@ export type trustPinResponses = {
 };
 
 export type trustPinResponse = trustPinResponses[keyof trustPinResponses];
+
+export type trustFeedbackData = {
+    body: ImportanceFeedbackCreate;
+    headers: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key': string;
+    };
+    path: {
+        /**
+         * Highlight Id
+         */
+        highlight_id: string;
+    };
+    query?: never;
+    url: '/api/v1/highlights/{highlight_id}/feedback';
+};
+
+export type trustFeedbackErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustFeedbackError = trustFeedbackErrors[keyof trustFeedbackErrors];
+
+export type trustFeedbackResponses = {
+    /**
+     * Successful Response
+     */
+    200: HighlightPublic;
+};
+
+export type trustFeedbackResponse = trustFeedbackResponses[keyof trustFeedbackResponses];
 
 export type trustProvenanceResolveData = {
     body?: never;
@@ -1445,3 +2436,461 @@ export type eventsEventStreamResponses = {
      */
     200: unknown;
 };
+
+export type decayPreviewData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/decay/preview';
+};
+
+export type decayPreviewResponses = {
+    /**
+     * Successful Response
+     */
+    200: DecayPreviewPublic;
+};
+
+export type decayPreviewResponse = decayPreviewResponses[keyof decayPreviewResponses];
+
+export type decayArchiveData = {
+    body: DecayArchiveRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/decay/archive';
+};
+
+export type decayArchiveErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type decayArchiveError = decayArchiveErrors[keyof decayArchiveErrors];
+
+export type decayArchiveResponses = {
+    /**
+     * Successful Response
+     */
+    200: DecayArchivePublic;
+};
+
+export type decayArchiveResponse = decayArchiveResponses[keyof decayArchiveResponses];
+
+export type decayRehydrateData = {
+    body?: never;
+    path: {
+        /**
+         * Version Id
+         */
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/v1/decay/entries/{version_id}/rehydrate';
+};
+
+export type decayRehydrateErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type decayRehydrateError = decayRehydrateErrors[keyof decayRehydrateErrors];
+
+export type decayRehydrateResponses = {
+    /**
+     * Successful Response
+     */
+    200: RehydratePublic;
+};
+
+export type decayRehydrateResponse = decayRehydrateResponses[keyof decayRehydrateResponses];
+
+export type voiceCreateSessionData = {
+    body: VoiceSessionCreate;
+    path?: never;
+    query?: never;
+    url: '/api/v1/voice/sessions';
+};
+
+export type voiceCreateSessionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceCreateSessionError = voiceCreateSessionErrors[keyof voiceCreateSessionErrors];
+
+export type voiceCreateSessionResponses = {
+    /**
+     * Successful Response
+     */
+    201: VoiceSessionPublic;
+};
+
+export type voiceCreateSessionResponse = voiceCreateSessionResponses[keyof voiceCreateSessionResponses];
+
+export type voiceSessionStatusData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}';
+};
+
+export type voiceSessionStatusErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceSessionStatusError = voiceSessionStatusErrors[keyof voiceSessionStatusErrors];
+
+export type voiceSessionStatusResponses = {
+    /**
+     * Successful Response
+     */
+    200: VoiceSessionPublic;
+};
+
+export type voiceSessionStatusResponse = voiceSessionStatusResponses[keyof voiceSessionStatusResponses];
+
+export type voiceJoinDeviceData = {
+    body: VoiceDeviceJoin;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/devices';
+};
+
+export type voiceJoinDeviceErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceJoinDeviceError = voiceJoinDeviceErrors[keyof voiceJoinDeviceErrors];
+
+export type voiceJoinDeviceResponses = {
+    /**
+     * Successful Response
+     */
+    201: VoiceDevicePublic;
+};
+
+export type voiceJoinDeviceResponse = voiceJoinDeviceResponses[keyof voiceJoinDeviceResponses];
+
+export type voicePutChunkData = {
+    body?: never;
+    headers: {
+        /**
+         * X-Chunk-Sha256
+         */
+        'X-Chunk-SHA256': string;
+        /**
+         * X-Chunk-Start-Ms
+         */
+        'X-Chunk-Start-Ms'?: number | null;
+        /**
+         * X-Chunk-End-Ms
+         */
+        'X-Chunk-End-Ms'?: number | null;
+    };
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+        /**
+         * Device Id
+         */
+        device_id: string;
+        /**
+         * Chunk Index
+         */
+        chunk_index: number;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/devices/{device_id}/chunks/{chunk_index}';
+};
+
+export type voicePutChunkErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voicePutChunkError = voicePutChunkErrors[keyof voicePutChunkErrors];
+
+export type voicePutChunkResponses = {
+    /**
+     * Successful Response
+     */
+    200: AudioChunkAck;
+};
+
+export type voicePutChunkResponse = voicePutChunkResponses[keyof voicePutChunkResponses];
+
+export type voiceGetChunkStatusData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/chunks/status';
+};
+
+export type voiceGetChunkStatusErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceGetChunkStatusError = voiceGetChunkStatusErrors[keyof voiceGetChunkStatusErrors];
+
+export type voiceGetChunkStatusResponses = {
+    /**
+     * Successful Response
+     */
+    200: VoiceChunkStatus;
+};
+
+export type voiceGetChunkStatusResponse = voiceGetChunkStatusResponses[keyof voiceGetChunkStatusResponses];
+
+export type voiceFinalizeData = {
+    body: VoiceFinalizeRequest;
+    headers: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key': string;
+    };
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/finalize';
+};
+
+export type voiceFinalizeErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceFinalizeError = voiceFinalizeErrors[keyof voiceFinalizeErrors];
+
+export type voiceFinalizeResponses = {
+    /**
+     * Successful Response
+     */
+    202: VoiceFinalizePublic;
+};
+
+export type voiceFinalizeResponse = voiceFinalizeResponses[keyof voiceFinalizeResponses];
+
+export type voiceTranscriptData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/transcript';
+};
+
+export type voiceTranscriptErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceTranscriptError = voiceTranscriptErrors[keyof voiceTranscriptErrors];
+
+export type voiceTranscriptResponses = {
+    /**
+     * Successful Response
+     */
+    200: TranscriptRevisionPublic;
+};
+
+export type voiceTranscriptResponse = voiceTranscriptResponses[keyof voiceTranscriptResponses];
+
+export type voiceCorrectData = {
+    body: TranscriptCorrection;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/transcript/correct';
+};
+
+export type voiceCorrectErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceCorrectError = voiceCorrectErrors[keyof voiceCorrectErrors];
+
+export type voiceCorrectResponses = {
+    /**
+     * Successful Response
+     */
+    201: TranscriptRevisionPublic;
+};
+
+export type voiceCorrectResponse = voiceCorrectResponses[keyof voiceCorrectResponses];
+
+export type voiceReanalyzeData = {
+    body?: never;
+    headers: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key': string;
+    };
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/reanalyze';
+};
+
+export type voiceReanalyzeErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceReanalyzeError = voiceReanalyzeErrors[keyof voiceReanalyzeErrors];
+
+export type voiceReanalyzeResponses = {
+    /**
+     * Successful Response
+     */
+    202: VoiceReanalyzePublic;
+};
+
+export type voiceReanalyzeResponse = voiceReanalyzeResponses[keyof voiceReanalyzeResponses];
+
+export type voicePublishData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/publish';
+};
+
+export type voicePublishErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voicePublishError = voicePublishErrors[keyof voicePublishErrors];
+
+export type voicePublishResponses = {
+    /**
+     * Successful Response
+     */
+    200: VoicePublishPublic;
+};
+
+export type voicePublishResponse = voicePublishResponses[keyof voicePublishResponses];
+
+export type voiceAudioData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/audio';
+};
+
+export type voiceAudioErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceAudioError = voiceAudioErrors[keyof voiceAudioErrors];
+
+export type voiceAudioResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type voiceLiveStatusData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/live';
+};
+
+export type voiceLiveStatusErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceLiveStatusError = voiceLiveStatusErrors[keyof voiceLiveStatusErrors];
+
+export type voiceLiveStatusResponses = {
+    /**
+     * Successful Response
+     */
+    200: LiveTranscriptAvailability;
+};
+
+export type voiceLiveStatusResponse = voiceLiveStatusResponses[keyof voiceLiveStatusResponses];

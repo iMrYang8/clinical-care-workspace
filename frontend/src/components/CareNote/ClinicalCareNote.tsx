@@ -3,6 +3,7 @@ import {
   Activity,
   CalendarDays,
   FileSearch,
+  Mic,
   RefreshCw,
   ShieldCheck,
   UserRound,
@@ -259,6 +260,11 @@ export function ClinicalCareNote({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge className="bg-teal-700 text-white">{currentUser.role}</Badge>
+            <Button asChild className="min-h-11 bg-teal-700">
+              <a href={`/patients/${patientId}/voice/capture`}>
+                <Mic /> Record visit
+              </a>
+            </Button>
             <Button onClick={refreshPatient} variant="outline">
               <RefreshCw /> Refresh
             </Button>
