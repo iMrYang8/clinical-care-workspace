@@ -88,7 +88,7 @@ def test_compose_deploy_loads_the_verified_content_addressed_backend_image() -> 
     assert "docker build" not in protected_job
     assert "docker compose -f compose.yml -f compose.deploy.yml build" not in workflow
     assert (
-        'printf \'NIGHTINGALE_BACKEND_IMAGE=%s\\n\' "$expected_image_id" '
+        "printf 'NIGHTINGALE_BACKEND_IMAGE=%s\\n' \"$expected_image_id\" "
         '>> "$GITHUB_ENV"' in protected_job
     )
     build = workflow.index("Package the verified deployable release image once")
