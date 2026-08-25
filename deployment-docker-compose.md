@@ -82,7 +82,12 @@ release_image_id="$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEN
 test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image_id")" = "$NIGHTINGALE_SOURCE_COMMIT"
 export NIGHTINGALE_BACKEND_IMAGE="$release_image_id"
 docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
-docker compose -f compose.yml -f compose.deploy.yml up -d
+docker compose -f compose.yml -f compose.deploy.yml \
+  up -d --wait --wait-timeout 180 proxy backend ai-worker
+test "$(curl --fail --show-error --silent \
+  "https://${DOMAIN}/api/v1/utils/health-check/")" = "true"
+docker compose -f compose.yml -f compose.deploy.yml exec -T ai-worker \
+  python -c "import app.ai_worker; from app.core.db import assert_restricted_runtime_database; assert_restricted_runtime_database()"
 ```
 
 The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to the shared `compose.yml` configuration. Explicitly listing both files excludes the local settings from `compose.override.yml`.
@@ -114,6 +119,13 @@ docker compose -f compose.yml -f compose.deploy.yml run --rm \
   -e NIGHTINGALE_PROVISION_WORKER_EMAIL \
   prestart bash scripts/provision-clinic-admin.sh
 ```
+
+Record the printed `clinic_id`, open `https://${DOMAIN}/login`, and use the
+**Clinic account** form with that ID, `NIGHTINGALE_PROVISION_ADMIN_EMAIL`, and
+the password supplied through `NIGHTINGALE_PROVISION_ADMIN_PASSWORD`. The
+production API rejects the development persona buttons; the password form sets
+the secure HttpOnly browser cookie and does not persist a token in browser
+storage.
 
 The owner URL exists only in that one-shot container. The backend and
 `ai-worker` receive only the restricted `nightingale_app` URL and verify it is

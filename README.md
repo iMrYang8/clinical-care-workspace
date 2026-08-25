@@ -216,6 +216,13 @@ tracked development secret, persist and back up the field-encryption key, and
 review provider/model/license terms before enabling any egress or optional
 profile.
 
+The provisioning command prints the new `clinic_id`. Open `/login` and use the
+**Clinic account** form with that ID, the provisioned Admin email, and the
+operator-supplied password. This form uses the same secure HttpOnly-cookie path
+as the rest of the browser UI and never persists the returned bearer-compatible
+response token. Development persona buttons are deliberately disabled by the
+production API.
+
 Production GitHub deployments share one non-cancelling `production-main`
 concurrency lane. The entry-metadata Alembic revision retains explicit
 `legacy_review_required`/timestamp server defaults as an expand-compatible

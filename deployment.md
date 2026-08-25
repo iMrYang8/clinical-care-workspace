@@ -26,6 +26,11 @@ backend/worker image-revision checks. After startup it uses Docker Compose
 `--wait`, validates the public HTTPS health endpoint, and verifies the durable
 worker process, restricted database role, and immutable image ID.
 
+After explicit clinic provisioning, the command prints the `clinic_id` needed
+by the browser's `/login` **Clinic account** form. Sign in with that ID plus the
+provisioned Admin email/password. Production keeps demo-persona authentication
+disabled; the password form uses only the secure same-origin HttpOnly cookie.
+
 ## FastAPI Cloud deployment disabled
 
 `.github/workflows/deploy.yml` is intentionally verification-only. It performs
