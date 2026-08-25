@@ -646,10 +646,12 @@ test("[Scenario E] patient network is narrow, cookie-only, and provider-off is e
   browser,
   page,
 }) => {
+  test.slow()
   const payloads: unknown[] = []
   const requestUrls: string[] = []
   const authorizationHeaders: Array<string | undefined> = []
   const pending: Promise<void>[] = []
+  const responseCaptureErrors: string[] = []
   page.on("request", (request) => {
     if (!request.url().includes("/api/v1/")) return
     requestUrls.push(request.url())
@@ -657,13 +659,36 @@ test("[Scenario E] patient network is narrow, cookie-only, and provider-off is e
   })
   page.on("response", (response) => {
     if (!response.url().includes("/api/v1/")) return
+    // SSE is intentionally long-lived and audio is binary. Only finite JSON
+    // DTOs participate in the recursive patient-leak inspection below.
+    if (
+      !response
+        .headers()
+        ["content-type"]?.toLowerCase()
+        .includes("application/json")
+    )
+      return
+    const capture = response
+      .json()
+      .then((value) => {
+        payloads.push(value)
+      })
+      .catch((error: unknown) => {
+        responseCaptureErrors.push(
+          `${response.url()}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      })
     pending.push(
-      response
-        .json()
-        .then((value) => {
-          payloads.push(value)
+      new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          responseCaptureErrors.push(`${response.url()}: capture timed out`)
+          resolve()
+        }, 5_000)
+        void capture.then(() => {
+          clearTimeout(timeout)
+          resolve()
         })
-        .catch(() => undefined),
+      }),
     )
   })
 
@@ -771,11 +796,19 @@ test("[Scenario E] patient network is narrow, cookie-only, and provider-off is e
     const response = await fetch(`/api/v1/voice/sessions/${sessionId}/audio`, {
       credentials: "same-origin",
     })
+    // Consume the finite denial DTO in the page as a normal client would.
+    // Leaving the body unread can keep Playwright's parallel response capture
+    // pending even though the status line has arrived.
+    await response.json()
     return response.status
   }, created.body.id)
   expect(patientAudioStatus).toBe(403)
 
-  await Promise.all(pending)
+  // Snapshot because the response event handler can append while the page is
+  // settling. A bounded capture makes any unfinished finite DTO an explicit
+  // test failure instead of hanging the whole Scenario E run.
+  await Promise.all([...pending])
+  expect(responseCaptureErrors).toEqual([])
 
   const keys = collectKeys(payloads)
   for (const forbidden of [

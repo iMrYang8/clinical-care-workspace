@@ -89,6 +89,19 @@ def test_production_compose_and_cloud_workflow_override_demo_boundary() -> None:
     assert workflow.count('ENABLE_DEMO_AUTH: "false"') == 2
 
 
+def test_each_traefik_provider_is_scoped_to_its_compose_project() -> None:
+    """Parallel checkouts must not route identical Host rules across projects."""
+
+    constraint = (
+        '--providers.docker.constraints=Label(`com.docker.compose.project`,'
+        '`${COMPOSE_PROJECT_NAME}`)'
+    )
+    base = (REPOSITORY_ROOT / "compose.yml").read_text()
+    deploy = (REPOSITORY_ROOT / "compose.deploy.yml").read_text()
+    assert constraint in base
+    assert constraint in deploy
+
+
 def test_jwt_secret_rotation_preserves_fields_with_constant_master_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

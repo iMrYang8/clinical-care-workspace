@@ -1,6 +1,6 @@
 import { LoaderCircle, ShieldAlert } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import type { SessionTerminationState } from "@/hooks/useAuth"
 
@@ -29,13 +29,13 @@ export function SessionTerminationScreen({
         ) : (
           <ShieldAlert className="text-amber-700" />
         )}
-        <AlertTitle className="text-lg">
+        <h1 className="col-start-2 min-h-4 text-lg font-medium tracking-tight">
           {pending
             ? "Securing this device"
             : serverEnded
               ? "Local cleanup incomplete"
               : "Session termination incomplete"}
-        </AlertTitle>
+        </h1>
         <AlertDescription className="space-y-4 text-slate-700">
           {pending ? (
             <p>

@@ -9,8 +9,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from sentry_sdk.types import Event, Hint
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.main import api_router
 from app.core.config import settings
@@ -116,7 +117,7 @@ def _origin(value: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-class CookieCsrfMiddleware(BaseHTTPMiddleware):
+class CookieCsrfMiddleware:
     """Require a trusted browser Origin for cookie-authenticated mutations.
 
     Bearer callers remain available for explicit API and worker automation. The
@@ -124,7 +125,17 @@ class CookieCsrfMiddleware(BaseHTTPMiddleware):
     independent origin check on every state-changing request.
     """
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive=receive)
         is_mutation = request.method in {"POST", "PUT", "PATCH", "DELETE"}
         cookie_auth = bool(request.cookies.get(settings.AUTH_COOKIE_NAME))
         bearer_auth = (
@@ -146,10 +157,12 @@ class CookieCsrfMiddleware(BaseHTTPMiddleware):
                 if value.strip()
             )
             if supplied is None or _origin(supplied) not in allowed:
-                return JSONResponse(
+                response = JSONResponse(
                     status_code=403, content={"detail": "CSRF origin rejected"}
                 )
-        return await call_next(request)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 app.add_middleware(CookieCsrfMiddleware)
@@ -166,27 +179,49 @@ def _merge_vary(existing: str | None, required: tuple[str, ...]) -> str:
     return ", ".join(values.values())
 
 
-class PrivateResponseCacheMiddleware(BaseHTTPMiddleware):
-    """Prevent browsers and shared proxies from retaining care responses."""
+class PrivateResponseCacheMiddleware:
+    """Prevent browsers and shared proxies from retaining care responses.
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
-        response = await call_next(request)
-        path = request.url.path
-        content_type = response.headers.get("content-type", "").lower()
-        is_api = path.startswith(f"{settings.API_V1_STR}/")
-        is_html_shell = content_type.startswith("text/html")
-        if is_api or is_html_shell:
-            response.headers["Cache-Control"] = "private, no-store"
-            response.headers["Pragma"] = "no-cache"
-            response.headers["Vary"] = _merge_vary(
-                response.headers.get("Vary"),
-                ("Cookie", "Authorization", "Origin"),
-            )
-        elif path.startswith("/assets/"):
-            # Vite filenames are content hashed; these files contain executable
-            # code and styles, never patient payloads.
-            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-        return response
+    This is deliberately a pure ASGI middleware rather than buffering or
+    reconstructing a streamed response. Editing only ``http.response.start``
+    preserves ``FileResponse``/SSE backpressure while applying the same headers
+    to JSON, events, and the HTML shell.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = str(scope.get("path", ""))
+
+        async def send_with_private_cache(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                content_type = headers.get("content-type", "").lower()
+                is_api = path.startswith(f"{settings.API_V1_STR}/")
+                is_html_shell = content_type.startswith("text/html")
+                if is_api or is_html_shell:
+                    headers["Cache-Control"] = "private, no-store"
+                    headers["Pragma"] = "no-cache"
+                    headers["Vary"] = _merge_vary(
+                        headers.get("Vary"),
+                        ("Cookie", "Authorization", "Origin"),
+                    )
+                elif path.startswith("/assets/"):
+                    # Vite filenames are content hashed; these files contain
+                    # executable code and styles, never patient payloads.
+                    headers["Cache-Control"] = (
+                        "public, max-age=31536000, immutable"
+                    )
+            await send(message)
+
+        await self.app(scope, receive, send_with_private_cache)
 
 
 app.add_middleware(PrivateResponseCacheMiddleware)

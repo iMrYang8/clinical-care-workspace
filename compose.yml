@@ -10,6 +10,10 @@ services:
       - --providers.docker
       # Do not expose all Docker services, only the ones explicitly exposed
       - --providers.docker.exposedbydefault=false
+      # A Docker socket is global to the host. Scope discovery to this exact
+      # Compose project so parallel checkouts/CI runs with the same Host rule
+      # can never be selected as this proxy's backend.
+      - '--providers.docker.constraints=Label(`com.docker.compose.project`,`${COMPOSE_PROJECT_NAME}`)'
       # Create an entrypoint "http" listening on port 80
       - --entrypoints.http.address=:80
       - --entrypoints.http.http.redirections.entrypoint.to=https

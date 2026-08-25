@@ -15,6 +15,8 @@ services:
       - --providers.docker
       # Do not expose all Docker services, only the ones explicitly exposed
       - --providers.docker.exposedbydefault=false
+      # Never discover a parallel Compose project's identically named router.
+      - '--providers.docker.constraints=Label(`com.docker.compose.project`,`${COMPOSE_PROJECT_NAME}`)'
       # Create an entrypoint "http" listening on port 80
       - --entrypoints.http.address=:80
       # Redirect all HTTP traffic to HTTPS

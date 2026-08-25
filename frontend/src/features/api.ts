@@ -117,7 +117,10 @@ async function me(): Promise<MePublic> {
 
 async function logout(): Promise<void> {
   const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), 1_500)
+  // The request remains bounded, but allows enough time for a congested local
+  // TLS proxy to return the authoritative HttpOnly-cookie deletion response.
+  // PHI is already masked in every tab before this wait begins.
+  const timeout = window.setTimeout(() => controller.abort(), 5_000)
   try {
     await AuthService.logout({ signal: controller.signal })
   } finally {

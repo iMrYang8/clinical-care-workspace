@@ -246,8 +246,13 @@ const isLoggedIn = async () => {
     if (httpStatus(error) === 401 || httpStatus(error) === 403) {
       // The login route is not exempt: an expired HttpOnly cookie and an old
       // encrypted voice store must be terminated before another persona can
-      // see the sign-in controls.
-      await terminateUnauthorizedSession()
+      // see the sign-in controls. Start the bounded server request but let the
+      // route resolve immediately: the synchronously published termination
+      // state mounts the full-screen boundary while that request is pending.
+      // Awaiting here would leave a newly loaded document blank until logout
+      // finished and could cancel the fetch when router navigation supersedes
+      // the unresolved guard.
+      void terminateUnauthorizedSession()
     }
     return false
   }

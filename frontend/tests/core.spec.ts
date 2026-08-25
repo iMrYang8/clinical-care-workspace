@@ -58,6 +58,7 @@ test("failed network and CSRF logout stay masked until a confirmed retry", async
   await expect(second.getByText("What matters now")).toBeVisible()
 
   let attempts = 0
+  let csrfStatus: number | undefined
   await page.route("**/api/v1/auth/logout", async (route) => {
     attempts += 1
     if (attempts === 1) {
@@ -65,12 +66,16 @@ test("failed network and CSRF logout stay masked until a confirmed retry", async
       return
     }
     if (attempts === 2) {
-      await route.continue({
+      // route.fetch sends a real request whose Origin Playwright may override;
+      // Chromium itself forbids page JavaScript from forging this header.
+      const response = await route.fetch({
         headers: {
           ...route.request().headers(),
           origin: "https://csrf.invalid",
         },
       })
+      csrfStatus = response.status()
+      await route.fulfill({ response })
       return
     }
     await route.continue()
@@ -114,6 +119,7 @@ test("failed network and CSRF logout stay masked until a confirmed retry", async
     boundary.getByRole("heading", { name: "Session termination incomplete" }),
   ).toBeVisible()
   await expect(boundary).toContainText("CSRF origin rejected")
+  expect(csrfStatus).toBe(403)
   await expect(secondBoundary).toContainText("CSRF origin rejected")
   await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
   expect(
@@ -312,7 +318,7 @@ test("a revoked session masks every tab and deletes old encrypted voice before a
 
   await second.close()
   await page.getByRole("button", { name: "Continue as Patient" }).click()
-  await page.getByRole("link", { name: /record a private reflection/i }).click()
+  await page.getByRole("link", { name: "Add a recording" }).click()
   await expect(
     page.getByRole("heading", { name: "Secure voice capture" }),
   ).toBeVisible()

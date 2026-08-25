@@ -513,7 +513,8 @@ export function VoiceCapture({
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2 text-xl">
-              <Mic className="text-teal-700" /> Secure voice capture
+              <Mic className="text-teal-700" />
+              <h1>Secure voice capture</h1>
             </CardTitle>
             <div className="flex gap-2">
               <Badge variant="outline">{captureKind}</Badge>
@@ -640,7 +641,7 @@ export function VoiceCapture({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Encrypted uploads to recover
+              <h2>Encrypted uploads to recover</h2>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
