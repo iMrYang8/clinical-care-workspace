@@ -123,7 +123,9 @@ def patient_glance(
     ).first()
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Glance snapshot not ready")
-    cards, generated_at = read_glance(snapshot)
+    cards, generated_at = read_glance(
+        snapshot, patient_facing=context.role == "patient"
+    )
     if context.role == "patient":
         # Defence in depth: old/internal snapshot cards never cross the patient DTO.
         cards = [

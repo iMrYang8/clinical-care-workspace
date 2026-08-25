@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -149,6 +150,8 @@ def test_entry_routes_publish_concrete_openapi_response_schemas(client) -> None:
 
 
 def test_live_sse_generator_polls_and_emits_heartbeats(monkeypatch) -> None:
+    user_id = uuid.uuid4()
+    membership_id = uuid.uuid4()
     clinic_id = uuid.uuid4()
     event = DomainEvent(
         sequence_no=42,
@@ -161,7 +164,9 @@ def test_live_sse_generator_polls_and_emits_heartbeats(monkeypatch) -> None:
     pages = iter([[], [event]])
     sleeps: list[float] = []
     monkeypatch.setattr(
-        events_route, "_load_events", lambda _clinic, _after: next(pages)
+        events_route,
+        "_load_events",
+        lambda _user, _membership, _clinic, _after: next(pages),
     )
     monkeypatch.setattr(events_route, "monotonic", lambda: 0.0)
 
@@ -171,15 +176,23 @@ def test_live_sse_generator_polls_and_emits_heartbeats(monkeypatch) -> None:
     monkeypatch.setattr(events_route, "sleep", fake_sleep)
 
     async def exercise() -> None:
-        frames = events_route._frames(clinic_id, 0, snapshot=False)
+        frames = events_route._frames(
+            user_id, membership_id, clinic_id, 0, snapshot=False
+        )
         assert (await anext(frames)).startswith("id: 42\nevent: entry.updated")
         assert sleeps == [events_route.POLL_INTERVAL_SECONDS]
         await frames.aclose()
 
         ticks = iter([0.0, events_route.HEARTBEAT_INTERVAL_SECONDS + 1])
-        monkeypatch.setattr(events_route, "_load_events", lambda _clinic, _after: [])
+        monkeypatch.setattr(
+            events_route,
+            "_load_events",
+            lambda _user, _membership, _clinic, _after: [],
+        )
         monkeypatch.setattr(events_route, "monotonic", lambda: next(ticks))
-        heartbeats = events_route._frames(clinic_id, 42, snapshot=False)
+        heartbeats = events_route._frames(
+            user_id, membership_id, clinic_id, 42, snapshot=False
+        )
         assert await anext(heartbeats) == ": heartbeat\n\n"
         await heartbeats.aclose()
 
@@ -200,7 +213,11 @@ def test_sse_auth_and_concurrent_snapshots_release_pool_connections(client) -> N
             return [
                 frame
                 async for frame in events_route._frames(
-                    context.clinic_id, 0, snapshot=True
+                    context.user_id,
+                    context.membership.id,
+                    context.clinic_id,
+                    0,
+                    snapshot=True,
                 )
             ]
 
@@ -209,6 +226,72 @@ def test_sse_auth_and_concurrent_snapshots_release_pool_connections(client) -> N
 
     asyncio.run(drain_snapshots())
     assert checked_out() == baseline
+
+
+def test_sse_rechecks_membership_and_ends_before_post_revocation_events(
+    client, auth_headers, owner_session, monkeypatch
+) -> None:
+    headers = auth_headers("staff")
+    login = client.post("/api/v1/auth/demo-login", json={"persona": "staff"})
+    context = get_detached_request_context(login.json()["access_token"], None)
+    before_revocation = DomainEvent(
+        clinic_id=context.clinic_id,
+        event_type="entry.updated",
+        aggregate_type="entry",
+        aggregate_id=uuid.uuid4(),
+        actor_id=context.user_id,
+        payload_json={"before_revocation": True},
+    )
+    owner_session.add(before_revocation)
+    owner_session.commit()
+    owner_session.refresh(before_revocation)
+    assert before_revocation.sequence_no is not None
+
+    async def no_wait(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(events_route, "sleep", no_wait)
+
+    async def drain_revoked() -> None:
+        # The first page is authorized and proves the stream was live before
+        # the membership transition.
+        frames = events_route._frames(
+            context.user_id,
+            context.membership.id,
+            context.clinic_id,
+            before_revocation.sequence_no - 1,
+            snapshot=False,
+        )
+        first = await anext(frames)
+        assert "before_revocation" in first
+
+        membership = owner_session.get(ClinicMembership, context.membership.id)
+        assert membership is not None
+        membership.is_active = False
+        owner_session.add(membership)
+        owner_session.commit()
+        owner_session.add(
+            DomainEvent(
+                clinic_id=context.clinic_id,
+                event_type="entry.updated",
+                aggregate_type="entry",
+                aggregate_id=uuid.uuid4(),
+                actor_id=context.user_id,
+                payload_json={"must_not_leak": True},
+            )
+        )
+        owner_session.commit()
+
+        terminal = await anext(frames)
+        assert terminal == "event: session.revoked\ndata: {}\n\n"
+        assert "must_not_leak" not in terminal
+        with pytest.raises(StopAsyncIteration):
+            await anext(frames)
+
+    asyncio.run(drain_revoked())
+    rejected = client.get("/api/v1/auth/me", headers=headers)
+    assert rejected.status_code == 403
+    assert rejected.headers["X-Nightingale-Session-Invalid"] == "1"
 
 
 def test_browser_cookie_flags_cookie_auth_logout_and_csrf() -> None:

@@ -28,7 +28,10 @@ import {
   PatientsService,
   TrustService,
 } from "@/client"
-import { authenticatedFetch } from "@/features/authenticatedFetch"
+import {
+  authenticatedFetch,
+  notifyAuthenticationRejection,
+} from "@/features/authenticatedFetch"
 
 export type DemoPersona = "patient" | "staff" | "clinician" | "admin"
 export type ClinicalRole = MePublic["role"]
@@ -428,6 +431,11 @@ export async function streamDomainEvents(
         if (line.startsWith("id:")) id = Number(line.slice(3).trim())
         if (line.startsWith("event:")) event = line.slice(6).trim()
         if (line.startsWith("data:")) data = line.slice(5).trim()
+      }
+      if (event === "session.revoked") {
+        notifyAuthenticationRejection()
+        await reader.cancel()
+        return
       }
       onEvent({ id, event, data: JSON.parse(data) })
     }

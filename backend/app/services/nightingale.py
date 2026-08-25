@@ -665,11 +665,13 @@ def rebuild_glance(
             desc(col(Highlight.final_score)),
             desc(col(Highlight.created_at)),
         )
-        .limit(5)
         .execution_options(populate_existing=True)
     ).all()
     cards: list[dict[str, object]] = []
+    patient_cards: list[dict[str, object]] = []
     for highlight in highlights:
+        if len(cards) >= 5 and len(patient_cards) >= 5:
+            break
         pointer = session.exec(
             select(ProvenancePointer).where(
                 ProvenancePointer.clinic_id == context.clinic_id,
@@ -701,26 +703,38 @@ def rebuild_glance(
             and source_version is not None
             and source_version.patient_facing
         )
-        cards.append(
-            {
-                "highlight_id": str(highlight.id),
-                "label": field_codec.decrypt_text(
-                    highlight.clinic_id,
-                    "highlight.label",
-                    highlight.id,
-                    highlight.label_ciphertext,
-                ),
-                "critical": highlight.critical,
-                "pinned": highlight.pinned,
-                # This is an effective projection, not a copy of the original
-                # highlight flag. Withdrawing the current Entry immediately
-                # makes its otherwise immutable source unsuitable for patients.
-                "patient_facing": currently_patient_facing,
-                "risk_reason": highlight.risk_reason,
-                "score_components": score_components.get(highlight.id, {}),
-                "provenance_pointer_id": str(pointer.id),
-            }
-        )
+        card: dict[str, object] = {
+            "highlight_id": str(highlight.id),
+            "label": field_codec.decrypt_text(
+                highlight.clinic_id,
+                "highlight.label",
+                highlight.id,
+                highlight.label_ciphertext,
+            ),
+            "critical": highlight.critical,
+            "pinned": highlight.pinned,
+            # This is an effective projection, not a copy of the original
+            # highlight flag. Withdrawing the current Entry immediately makes
+            # its immutable source unsuitable for patients.
+            "patient_facing": currently_patient_facing,
+            "risk_reason": highlight.risk_reason,
+            "score_components": score_components.get(highlight.id, {}),
+            "provenance_pointer_id": str(pointer.id),
+        }
+        if len(cards) < 5:
+            cards.append(card)
+        # Patient eligibility is applied before the independent top-five cut;
+        # high-scoring internal cards therefore cannot crowd out a sixth public
+        # candidate from the patient projection.
+        if currently_patient_facing and len(patient_cards) < 5:
+            patient_cards.append(
+                {
+                    "highlight_id": card["highlight_id"],
+                    "label": card["label"],
+                    "patient_facing": True,
+                    "provenance_pointer_id": card["provenance_pointer_id"],
+                }
+            )
     snapshot = session.exec(
         select(PatientGlanceSnapshot).where(
             PatientGlanceSnapshot.clinic_id == context.clinic_id,
@@ -735,14 +749,17 @@ def rebuild_glance(
         )
     snapshot.generated_at = get_datetime_utc()
     snapshot.payload_ciphertext = field_codec.encrypt_json(
-        context.clinic_id, "glance.payload", snapshot.id, {"cards": cards}
+        context.clinic_id,
+        "glance.payload",
+        snapshot.id,
+        {"cards": cards, "patient_cards": patient_cards},
     )
     session.add(snapshot)
     return snapshot
 
 
 def read_glance(
-    snapshot: PatientGlanceSnapshot,
+    snapshot: PatientGlanceSnapshot, *, patient_facing: bool = False
 ) -> tuple[list[dict[str, object]], datetime]:
     payload = cast(
         dict[str, object],
@@ -753,7 +770,22 @@ def read_glance(
             snapshot.payload_ciphertext,
         ),
     )
-    cards = payload.get("cards", [])
+    cards = payload.get("patient_cards" if patient_facing else "cards")
+    if patient_facing and cards is None:
+        # Backward-compatible read for snapshots created before the independent
+        # patient projection existed. Live source validation remains in the API.
+        legacy_cards = payload.get("cards", [])
+        cards = (
+            [
+                card
+                for card in legacy_cards
+                if isinstance(card, dict) and card.get("patient_facing") is True
+            ]
+            if isinstance(legacy_cards, list)
+            else []
+        )
+    if cards is None:
+        cards = []
     if not isinstance(cards, list):
         return [], snapshot.generated_at
     return cast(list[dict[str, object]], cards[:5]), snapshot.generated_at

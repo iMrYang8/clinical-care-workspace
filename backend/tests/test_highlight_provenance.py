@@ -281,3 +281,80 @@ def test_accept_and_pin_rebuild_precomputed_glance_with_max_five_cards(
     assert glance.status_code == 200, glance.text
     assert len(glance.json()["cards"]) == 5
     assert glance.json()["source"] == "precomputed"
+
+
+def test_internal_top_five_cannot_crowd_out_patient_eligible_cards(
+    client: TestClient, auth_headers
+) -> None:
+    clinician_headers = auth_headers("clinician")
+    patient_headers = auth_headers("patient")
+    patient_id = client.get("/api/v1/patients", headers=clinician_headers).json()[
+        "data"
+    ][0]["id"]
+
+    def create_entry(title: str, *, patient_facing: bool) -> dict:
+        response = client.post(
+            "/api/v1/entries",
+            headers=clinician_headers,
+            json={
+                "patient_id": patient_id,
+                "section": "clinician",
+                "title": title,
+                "content": "prefix IMPORTANT suffix",
+                "patient_facing": patient_facing,
+            },
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def create_pinned(entry: dict, label: str, *, patient_facing: bool) -> None:
+        created = client.post(
+            f"/api/v1/entries/{entry['id']}/highlights",
+            headers=clinician_headers,
+            json={
+                "entry_version_id": entry["version_id"],
+                "start_offset": 7,
+                "end_offset": 16,
+                "exact_quote": "IMPORTANT",
+                "prefix": "prefix ",
+                "suffix": " suffix",
+                "label": label,
+                "critical": True,
+                "patient_facing": patient_facing,
+            },
+        )
+        assert created.status_code == 201, created.text
+        pinned = client.post(
+            f"/api/v1/highlights/{created.json()['id']}/pin",
+            headers=clinician_headers,
+        )
+        assert pinned.status_code == 200, pinned.text
+
+    public_entry = create_entry("Public source", patient_facing=True)
+    for index in range(5):
+        create_pinned(public_entry, f"PUBLIC-CARD-{index}", patient_facing=True)
+    internal_entry = create_entry("Internal source", patient_facing=False)
+    for index in range(5):
+        create_pinned(internal_entry, f"INTERNAL-CARD-{index}", patient_facing=False)
+
+    clinical = client.get(
+        f"/api/v1/patients/{patient_id}/glance", headers=clinician_headers
+    )
+    assert clinical.status_code == 200, clinical.text
+    assert {card["label"] for card in clinical.json()["cards"]} == {
+        f"INTERNAL-CARD-{index}" for index in range(5)
+    }
+
+    patient = client.get(
+        f"/api/v1/patients/{patient_id}/glance", headers=patient_headers
+    )
+    assert patient.status_code == 200, patient.text
+    assert {card["label"] for card in patient.json()["cards"]} == {
+        f"PUBLIC-CARD-{index}" for index in range(5)
+    }
+    for card in patient.json()["cards"]:
+        assert set(card) == {
+            "highlight_id",
+            "label",
+            "provenance_pointer_id",
+        }

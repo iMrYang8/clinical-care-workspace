@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   authenticatedFetch,
   installAxiosAuthenticationRejectionInterceptor,
+  notifyAuthenticationRejection,
   SESSION_INVALID_RESPONSE_HEADER,
   setAuthenticationRejectionHandler,
 } from "./authenticatedFetch"
@@ -77,6 +78,15 @@ describe("authenticated browser fetch", () => {
     setAuthenticationRejectionHandler(handler)
 
     await authenticatedFetch("/api/v1/events/stream")
+
+    expect(handler).toHaveBeenCalledOnce()
+  })
+
+  it("allows a terminal SSE revocation frame to start the same cleanup", () => {
+    const handler = vi.fn()
+    setAuthenticationRejectionHandler(handler)
+
+    notifyAuthenticationRejection()
 
     expect(handler).toHaveBeenCalledOnce()
   })

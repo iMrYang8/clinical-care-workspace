@@ -32,6 +32,10 @@ export function setAuthenticationRejectionHandler(
   authenticationRejectionHandler = handler
 }
 
+export function notifyAuthenticationRejection(): void {
+  authenticationRejectionHandler?.()
+}
+
 export function isAuthenticationRejection(
   response: Pick<Response, "headers" | "status">,
 ): boolean {
@@ -62,7 +66,7 @@ export async function authenticatedFetch(
 ): Promise<Response> {
   const response = await fetch(input, init)
   if (isAuthenticationRejection(response)) {
-    authenticationRejectionHandler?.()
+    notifyAuthenticationRejection()
   }
   return response
 }
@@ -87,7 +91,7 @@ export function installAxiosAuthenticationRejectionInterceptor(
         status !== undefined &&
         isAuthenticationRejectionStatus(status, marker)
       ) {
-        authenticationRejectionHandler?.()
+        notifyAuthenticationRejection()
       }
     }
     return Promise.reject(error)
