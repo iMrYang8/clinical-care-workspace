@@ -1,0 +1,22 @@
+# Experimental readiness overlay. It only enables a cached-model readiness
+# gate; no gated Hugging Face model or terms are accepted automatically.
+services:
+  backend:
+    build:
+      args:
+        INSTALL_DIARIZATION: "true"
+    environment:
+      PYANNOTE_ENABLED: "true"
+      PYANNOTE_MODEL_DIR: /models/pyannote
+    volumes:
+      - ${PYANNOTE_MODEL_DIR:?Set PYANNOTE_MODEL_DIR to a licensed cached model}:/models/pyannote:ro
+
+  ai-worker:
+    build:
+      args:
+        INSTALL_DIARIZATION: "true"
+    environment:
+      PYANNOTE_ENABLED: "true"
+      PYANNOTE_MODEL_DIR: /models/pyannote
+    volumes:
+      - ${PYANNOTE_MODEL_DIR:?Set PYANNOTE_MODEL_DIR to a licensed cached model}:/models/pyannote:ro

@@ -147,6 +147,25 @@ uv sync --project backend --group presidio-nlp
 automatically. `presidio-nlp` installs the locked `en_core_web_sm` package for
 the fail-closed remote-text boundary; it is omitted by the default demo.
 
+## Voice capture and clinical Review Mode
+
+Nightingale now includes encrypted, resumable MediaRecorder capture, per-device
+idempotent chunks, persistent FFmpeg preprocessing, explicit transcription
+provider gates, immutable transcript corrections, evidence-bound clinical
+facts, and clinician-only publication. The default no-key configuration keeps
+ordinary audio and reports `needs_review`; it does not synthesize a transcript.
+The deterministic code-switch/overlap transcript is available only for an
+explicit local synthetic fixture session.
+
+Clinical routes provide mobile capture and a transcript/summary/facts Review
+Mode. Patient routes expose only patient-safe recording status and a summary
+after clinician publication. Raw transcript and facts are not part of the
+Patient DTO.
+
+See [Voice pipeline and operating boundary](./docs/VOICE_PIPELINE.md) for the
+state machine, API, offline recovery behavior, FFmpeg build record, OpenAI audio
+gates, and optional cached-model overlays.
+
 ## Backend Development
 
 Backend docs: [backend/README.md](./backend/README.md).

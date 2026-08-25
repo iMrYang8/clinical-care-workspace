@@ -22,6 +22,11 @@ The third-party comment extension is isolated behind Nightingale's
 CommentAnchorAdapter. No extension source is vendored or modified in this
 repository.
 
+The voice capture queue directly uses idb 8.0.3 under the ISC license. The
+test-only fake-indexeddb 6.2.5 package is Apache-2.0. FFmpeg is installed as a
+separate executable in the backend container and records the exact distributed
+build configuration in /usr/share/doc/nightingale/ffmpeg-build.txt.
+
 THIRD_PARTY_NOTICES.md records direct dependencies, planned integrations, and
 design references. Entries marked planned, optional, or design reference are
 not bundled dependencies, vendored source, or shipped assets in this baseline.
