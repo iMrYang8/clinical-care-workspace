@@ -78,16 +78,24 @@ same-origin TLS. Cookie-authenticated mutations have an Origin check. The
 frontend does not keep a bearer token in local storage, and logout clears the
 session plus the local encrypted voice queue. Logout intent, failure, and
 confirmation are broadcast to every tab: PHI is masked immediately, while a
-failed server logout remains visibly retryable. An authenticated `401` uses the
-same path before another persona may sign in. Bearer JWTs remain available for
-non-browser API compatibility.
+failed server logout remains visibly retryable. Every rejected `/auth/me`
+probe—including a direct visit to `/login` with an expired cookie—uses the same
+path and finishes bounded IndexedDB cleanup before sign-in controls appear.
+Bearer JWTs remain available for non-browser API compatibility.
 
 Clinic admins invite an email but never create its global user, choose a
 temporary password, or silently attach an identity already used by another
 clinic. A 24-hour high-entropy one-time code is stored only as a hash; the
-recipient verifies that code and chooses the password before the membership is
-activated. Admin removal is serialized and cannot remove the final active
-admin.
+recipient opens `/accept-invitation` (the code may be pasted or carried only in
+the URL fragment), verifies the invited email, and chooses the password before
+the membership is activated. Care-team invites allow Staff, Clinician, and
+Admin only; Patient access requires a separate patient-record linking flow.
+Deactivation revokes related pending invites, acceptance rechecks the inviter,
+and serialized removal cannot remove the final active Admin.
+
+All `/api/v1` responses and the HTML shell set `Cache-Control: private,
+no-store` and vary on Cookie, Authorization, and Origin. Content-hashed static
+assets alone use a public immutable cache policy.
 
 Clinical text, comments, Glance payloads, transcript/facts, and audio payloads
 use a clinic-derived AES-256-GCM envelope. `FIELD_ENCRYPTION_MASTER_KEY` is

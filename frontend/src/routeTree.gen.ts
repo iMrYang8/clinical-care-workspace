@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as LayoutRouteImport } from './routes/_layout'
+import { Route as AcceptInvitationRouteImport } from './routes/accept-invitation'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LayoutIndexRouteImport } from './routes/_layout/index'
 import { Route as LayoutAdminRouteImport } from './routes/_layout/admin'
@@ -23,6 +24,11 @@ import { Route as LayoutPatientsPatientIdVoiceCaptureRouteImport } from './route
 
 const LayoutRoute = LayoutRouteImport.update({
   id: '/_layout',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AcceptInvitationRoute = AcceptInvitationRouteImport.update({
+  id: '/accept-invitation',
+  path: '/accept-invitation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -82,6 +88,7 @@ const LayoutPatientsPatientIdVoiceCaptureRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof LayoutIndexRoute
+  '/accept-invitation': typeof AcceptInvitationRoute
   '/login': typeof LoginRoute
   '/admin': typeof LayoutAdminRoute
   '/my-care': typeof LayoutMyCareRoute
@@ -93,6 +100,7 @@ export interface FileRoutesByFullPath {
   '/patients/$patientId/voice/capture': typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 export interface FileRoutesByTo {
+  '/accept-invitation': typeof AcceptInvitationRoute
   '/login': typeof LoginRoute
   '/admin': typeof LayoutAdminRoute
   '/my-care': typeof LayoutMyCareRoute
@@ -107,6 +115,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_layout': typeof LayoutRouteWithChildren
+  '/accept-invitation': typeof AcceptInvitationRoute
   '/login': typeof LoginRoute
   '/_layout/admin': typeof LayoutAdminRoute
   '/_layout/my-care': typeof LayoutMyCareRoute
@@ -122,6 +131,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accept-invitation'
     | '/login'
     | '/admin'
     | '/my-care'
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | '/patients/$patientId/voice/capture'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/accept-invitation'
     | '/login'
     | '/admin'
     | '/my-care'
@@ -146,6 +157,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_layout'
+    | '/accept-invitation'
     | '/login'
     | '/_layout/admin'
     | '/_layout/my-care'
@@ -160,6 +172,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   LayoutRoute: typeof LayoutRouteWithChildren
+  AcceptInvitationRoute: typeof AcceptInvitationRoute
   LoginRoute: typeof LoginRoute
 }
 
@@ -170,6 +183,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof LayoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accept-invitation': {
+      id: '/accept-invitation'
+      path: '/accept-invitation'
+      fullPath: '/accept-invitation'
+      preLoaderRoute: typeof AcceptInvitationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -275,6 +295,7 @@ const LayoutRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   LayoutRoute: LayoutRouteWithChildren,
+  AcceptInvitationRoute: AcceptInvitationRoute,
   LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport

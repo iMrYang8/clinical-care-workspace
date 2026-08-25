@@ -10,7 +10,7 @@ from sqlmodel import col, select
 
 from app.core.security import create_access_token, get_password_hash
 from app.main import app
-from app.models import ClinicMembership, User
+from app.models import ClinicInvitation, ClinicMembership, User
 from app.seed import demo_id
 
 
@@ -55,6 +55,17 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
     }.isdisjoint(invited.json())
     assert delivered["recipient"] == "invited-clinician@nightingale.synthetic"
 
+    wrong_email = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json={
+            "email": "wrong-recipient@nightingale.synthetic",
+            "token": delivered["token"],
+            "password": "recipient-chosen-password",
+        },
+    )
+    assert wrong_email.status_code == 400
+
     # The admin cannot set a password through an ignored legacy field.
     forbidden_password = client.post(
         "/api/v1/admin/memberships",
@@ -82,6 +93,7 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
         "/api/v1/auth/invitations/accept",
         headers={"Origin": "https://localhost"},
         json={
+            "email": "invited-clinician@nightingale.synthetic",
             "token": delivered["token"],
             "password": "recipient-chosen-password",
             "full_name": "Recipient Verified Name",
@@ -96,6 +108,7 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
         "/api/v1/auth/invitations/accept",
         headers={"Origin": "https://localhost"},
         json={
+            "email": "invited-clinician@nightingale.synthetic",
             "token": delivered["token"],
             "password": "recipient-chosen-password",
         },
@@ -115,6 +128,134 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
         ).status_code
         == 409
     )
+
+
+def test_admin_invite_rejects_patient_self_and_existing_members(
+    client: TestClient, auth_headers, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    _capture_invitation(monkeypatch)
+    admin = auth_headers("admin")
+    for email in (
+        "admin@nightingale.synthetic",
+        "staff@nightingale.synthetic",
+    ):
+        response = client.post(
+            "/api/v1/admin/memberships",
+            headers=admin,
+            json={"email": email, "role": "staff"},
+        )
+        assert response.status_code == 409
+
+    patient = client.post(
+        "/api/v1/admin/memberships",
+        headers=admin,
+        json={"email": "patient-invite@example.com", "role": "patient"},
+    )
+    assert patient.status_code == 422
+
+
+def test_deactivating_inviter_revokes_unaccepted_invitations(
+    client: TestClient,
+    auth_headers,
+    monkeypatch,
+    owner_session,
+) -> None:  # type: ignore[no-untyped-def]
+    second_user = User(
+        email="inviter-admin@example.com",
+        full_name="Invitation Admin",
+        hashed_password=get_password_hash("inviter-admin-password"),
+    )
+    owner_session.add(second_user)
+    owner_session.flush()
+    second_membership = ClinicMembership(
+        clinic_id=demo_id("clinic-primary"),
+        user_id=second_user.id,
+        role="admin",
+    )
+    owner_session.add(second_membership)
+    owner_session.commit()
+    second_token = create_access_token(
+        second_user.id,
+        timedelta(minutes=5),
+        membership_id=second_membership.id,
+        clinic_id=second_membership.clinic_id,
+    )
+    delivered = _capture_invitation(monkeypatch)
+    invitation_response = client.post(
+        "/api/v1/admin/memberships",
+        headers={"Authorization": f"Bearer {second_token}"},
+        json={"email": "pending-after-admin-removal@example.com", "role": "staff"},
+    )
+    assert invitation_response.status_code == 201, invitation_response.text
+
+    deactivated = client.post(
+        f"/api/v1/admin/memberships/{second_membership.id}/deactivate",
+        headers=auth_headers("admin"),
+    )
+    assert deactivated.status_code == 200, deactivated.text
+    owner_session.expire_all()
+    invitation = owner_session.get(ClinicInvitation, invitation_response.json()["id"])
+    assert invitation is not None and invitation.revoked_at is not None
+
+    accepted = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json={
+            "email": "pending-after-admin-removal@example.com",
+            "token": delivered["token"],
+            "password": "recipient-controlled-password",
+        },
+    )
+    assert accepted.status_code == 400
+
+
+def test_deactivated_recipient_cannot_reactivate_with_an_older_invitation(
+    client: TestClient,
+    auth_headers,
+    monkeypatch,
+    owner_session,
+) -> None:  # type: ignore[no-untyped-def]
+    email = "recipient-deactivated-after-invite@example.com"
+    delivered = _capture_invitation(monkeypatch)
+    invited = client.post(
+        "/api/v1/admin/memberships",
+        headers=auth_headers("admin"),
+        json={"email": email, "role": "staff"},
+    )
+    assert invited.status_code == 201, invited.text
+
+    user = User(
+        email=email,
+        full_name="Recipient Later Deactivated",
+        hashed_password=get_password_hash("existing-recipient-password"),
+    )
+    owner_session.add(user)
+    owner_session.flush()
+    membership = ClinicMembership(
+        clinic_id=demo_id("clinic-primary"), user_id=user.id, role="staff"
+    )
+    owner_session.add(membership)
+    owner_session.commit()
+
+    deactivated = client.post(
+        f"/api/v1/admin/memberships/{membership.id}/deactivate",
+        headers=auth_headers("admin"),
+    )
+    assert deactivated.status_code == 200, deactivated.text
+    owner_session.expire_all()
+    invitation = owner_session.get(ClinicInvitation, invited.json()["id"])
+    assert invitation is not None and invitation.revoked_at is not None
+
+    recovery = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json={
+            "email": email,
+            "token": delivered["token"],
+            "password": "attempted-self-reactivation",
+        },
+    )
+    assert recovery.status_code == 400
 
 
 def test_cross_clinic_email_preoccupation_cannot_bind_victim_membership(
@@ -165,6 +306,7 @@ def test_cross_clinic_email_preoccupation_cannot_bind_victim_membership(
         "/api/v1/auth/invitations/accept",
         headers={"Origin": "https://localhost"},
         json={
+            "email": victim_email,
             "token": delivered["token"],
             "password": "victim-controlled-password",
             "full_name": "Verified Victim",

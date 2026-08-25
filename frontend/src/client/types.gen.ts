@@ -980,13 +980,17 @@ export type MembershipCreate = {
     /**
      * Role
      */
-    role: 'patient' | 'staff' | 'clinician' | 'admin';
+    role: 'staff' | 'clinician' | 'admin';
 };
 
 /**
  * MembershipInvitationAccept
  */
 export type MembershipInvitationAccept = {
+    /**
+     * Email
+     */
+    email: string;
     /**
      * Token
      */
@@ -1020,7 +1024,7 @@ export type MembershipInvitationPublic = {
     /**
      * Role
      */
-    role: 'patient' | 'staff' | 'clinician' | 'admin';
+    role: 'staff' | 'clinician' | 'admin';
     /**
      * State
      */

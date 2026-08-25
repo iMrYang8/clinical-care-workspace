@@ -243,8 +243,11 @@ const isLoggedIn = async () => {
     await authApi.me()
     return true
   } catch (error) {
-    if (httpStatus(error) === 401 && window.location.pathname !== "/login") {
-      void terminateUnauthorizedSession()
+    if (httpStatus(error) === 401 || httpStatus(error) === 403) {
+      // The login route is not exempt: an expired HttpOnly cookie and an old
+      // encrypted voice store must be terminated before another persona can
+      // see the sign-in controls.
+      await terminateUnauthorizedSession()
     }
     return false
   }
@@ -337,7 +340,7 @@ export function roleHome(
   return "/admin"
 }
 
-const useAuth = () => {
+const useAuth = (options: { loadSession?: boolean } = {}) => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { showErrorToast } = useCustomToast()
@@ -348,6 +351,7 @@ const useAuth = () => {
     queryFn: authApi.me,
     retry: false,
     staleTime: 30_000,
+    enabled: options.loadSession !== false,
   })
 
   const loginMutation = useMutation({

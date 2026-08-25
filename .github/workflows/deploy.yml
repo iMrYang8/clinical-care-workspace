@@ -13,7 +13,7 @@ concurrency:
   # Finish the active production migration/deploy before the newest main SHA.
   # GitHub retains only the latest pending member of a concurrency group, so an
   # older queued run cannot deploy after a newer commit.
-  group: production-${{ github.ref }}
+  group: production-main
   cancel-in-progress: false
 
 jobs:

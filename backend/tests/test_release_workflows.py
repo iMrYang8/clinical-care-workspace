@@ -26,6 +26,8 @@ def test_deployment_waits_for_main_sha_release_gate(name: str) -> None:
     assert "name: production" in deploy
     assert "ref: ${{ github.sha }}" in deploy
     assert "git rev-parse HEAD" in deploy
+    assert "group: production-main" in workflow
+    assert "cancel-in-progress: false" in workflow
 
 
 def test_playwright_required_check_always_runs_and_cannot_allow_skip() -> None:
@@ -34,6 +36,7 @@ def test_playwright_required_check_always_runs_and_cannot_allow_skip() -> None:
     assert "allowed-skips" not in workflow
     assert "needs:\n      - test-playwright" in workflow
     assert "--repeat-each=3 --workers=1" in workflow
+    assert "run --rm --no-deps playwright" in workflow
     assert "COMPOSE_PROJECT_NAME: nightingale-playwright-" in workflow
 
 
@@ -43,6 +46,17 @@ def test_compose_ci_starts_proxy_and_always_cleans_its_named_project() -> None:
     assert "trap cleanup EXIT INT TERM" in workflow
     assert "up -d --wait proxy backend ai-worker" in workflow
     assert "https://localhost/api/v1/utils/health-check/" in workflow
+
+
+def test_backend_ci_never_reuses_or_blindly_deletes_a_compose_project() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "test-backend.yml").read_text()
+    assert "temporary-project-name.sh test" in workflow
+    assert "free-local-port.py" in workflow
+    assert "assert-compose-project-empty.sh" in workflow
+    assert "assert-demo-project-ownership.sh" in workflow
+    assert "trap 'cleanup || true' EXIT INT TERM" in workflow
+    assert "docker compose down -v" not in workflow
+    assert "127.0.0.1:5432" not in workflow
 
 
 def test_openapi_schema_is_a_tracked_sync_artifact() -> None:

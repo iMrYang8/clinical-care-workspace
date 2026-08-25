@@ -91,10 +91,9 @@ trap 'rm -f "$temp_file"' EXIT
   printf 'nightingale_source_commit=%s\n' "$commit"
   printf 'backend_image_id=%s\n' "$immutable_image_id"
   printf 'backend_image_revision_label=%s\n' "$image_commit"
-  docker compose --project-name "$project" \
-  -f "$root/compose.yml" -f "$root/compose.override.yml" \
-  run --rm --no-deps -T backend \
-  ffmpeg -version
+  # Run the exact content-addressed object inspected above. Never resolve the
+  # mutable Compose tag a second time after the revision-label check (TOCTOU).
+  docker run --rm --entrypoint ffmpeg "$immutable_image_id" -version
 } >"$temp_file"
 
 if ! grep -q '^ffmpeg version ' "$temp_file" || \

@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.db import set_rls_clinic
 from app.models import (
     AuditEvent,
+    Clinic,
     ClinicInvitation,
     ClinicMembership,
     DemoLoginRequest,
@@ -124,6 +125,11 @@ def accept_membership_invitation(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
     _set_rls_clinic(session, clinic_id)
+    clinic = session.exec(
+        select(Clinic).where(Clinic.id == clinic_id).with_for_update()
+    ).first()
+    if clinic is None:
+        raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
     token_hash = hashlib.sha256(body.token.encode()).hexdigest()
     invitation = session.exec(
         select(ClinicInvitation)
@@ -137,7 +143,29 @@ def accept_membership_invitation(
     if (
         invitation is None
         or invitation.accepted_at is not None
+        or invitation.revoked_at is not None
         or invitation.expires_at <= now
+        or invitation.role not in {"staff", "clinician", "admin"}
+        or str(invitation.email).strip().lower() != str(body.email).strip().lower()
+    ):
+        raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
+
+    inviter_row = session.exec(
+        select(ClinicMembership, User)
+        .join(User, col(User.id) == ClinicMembership.user_id)
+        .where(
+            ClinicMembership.clinic_id == clinic_id,
+            ClinicMembership.id == invitation.created_by_membership_id,
+        )
+        .with_for_update()
+    ).first()
+    if inviter_row is None:
+        raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
+    inviter_membership, inviter_user = inviter_row
+    if (
+        not inviter_membership.is_active
+        or inviter_membership.role != "admin"
+        or not inviter_user.is_active
     ):
         raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
 
@@ -163,22 +191,23 @@ def accept_membership_invitation(
         session.flush()
 
     membership = session.exec(
-        select(ClinicMembership).where(
+        select(ClinicMembership)
+        .where(
             ClinicMembership.clinic_id == clinic_id,
             ClinicMembership.user_id == user.id,
         )
+        .with_for_update()
     ).first()
-    if membership is not None and membership.is_active:
-        raise HTTPException(status_code=409, detail="Active membership already exists")
-    if membership is None:
-        membership = ClinicMembership(
-            clinic_id=clinic_id,
-            user_id=user.id,
-            role=invitation.role,
-        )
-    else:
-        membership.role = invitation.role
-        membership.is_active = True
+    # Invitation acceptance never reactivates a membership. Deactivation is an
+    # explicit security boundary; a new admin-reviewed workflow must create a
+    # fresh invitation after the inactive membership is handled separately.
+    if membership is not None:
+        raise HTTPException(status_code=409, detail="Clinic membership already exists")
+    membership = ClinicMembership(
+        clinic_id=clinic_id,
+        user_id=user.id,
+        role=invitation.role,
+    )
     session.add(membership)
     session.flush()
 

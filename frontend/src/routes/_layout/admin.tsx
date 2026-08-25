@@ -201,7 +201,6 @@ function AdminBoundary() {
                 }
                 value={invite.role}
               >
-                <option value="patient">Patient</option>
                 <option value="staff">Staff</option>
                 <option value="clinician">Clinician</option>
                 <option value="admin">Admin</option>
@@ -212,6 +211,10 @@ function AdminBoundary() {
                 Nightingale emails a 24-hour one-time code. The recipient—not
                 the admin—verifies the address and chooses the account password
                 before the membership becomes active.
+              </p>
+              <p className="text-xs leading-5 text-slate-500">
+                Patient onboarding is a separate patient-record linking flow;
+                this care-team invitation form cannot create patient access.
               </p>
             </div>
             {inviteStatus && (

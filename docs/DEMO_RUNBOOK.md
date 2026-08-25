@@ -58,6 +58,13 @@ mentions, assignment, resolution, orphan state, and audit.
 Evidence: `[Scenario B]`, plus backend collaboration, revision, importance, and
 admin API tests.
 
+The browser suite also performs the full invitation path: an Admin sends a
+care-team invitation through Mailpit, the recipient opens the public
+`/accept-invitation` form with the code in a URL fragment (never a query),
+verifies the invited email, chooses a password, and appears as an active member.
+Patient onboarding is deliberately absent from this form because it requires a
+separate patient-record link.
+
 ## 4. Scenario C — dates, archive, and rehydrate
 
 1. Choose **Clinician** and open Alex.
@@ -78,7 +85,7 @@ only the eligible encrypted payload. Production defaults to
 This is clearest as the two-context Playwright scenario:
 
 ```bash
-docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm --build \
+docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm --no-deps --build \
   -e CI=1 playwright bun run test:e2e --grep "Scenario D"
 ```
 
@@ -117,7 +124,7 @@ WAV bytes, forces a network outage, reloads the page, resumes the encrypted
 IndexedDB queue, finalizes the session, and enters Review Mode:
 
 ```bash
-docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm --build \
+docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm --no-deps --build \
   -e CI=1 playwright bun run test:e2e --grep "Scenario F"
 ```
 
@@ -138,7 +145,7 @@ pyannote diarization.
 
 ```bash
 docker compose --project-name "$(./scripts/demo-project-name.sh)" build playwright
-docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm \
+docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm --no-deps \
   -e CI=1 playwright bun run test:e2e
 ```
 
@@ -149,7 +156,7 @@ for round in 1 2 3; do
   echo "Demo round ${round}"
   RESET_NIGHTINGALE_LOCAL_DEMO="$(./scripts/demo-project-name.sh --fingerprint)" \
     ./scripts/reset-demo.sh
-  docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm \
+  docker compose --project-name "$(./scripts/demo-project-name.sh)" run --rm --no-deps \
     -e CI=1 playwright bun run test:e2e
 done
 ```
@@ -213,7 +220,7 @@ endpoint, records hardware/commit/sample counts, and fails if warm p95 exceeds
 
 ## Production migration/deploy ordering
 
-The GitHub production workflow uses the `production-${{ github.ref }}`
+Both GitHub production workflows use the same literal `production-main`
 concurrency group with `cancel-in-progress: false`; one migration/deploy
 finishes before the newest pending main SHA begins, preventing an older SHA
 from deploying later. Both deployment workflows skip every non-main ref, run

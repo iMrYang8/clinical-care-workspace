@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import smtplib
 from email.message import EmailMessage
+from urllib.parse import quote
 
 from app.core.config import settings
 
@@ -18,10 +19,16 @@ def deliver_membership_invitation(*, recipient: str, token: str) -> None:
     message["Subject"] = "Your Nightingale clinic invitation"
     message["From"] = f"{settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>"
     message["To"] = recipient
+    acceptance_url = (
+        f"{str(settings.FRONTEND_HOST).rstrip('/')}/accept-invitation#"
+        f"{quote(token, safe='')}"
+    )
     message.set_content(
         "A clinic invited you to Nightingale. Enter this one-time code in the "
         "invitation acceptance form. The code expires in 24 hours:\n\n"
-        f"{token}\n\nIf you did not expect this invitation, ignore this message."
+        f"{token}\n\nOr open this fragment-only link (the code is not sent in an "
+        f"HTTP request):\n{acceptance_url}\n\n"
+        "If you did not expect this invitation, ignore this message."
     )
 
     smtp_type: type[smtplib.SMTP] = (

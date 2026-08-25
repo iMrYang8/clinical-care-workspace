@@ -11,7 +11,7 @@ permissions:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -27,31 +27,40 @@ jobs:
           # Before upgrading uv version, make sure astral-sh/setup-uv knows its checksum.
           # See: https://github.com/astral-sh/setup-uv/issues/851#issuecomment-4282017837
           version: "0.11.18"
-      - run: docker compose down -v --remove-orphans
-      - run: DEV_DB_PORT=5432 docker compose -f compose.yml -f compose.override.yml -f compose.dev-tools.yml up -d --wait db mailpit
-      - name: Install locked Presidio model profile
-        run: uv sync --frozen --package app --group presidio-nlp
-      - name: Migrate DB
+      - name: Run backend contracts in a newly allocated Compose project
         run: |
+          set -euo pipefail
+          project="$(./scripts/temporary-project-name.sh test)"
+          port="$(python3 ./scripts/free-local-port.py)"
+          export NIGHTINGALE_CHECKOUT_FINGERPRINT="$(./scripts/demo-project-name.sh --fingerprint)"
+          ./scripts/assert-compose-project-empty.sh "$project"
+          created=false
+          cleanup() {
+            if [[ "$created" != true ]]; then return 0; fi
+            ./scripts/assert-demo-project-ownership.sh "$project" --temporary
+            DEV_DB_PORT="$port" docker compose --project-name "$project" \
+              -f compose.yml -f compose.override.yml -f compose.dev-tools.yml \
+              down --volumes --remove-orphans
+          }
+          trap 'cleanup || true' EXIT INT TERM
+          created=true
+          DEV_DB_PORT="$port" docker compose --project-name "$project" \
+            -f compose.yml -f compose.override.yml -f compose.dev-tools.yml \
+            up -d --wait db mailpit
+          ./scripts/assert-demo-project-ownership.sh "$project" --temporary
+          uv sync --frozen --package app --group presidio-nlp
           set -a
-          source ../.env
+          source .env
           set +a
-          export DATABASE_URL="postgresql://nightingale_app:${POSTGRES_APP_PASSWORD}@127.0.0.1:5432/app"
-          export MIGRATION_DATABASE_URL="postgresql://postgres:${POSTGRES_PASSWORD}@127.0.0.1:5432/app"
-          uv run bash scripts/prestart.sh
-        working-directory: backend
-      - name: Run tests
-        run: |
-          set -a
-          source ../.env
-          set +a
-          export DATABASE_URL="postgresql://nightingale_app:${POSTGRES_APP_PASSWORD}@127.0.0.1:5432/app"
-          export MIGRATION_DATABASE_URL="postgresql://postgres:${POSTGRES_PASSWORD}@127.0.0.1:5432/app"
-          uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
-        working-directory: backend
+          export DATABASE_URL="postgresql://nightingale_app:${POSTGRES_APP_PASSWORD}@127.0.0.1:${port}/app"
+          export MIGRATION_DATABASE_URL="postgresql://postgres:${POSTGRES_PASSWORD}@127.0.0.1:${port}/app"
+          (
+            cd backend
+            uv run bash scripts/prestart.sh
+            uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
+          )
         env:
           REQUIRE_PRESIDIO_MODEL_TEST: "true"
-      - run: docker compose down -v --remove-orphans
       - name: Store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

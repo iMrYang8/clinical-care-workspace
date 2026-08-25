@@ -62,7 +62,9 @@ const personas = [
 ]
 
 function DemoLogin() {
-  const { loginMutation } = useAuth()
+  // The route guard already performed the anonymous /me probe and secure
+  // cleanup. Do not launch a second unauthenticated /me query from the form.
+  const { loginMutation } = useAuth({ loadSession: false })
 
   const signIn = (persona: DemoPersona) => loginMutation.mutate(persona)
 

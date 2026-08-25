@@ -30,7 +30,10 @@ def get_datetime_utc() -> datetime:
 
 
 Role = Literal["patient", "staff", "clinician", "admin", "worker"]
-MembershipRole = Literal["patient", "staff", "clinician", "admin"]
+# Clinic invitations provision care-team access only. Patient identities require
+# an explicit PatientUserLink onboarding flow so an admin cannot accidentally
+# create an unlinked patient account from the membership screen.
+MembershipRole = Literal["staff", "clinician", "admin"]
 Section = Literal["patient", "staff", "clinician", "system"]
 EntryOrigin = Literal["human", "ai", "system"]
 InteractionType = Literal[
@@ -133,6 +136,9 @@ class ClinicInvitation(TenantRow, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
     accepted_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    revoked_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
     created_at: datetime = Field(
@@ -1385,6 +1391,7 @@ class MembershipInvitationPublic(SQLModel):
 class MembershipInvitationAccept(SQLModel):
     model_config = SQLModelConfig(extra="forbid")
 
+    email: EmailStr
     token: str = Field(min_length=64, max_length=200)
     password: str = Field(min_length=16, max_length=200)
     full_name: str | None = Field(default=None, max_length=255)

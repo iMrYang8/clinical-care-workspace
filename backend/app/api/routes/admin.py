@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import cast
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import col, select
 
 from app.api.deps import CurrentContext, SessionDep
@@ -48,6 +48,31 @@ def _public(user: User, membership: ClinicMembership) -> MembershipPublic:
     )
 
 
+def _lock_active_admin(
+    session: SessionDep,
+    *,
+    clinic_id: uuid.UUID,
+    membership_id: uuid.UUID,
+) -> tuple[ClinicMembership, User]:
+    """Revalidate the actor after acquiring the clinic serialization lock."""
+
+    row = session.exec(
+        select(ClinicMembership, User)
+        .join(User, col(User.id) == ClinicMembership.user_id)
+        .where(
+            ClinicMembership.clinic_id == clinic_id,
+            ClinicMembership.id == membership_id,
+        )
+        .with_for_update()
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=403, detail="Active clinic admin required")
+    membership, user = row
+    if not membership.is_active or membership.role != "admin" or not user.is_active:
+        raise HTTPException(status_code=403, detail="Active clinic admin required")
+    return membership, user
+
+
 @router.get("/memberships", response_model=MembershipsPublic)
 def memberships(session: SessionDep, context: CurrentContext) -> MembershipsPublic:
     _require_admin(context)
@@ -68,11 +93,37 @@ def create_membership(
     _require_admin(context)
     normalized_email = str(body.email).strip().lower()
     now = get_datetime_utc()
+    clinic = session.exec(
+        select(Clinic).where(Clinic.id == context.clinic_id).with_for_update()
+    ).first()
+    if clinic is None:
+        raise HTTPException(status_code=404, detail="Clinic not found")
+    actor_membership, actor_user = _lock_active_admin(
+        session,
+        clinic_id=context.clinic_id,
+        membership_id=context.membership.id,
+    )
+    if str(actor_user.email).strip().lower() == normalized_email:
+        raise HTTPException(status_code=409, detail="Cannot invite the signed-in admin")
+
+    existing_membership = session.exec(
+        select(ClinicMembership)
+        .join(User, col(User.id) == ClinicMembership.user_id)
+        .where(
+            ClinicMembership.clinic_id == context.clinic_id,
+            User.email == normalized_email,
+        )
+        .with_for_update()
+    ).first()
+    if existing_membership is not None:
+        raise HTTPException(status_code=409, detail="Clinic membership already exists")
+
     pending = session.exec(
         select(ClinicInvitation).where(
             ClinicInvitation.clinic_id == context.clinic_id,
             ClinicInvitation.email == normalized_email,
             col(ClinicInvitation.accepted_at).is_(None),
+            col(ClinicInvitation.revoked_at).is_(None),
             ClinicInvitation.expires_at > now,
         )
     ).first()
@@ -90,7 +141,7 @@ def create_membership(
         invited_full_name=body.full_name,
         role=body.role,
         token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
-        created_by_membership_id=context.membership.id,
+        created_by_membership_id=actor_membership.id,
         expires_at=now + timedelta(hours=24),
     )
     session.add(invitation)
@@ -139,15 +190,24 @@ def deactivate_membership(
     ).first()
     if clinic is None:
         raise HTTPException(status_code=404, detail="Clinic not found")
-    membership = session.exec(
-        select(ClinicMembership).where(
+    actor_membership, _actor_user = _lock_active_admin(
+        session,
+        clinic_id=context.clinic_id,
+        membership_id=context.membership.id,
+    )
+    row = session.exec(
+        select(ClinicMembership, User)
+        .join(User, col(User.id) == ClinicMembership.user_id)
+        .where(
             ClinicMembership.id == membership_id,
             ClinicMembership.clinic_id == context.clinic_id,
         )
+        .with_for_update()
     ).first()
-    if membership is None:
+    if row is None:
         raise HTTPException(status_code=404, detail="Membership not found")
-    if membership.id == context.membership.id:
+    membership, user = row
+    if membership.id == actor_membership.id:
         raise HTTPException(status_code=409, detail="Admin cannot deactivate self")
     if membership.role == "admin" and membership.is_active:
         active_admins = session.exec(
@@ -164,11 +224,25 @@ def deactivate_membership(
                 status_code=409,
                 detail="Clinic must retain at least one active admin",
             )
-    user = session.get(User, membership.user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="Membership not found")
     membership.is_active = False
     session.add(membership)
+    now = get_datetime_utc()
+    pending_invitations = session.exec(
+        select(ClinicInvitation)
+        .where(
+            ClinicInvitation.clinic_id == context.clinic_id,
+            col(ClinicInvitation.accepted_at).is_(None),
+            col(ClinicInvitation.revoked_at).is_(None),
+            or_(
+                col(ClinicInvitation.email) == str(user.email).strip().lower(),
+                col(ClinicInvitation.created_by_membership_id) == membership.id,
+            ),
+        )
+        .with_for_update()
+    ).all()
+    for invitation in pending_invitations:
+        invitation.revoked_at = now
+        session.add(invitation)
     emit_change(
         session,
         context,

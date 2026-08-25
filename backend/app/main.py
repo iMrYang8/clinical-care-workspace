@@ -155,6 +155,43 @@ class CookieCsrfMiddleware(BaseHTTPMiddleware):
 app.add_middleware(CookieCsrfMiddleware)
 
 
+def _merge_vary(existing: str | None, required: tuple[str, ...]) -> str:
+    values: dict[str, str] = {}
+    for value in (existing or "").split(","):
+        normalized = value.strip()
+        if normalized:
+            values[normalized.lower()] = normalized
+    for value in required:
+        values[value.lower()] = value
+    return ", ".join(values.values())
+
+
+class PrivateResponseCacheMiddleware(BaseHTTPMiddleware):
+    """Prevent browsers and shared proxies from retaining care responses."""
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        path = request.url.path
+        content_type = response.headers.get("content-type", "").lower()
+        is_api = path.startswith(f"{settings.API_V1_STR}/")
+        is_html_shell = content_type.startswith("text/html")
+        if is_api or is_html_shell:
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Vary"] = _merge_vary(
+                response.headers.get("Vary"),
+                ("Cookie", "Authorization", "Origin"),
+            )
+        elif path.startswith("/assets/"):
+            # Vite filenames are content hashed; these files contain executable
+            # code and styles, never patient payloads.
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+app.add_middleware(PrivateResponseCacheMiddleware)
+
+
 @app.exception_handler(VersionConflictError)
 async def version_conflict_handler(
     _request: Request, exc: VersionConflictError

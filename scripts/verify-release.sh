@@ -215,8 +215,9 @@ if [[ "$run_e2e" == true ]]; then
   docker compose --project-name "$live_project" \
     -f compose.yml -f compose.override.yml build playwright
   docker compose --project-name "$live_project" \
-    -f compose.yml -f compose.override.yml run --rm -e CI=1 \
-    playwright bun run test:e2e
+    -f compose.yml -f compose.override.yml run --rm --no-deps -e CI=1 \
+    playwright bunx playwright test --fail-on-flaky-tests \
+      --trace=retain-on-failure --repeat-each=3 --workers=1
 fi
 
 if [[ "$run_benchmark" == true ]]; then

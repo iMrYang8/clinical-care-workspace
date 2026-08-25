@@ -42,4 +42,8 @@ def test_backend_image_copies_notices_and_binds_source_commit() -> None:
     capture = (ROOT / "scripts" / "capture_ffmpeg_inventory.sh").read_text()
     assert "git status --porcelain --untracked-files=all" in capture
     assert "org.opencontainers.image.revision" in capture
+    assert (
+        'docker run --rm --entrypoint ffmpeg "$immutable_image_id" -version' in capture
+    )
+    assert "run --rm --no-deps -T backend" not in capture
     assert "image_commit" in capture and "immutable_image_id" in capture

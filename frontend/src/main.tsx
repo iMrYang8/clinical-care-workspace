@@ -21,11 +21,14 @@ client.setConfig({
 })
 
 const handleApiError = (error: Error) => {
-  if (error instanceof AxiosError && error.response?.status === 401) {
-    if (window.location.pathname !== "/login") {
-      queryClient.clear()
-      void terminateUnauthorizedSession()
-    }
+  if (!(error instanceof AxiosError)) return
+  const status = error.response?.status
+  const requestUrl = error.config?.url ?? ""
+  const authContextRejected =
+    status === 401 || (status === 403 && requestUrl.includes("/auth/me"))
+  if (authContextRejected) {
+    queryClient.clear()
+    void terminateUnauthorizedSession()
   }
 }
 export const queryClient = new QueryClient({

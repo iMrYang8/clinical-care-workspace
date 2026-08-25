@@ -125,6 +125,15 @@ async function logout(): Promise<void> {
   }
 }
 
+async function acceptInvitation(body: {
+  email: string
+  token: string
+  password: string
+  full_name?: string | null
+}): Promise<MembershipPublic> {
+  return (await AuthService.acceptMembershipInvitation({ body })).data
+}
+
 async function memberships(): Promise<MembershipPublic[]> {
   return (await AdminService.memberships()).data.data
 }
@@ -405,7 +414,7 @@ export async function streamDomainEvents(
   }
 }
 
-export const authApi = { demoLogin, me, logout }
+export const authApi = { demoLogin, me, logout, acceptInvitation }
 export const adminApi = {
   memberships,
   createMembership,

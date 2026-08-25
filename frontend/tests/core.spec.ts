@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { expect, test } from "@playwright/test"
 
 test.use({ storageState: { cookies: [], origins: [] } })
@@ -319,4 +320,155 @@ test("a revoked session masks every tab and deletes old encrypted voice before a
     page.getByRole("heading", { name: "Encrypted uploads to recover" }),
   ).toHaveCount(0)
   await expect(page.getByText("expired-session-fixture")).toHaveCount(0)
+})
+
+test("expired cookie on direct login purges old voice before sign-in controls appear", async ({
+  page,
+}) => {
+  await page.goto("/accept-invitation")
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("nightingale-voice-v1", 2)
+      request.onupgradeneeded = () => {
+        const opened = request.result
+        opened.createObjectStore("captures", { keyPath: "id" })
+        const chunks = opened.createObjectStore("chunks", { keyPath: "id" })
+        chunks.createIndex("by-capture", "captureId")
+        chunks.createIndex("by-capture-index", ["captureId", "chunkIndex"])
+      }
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => resolve(request.result)
+    })
+    const transaction = db.transaction("captures", "readwrite")
+    transaction.objectStore("captures").add({
+      id: "stale-login-voice",
+      patientId: "prior-persona",
+      createdAt: new Date().toISOString(),
+    })
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+    db.close()
+  })
+  await page.context().addCookies([
+    {
+      name: "nightingale_session",
+      value: "expired-cookie-fixture",
+      url: new URL(page.url()).origin,
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+    },
+  ])
+
+  let releaseLogout!: () => void
+  const logoutGate = new Promise<void>((resolve) => {
+    releaseLogout = resolve
+  })
+  await page.route("**/api/v1/auth/logout", async (route) => {
+    await logoutGate
+    await route.continue()
+  })
+  const navigation = page.goto("/login").catch(() => undefined)
+  await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Continue as Care staff" }),
+  ).toHaveCount(0)
+  releaseLogout()
+  await navigation
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(
+    page.getByRole("button", { name: "Continue as Care staff" }),
+  ).toBeVisible()
+  expect(
+    (await page.context().cookies()).some(
+      (cookie) => cookie.name === "nightingale_session",
+    ),
+  ).toBe(false)
+  await expect
+    .poll(() =>
+      page.evaluate(async () =>
+        (await indexedDB.databases()).some(
+          (database) => database.name === "nightingale-voice-v1",
+        ),
+      ),
+    )
+    .toBe(false)
+})
+
+test("[Scenario B] recipient accepts a one-time clinic invitation in the public form", async ({
+  page,
+  request,
+}) => {
+  const email = `playwright-invite-${randomUUID()}@example.com`
+  const password = `recipient-${randomUUID()}`
+  const leakedRequestUrls: string[] = []
+  page.on("request", (networkRequest) => {
+    leakedRequestUrls.push(networkRequest.url())
+  })
+
+  await page.goto("/login")
+  await page.getByRole("button", { name: "Continue as Clinic admin" }).click()
+  await expect(page).toHaveURL(/\/admin$/)
+  await page.getByLabel("Email").fill(email)
+  await page.getByLabel("Display name").fill("Verified Browser Invite")
+  await page.getByLabel("Role").selectOption("clinician")
+  await page.getByRole("button", { name: "Send verified invitation" }).click()
+  await expect(page.getByText(`Invitation sent to ${email}`)).toBeVisible()
+
+  let oneTimeCode = ""
+  await expect
+    .poll(
+      async () => {
+        const listResponse = await request.get(
+          "http://mailpit:8025/api/v1/messages",
+        )
+        if (!listResponse.ok()) return false
+        const listing = (await listResponse.json()) as {
+          messages?: Array<{ ID?: string; To?: Array<{ Address?: string }> }>
+        }
+        const message = listing.messages?.find((candidate) =>
+          candidate.To?.some(
+            (recipient) =>
+              recipient.Address?.toLowerCase() === email.toLowerCase(),
+          ),
+        )
+        if (!message?.ID) return false
+        const detailResponse = await request.get(
+          `http://mailpit:8025/api/v1/message/${message.ID}`,
+        )
+        if (!detailResponse.ok()) return false
+        const match = JSON.stringify(await detailResponse.json()).match(
+          /[0-9a-f]{8}-[0-9a-f-]{27}\.[A-Za-z0-9_-]{40,}/i,
+        )
+        oneTimeCode = match?.[0] ?? ""
+        return Boolean(oneTimeCode)
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true)
+
+  await page.getByTestId("user-menu").click()
+  await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
+  await expect(page).toHaveURL(/\/login$/)
+
+  await page.goto(`/accept-invitation#${encodeURIComponent(oneTimeCode)}`)
+  await expect(page).toHaveURL(/\/accept-invitation$/)
+  await expect(page.getByLabel("One-time code")).toHaveValue(oneTimeCode)
+  await page.getByLabel("Invited email").fill(email)
+  await page.getByLabel("Display name").fill("Recipient Verified Name")
+  await page.getByLabel("New password").fill(password)
+  await page
+    .getByRole("button", { name: "Verify and activate membership" })
+    .click()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(
+    page.getByRole("button", { name: "Continue as Clinic admin" }),
+  ).toBeVisible()
+  expect(leakedRequestUrls.some((url) => url.includes(oneTimeCode))).toBe(false)
+
+  await page.getByRole("button", { name: "Continue as Clinic admin" }).click()
+  await expect(page.getByText(email)).toBeVisible()
+  await expect(page.getByText("Recipient Verified Name")).toBeVisible()
 })

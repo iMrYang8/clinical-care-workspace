@@ -7,7 +7,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-docker-compose
+  # Share the exact production lane with the cloud deploy workflow so two
+  # migration owners can never run concurrently through different entrypoints.
+  group: production-main
   cancel-in-progress: false
 
 jobs:
