@@ -1,32 +1,13 @@
 from sqlmodel import Session, select
 
-from app.core.security import get_password_hash, verify_password
+from app.core.security import verify_password
 from app.models import User
-
-
-def create_user(
-    *, session: Session, email: str, password: str, full_name: str | None = None
-) -> User:
-    user = User(
-        email=email,
-        full_name=full_name,
-        hashed_password=get_password_hash(password),
-    )
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    return user
-
-
-def get_user_by_email(*, session: Session, email: str) -> User | None:
-    return session.exec(select(User).where(User.email == email)).first()
-
 
 DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZmYjE2NzZlZjY0ZWY3ZGRkY2U2OWFjNjk"
 
 
 def authenticate(*, session: Session, email: str, password: str) -> User | None:
-    user = get_user_by_email(session=session, email=email)
+    user = session.exec(select(User).where(User.email == email)).first()
     if user is None:
         verify_password(password, DUMMY_HASH)
         return None
