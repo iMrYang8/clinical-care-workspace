@@ -21,6 +21,7 @@ from app.models import (
     ClinicMembership,
     DecayRun,
     EntryVersion,
+    Highlight,
     ProvenancePointer,
     RetentionLock,
     User,
@@ -291,6 +292,73 @@ def test_concurrent_retention_lock_serializes_before_archive_recheck(
         detail = pending.result(timeout=5)
     assert detail["code"] == "DECAY_NOT_ELIGIBLE"
     assert detail["protected_reasons"] == ["retention_lock"]
+
+
+def test_concurrent_existing_highlight_transition_serializes_archive(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    entry = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Concurrent highlight fixture",
+            "content": "archivable evidence",
+        },
+    ).json()
+    highlight = client.post(
+        f"/api/v1/entries/{entry['id']}/highlights",
+        headers=headers,
+        json={
+            "entry_version_id": entry["version_id"],
+            "start_offset": 11,
+            "end_offset": 19,
+            "exact_quote": "evidence",
+            "label": "Initially unprotected",
+        },
+    ).json()
+    version_id = uuid.UUID(entry["version_id"])
+    version = owner_session.get(EntryVersion, version_id)
+    stored_highlight = owner_session.get(Highlight, uuid.UUID(highlight["id"]))
+    assert version is not None and stored_highlight is not None
+    future = version.created_at + timedelta(days=731)
+
+    # Updating an existing, initially unprotected child must serialize against
+    # archive eligibility recheck just like inserting a retention lock does.
+    stored_highlight.pinned = True
+    owner_session.add(stored_highlight)
+    owner_session.flush()
+
+    def attempt_archive() -> dict:
+        with Session(engine) as session:
+            user = session.get(User, demo_id("user-clinician"))
+            membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+            candidate = session.get(EntryVersion, version_id)
+            assert user is not None and membership is not None and candidate is not None
+            try:
+                archive_version(
+                    session,
+                    RequestContext(user=user, membership=membership),
+                    candidate,
+                    now=future,
+                )
+            except HTTPException as exc:
+                session.rollback()
+                assert isinstance(exc.detail, dict)
+                return exc.detail
+            raise AssertionError("newly pinned version was archived")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(attempt_archive)
+        sleep(0.15)
+        assert pending.done() is False
+        owner_session.commit()
+        detail = pending.result(timeout=5)
+    assert detail["code"] == "DECAY_NOT_ELIGIBLE"
+    assert detail["protected_reasons"] == ["pinned"]
 
 
 def test_ai_trust_downgrade_blocks_cold_data_then_clears_rehydrated_reference(

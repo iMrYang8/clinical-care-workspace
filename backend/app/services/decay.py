@@ -85,13 +85,14 @@ def protected_reasons(
     highlight_statement = select(Highlight).where(
         Highlight.clinic_id == context.clinic_id,
         Highlight.source_entry_version_id == version.id,
-        (
+    )
+    if not lock:
+        highlight_statement = highlight_statement.where(
             col(Highlight.critical).is_(True)
             | col(Highlight.unresolved).is_(True)
             | col(Highlight.pinned).is_(True)
             | col(Highlight.clinician_confirmed).is_(True)
-        ),
-    )
+        )
     if lock:
         highlight_statement = highlight_statement.with_for_update()
     highlights = session.exec(highlight_statement).all()
@@ -106,24 +107,28 @@ def protected_reasons(
             reasons.append("clinician_confirmed")
     conflict_statement = select(ConflictCase).where(
         ConflictCase.clinic_id == context.clinic_id,
-        ConflictCase.status == "unresolved",
         (ConflictCase.left_entry_id == entry.id)
         | (ConflictCase.right_entry_id == entry.id),
     )
+    if not lock:
+        conflict_statement = conflict_statement.where(
+            ConflictCase.status == "unresolved"
+        )
     if lock:
         conflict_statement = conflict_statement.with_for_update()
-    conflict = session.exec(conflict_statement).first()
-    if conflict is not None:
+    conflicts = session.exec(conflict_statement).all()
+    if any(conflict.status == "unresolved" for conflict in conflicts):
         reasons.append("unresolved_conflict")
     task_statement = select(CareTask).where(
         CareTask.clinic_id == context.clinic_id,
         CareTask.patient_id == entry.patient_id,
-        CareTask.status != "completed",
     )
+    if not lock:
+        task_statement = task_statement.where(CareTask.status != "completed")
     if lock:
         task_statement = task_statement.with_for_update()
-    task = session.exec(task_statement).first()
-    if task is not None:
+    tasks = session.exec(task_statement).all()
+    if any(task.status != "completed" for task in tasks):
         reasons.append("open_task")
     if _active_retention_lock(
         session, context.clinic_id, entry, version, now, lock=lock
