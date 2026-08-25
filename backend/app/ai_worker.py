@@ -31,9 +31,10 @@ from app.models import (
 )
 from app.services.ai_jobs import process_job, worker_context_for_job
 from app.services.redaction import assert_presidio_runtime
+from app.services.voice.worker import process_voice_job
 
 logger = logging.getLogger(__name__)
-_AI_JOB_KINDS = ("ai_ingest", "ai_reanalyze")
+_AI_JOB_KINDS = ("ai_ingest", "ai_reanalyze", "voice_process", "voice_reanalyze")
 _SAFE_CONTROL_CODES = {
     "JOB_ATTEMPTS_EXHAUSTED",
     "JOB_CLAIM_LOST",
@@ -183,7 +184,10 @@ async def run_once() -> int:
                 )
                 continue
             try:
-                await process_job(session, context, job.id)
+                if job.kind in {"voice_process", "voice_reanalyze"}:
+                    await process_voice_job(session, context, job.id)
+                else:
+                    await process_job(session, context, job.id)
                 processed += 1
             except HTTPException as exc:
                 session.rollback()

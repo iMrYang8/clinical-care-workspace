@@ -435,10 +435,23 @@ class ProvenancePointer(TenantRow, table=True):
             ["entry_versions.clinic_id", "entry_versions.id"],
             name="fk_provenance_version",
         ),
+        ForeignKeyConstraint(
+            ["clinic_id", "audio_asset_id"],
+            ["audio_assets.clinic_id", "audio_assets.id"],
+            name="fk_provenance_audio_asset_tenant",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "clinical_fact_id"],
+            ["clinical_facts.clinic_id", "clinical_facts.id"],
+            name="fk_provenance_clinical_fact_tenant",
+            use_alter=True,
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     highlight_id: uuid.UUID | None = Field(default=None)
     comment_id: uuid.UUID | None = Field(default=None)
+    clinical_fact_id: uuid.UUID | None = Field(default=None)
     entry_version_id: uuid.UUID
     start_offset: int
     end_offset: int
@@ -874,6 +887,310 @@ class RetentionLock(TenantRow, table=True):
     )
 
 
+class VoiceSession(TenantRow, table=True):
+    __tablename__ = "voice_sessions"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id", name="uq_voice_session_clinic_id"),
+        Index(
+            "ix_voice_session_patient_created", "clinic_id", "patient_id", "created_at"
+        ),
+        Index("ix_voice_session_state_updated", "clinic_id", "state", "updated_at"),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_voice_session_patient_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "current_transcript_revision_id"],
+            ["transcript_revisions.clinic_id", "transcript_revisions.id"],
+            name="fk_voice_session_current_revision_tenant",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "processing_job_id"],
+            ["jobs.clinic_id", "jobs.id"],
+            name="fk_voice_session_job_tenant",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "published_entry_id"],
+            ["entries.clinic_id", "entries.id"],
+            name="fk_voice_session_published_entry_tenant",
+            use_alter=True,
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    capture_kind: str = Field(max_length=20)
+    state: str = Field(default="created", max_length=30)
+    synthetic_fixture: bool = False
+    fixture_id: str | None = Field(default=None, max_length=100)
+    created_by_id: uuid.UUID = Field(foreign_key="users.id")
+    current_transcript_revision_id: uuid.UUID | None = None
+    processing_job_id: uuid.UUID | None = None
+    published_entry_id: uuid.UUID | None = None
+    patient_summary_ciphertext: bytes | None = Field(
+        default=None, sa_column=Column(LargeBinary, nullable=True)
+    )
+    warning_codes_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    error_code: str | None = Field(default=None, max_length=80)
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class VoiceDevice(TenantRow, table=True):
+    __tablename__ = "voice_devices"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id", name="uq_voice_device_clinic_id"),
+        UniqueConstraint(
+            "clinic_id", "session_id", "id", name="uq_voice_device_session_id"
+        ),
+        UniqueConstraint(
+            "clinic_id",
+            "session_id",
+            "client_device_id",
+            name="uq_voice_device_client_id",
+        ),
+        Index("ix_voice_device_session", "clinic_id", "session_id"),
+        ForeignKeyConstraint(
+            ["clinic_id", "session_id"],
+            ["voice_sessions.clinic_id", "voice_sessions.id"],
+            name="fk_voice_device_session_tenant",
+            ondelete="CASCADE",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    session_id: uuid.UUID
+    client_device_id: str = Field(max_length=120)
+    capture_role: str = Field(max_length=30)
+    joined_by_id: uuid.UUID = Field(foreign_key="users.id")
+    last_declared_chunk_index: int | None = None
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class AudioChunk(TenantRow, table=True):
+    __tablename__ = "audio_chunks"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id", name="uq_audio_chunk_clinic_id"),
+        UniqueConstraint(
+            "clinic_id", "device_id", "chunk_index", name="uq_audio_chunk_index"
+        ),
+        Index(
+            "ix_audio_chunk_session_device_index",
+            "clinic_id",
+            "session_id",
+            "device_id",
+            "chunk_index",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "session_id"],
+            ["voice_sessions.clinic_id", "voice_sessions.id"],
+            name="fk_audio_chunk_session_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "session_id", "device_id"],
+            ["voice_devices.clinic_id", "voice_devices.session_id", "voice_devices.id"],
+            name="fk_audio_chunk_device_tenant",
+            ondelete="CASCADE",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    session_id: uuid.UUID
+    device_id: uuid.UUID
+    chunk_index: int = Field(ge=0)
+    payload_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    plaintext_sha256: str = Field(max_length=64)
+    byte_length: int = Field(ge=1)
+    media_type: str = Field(max_length=100)
+    start_ms: int | None = Field(default=None, ge=0)
+    end_ms: int | None = Field(default=None, ge=0)
+    received_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class AudioAsset(TenantRow, table=True):
+    __tablename__ = "audio_assets"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id", name="uq_audio_asset_clinic_id"),
+        UniqueConstraint("clinic_id", "session_id", name="uq_audio_asset_session"),
+        ForeignKeyConstraint(
+            ["clinic_id", "session_id"],
+            ["voice_sessions.clinic_id", "voice_sessions.id"],
+            name="fk_audio_asset_session_tenant",
+            ondelete="CASCADE",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    session_id: uuid.UUID
+    payload_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    plaintext_sha256: str = Field(max_length=64)
+    duration_ms: int = Field(ge=0)
+    media_type: str = Field(default="audio/wav", max_length=100)
+    sample_rate_hz: int = Field(default=16_000, ge=1)
+    channels: int = Field(default=1, ge=1)
+    preprocessing_json: dict[str, object] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
+    )
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class TranscriptRevision(TenantRow, table=True):
+    __tablename__ = "transcript_revisions"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id", name="uq_transcript_revision_clinic_id"),
+        UniqueConstraint(
+            "clinic_id",
+            "session_id",
+            "revision_no",
+            name="uq_transcript_revision_number",
+        ),
+        Index(
+            "ix_transcript_revision_session_created",
+            "clinic_id",
+            "session_id",
+            "created_at",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "session_id"],
+            ["voice_sessions.clinic_id", "voice_sessions.id"],
+            name="fk_transcript_revision_session_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "previous_revision_id"],
+            ["transcript_revisions.clinic_id", "transcript_revisions.id"],
+            name="fk_transcript_previous_revision_tenant",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    session_id: uuid.UUID
+    revision_no: int = Field(ge=1)
+    previous_revision_id: uuid.UUID | None = None
+    text_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    text_sha256: str = Field(max_length=64)
+    summary_ciphertext: bytes | None = Field(
+        default=None, sa_column=Column(LargeBinary, nullable=True)
+    )
+    provider: str = Field(max_length=80)
+    model: str = Field(max_length=160)
+    detected_language: str | None = Field(default=None, max_length=80)
+    status: str = Field(default="ready", max_length=30)
+    needs_review: bool = False
+    stale: bool = False
+    fallback: bool = False
+    corrected_by_id: uuid.UUID | None = Field(default=None, foreign_key="users.id")
+    warning_codes_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class TranscriptSegment(TenantRow, table=True):
+    __tablename__ = "transcript_segments"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id", name="uq_transcript_segment_clinic_id"),
+        UniqueConstraint(
+            "clinic_id", "revision_id", "ordinal", name="uq_transcript_segment_ordinal"
+        ),
+        Index(
+            "ix_transcript_segment_revision_time",
+            "clinic_id",
+            "revision_id",
+            "start_ms",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "revision_id"],
+            ["transcript_revisions.clinic_id", "transcript_revisions.id"],
+            name="fk_transcript_segment_revision_tenant",
+            ondelete="CASCADE",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    revision_id: uuid.UUID
+    ordinal: int = Field(ge=0)
+    text_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    text_sha256: str = Field(max_length=64)
+    text_start: int = Field(ge=0)
+    text_end: int = Field(ge=0)
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(ge=0)
+    speaker_id: str | None = Field(default=None, max_length=80)
+    detected_language: str | None = Field(default=None, max_length=80)
+    confidence: float | None = Field(
+        default=None, sa_column=Column(Float, nullable=True)
+    )
+    confidence_source: str = Field(max_length=80)
+    overlap_group_id: str | None = Field(default=None, max_length=100)
+    provider: str = Field(max_length=80)
+    model: str = Field(max_length=160)
+
+
+class ClinicalFact(TenantRow, table=True):
+    __tablename__ = "clinical_facts"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "id", name="uq_clinical_fact_clinic_id"),
+        UniqueConstraint(
+            "clinic_id", "revision_id", "ordinal", name="uq_clinical_fact_ordinal"
+        ),
+        Index("ix_clinical_fact_revision_status", "clinic_id", "revision_id", "status"),
+        ForeignKeyConstraint(
+            ["clinic_id", "revision_id"],
+            ["transcript_revisions.clinic_id", "transcript_revisions.id"],
+            name="fk_clinical_fact_revision_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "segment_id"],
+            ["transcript_segments.clinic_id", "transcript_segments.id"],
+            name="fk_clinical_fact_segment_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "audio_asset_id"],
+            ["audio_assets.clinic_id", "audio_assets.id"],
+            name="fk_clinical_fact_audio_asset_tenant",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    revision_id: uuid.UUID
+    segment_id: uuid.UUID
+    ordinal: int = Field(ge=0)
+    fact_type: str = Field(max_length=80)
+    value_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    exact_quote_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    quote_sha256: str = Field(max_length=64)
+    transcript_start: int = Field(ge=0)
+    transcript_end: int = Field(ge=0)
+    audio_asset_id: uuid.UUID
+    audio_start_ms: int = Field(ge=0)
+    audio_end_ms: int = Field(ge=0)
+    status: str = Field(default="proposed", max_length=30)
+    patient_facing: bool = False
+    stale: bool = False
+
+
 # API schemas
 class Message(SQLModel):
     message: str
@@ -1166,3 +1483,150 @@ class RehydratePublic(SQLModel):
     entry_version_id: uuid.UUID
     storage_tier: str
     content_sha256: str
+
+
+VoiceCaptureKind = Literal["patient", "clinical"]
+VoiceCaptureRole = Literal["patient", "staff", "clinician"]
+
+
+class VoiceSessionCreate(SQLModel):
+    patient_id: uuid.UUID
+    capture_kind: VoiceCaptureKind
+    synthetic_fixture: bool = False
+    fixture_id: str | None = Field(default=None, max_length=100)
+
+
+class VoiceSessionPublic(SQLModel):
+    id: uuid.UUID
+    patient_id: uuid.UUID
+    capture_kind: str
+    state: str
+    patient_summary: str | None = None
+    warning_codes: list[str] = Field(default_factory=list)
+    error_code: str | None = None
+    current_transcript_revision_id: uuid.UUID | None = None
+    published_entry_id: uuid.UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class VoiceDeviceJoin(SQLModel):
+    client_device_id: str = Field(min_length=1, max_length=120)
+    capture_role: VoiceCaptureRole
+
+
+class VoiceDevicePublic(SQLModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    client_device_id: str
+    capture_role: str
+    created_at: datetime
+
+
+class AudioChunkAck(SQLModel):
+    chunk_index: int
+    acknowledged: bool = True
+    duplicate: bool = False
+
+
+class VoiceDeviceChunkStatus(SQLModel):
+    device_id: uuid.UUID
+    client_device_id: str
+    received_indices: list[int]
+    last_declared_chunk_index: int | None
+
+
+class VoiceChunkStatus(SQLModel):
+    uploaded_chunks: int
+    devices: list[VoiceDeviceChunkStatus]
+
+
+class VoiceFinalizeDevice(SQLModel):
+    device_id: uuid.UUID
+    last_chunk_index: int = Field(ge=0)
+
+
+class VoiceFinalizeRequest(SQLModel):
+    devices: list[VoiceFinalizeDevice] = Field(min_length=1, max_length=8)
+
+
+class VoiceFinalizePublic(SQLModel):
+    session_id: uuid.UUID
+    state: str
+    job_id: uuid.UUID
+
+
+class TranscriptSegmentPublic(SQLModel):
+    id: uuid.UUID
+    ordinal: int
+    text: str
+    text_start: int
+    text_end: int
+    start_ms: int
+    end_ms: int
+    speaker_id: str | None
+    detected_language: str | None
+    confidence: float | None
+    confidence_source: str
+    overlap_group_id: str | None
+    provider: str
+    model: str
+
+
+class ClinicalFactPublic(SQLModel):
+    id: uuid.UUID
+    ordinal: int
+    fact_type: str
+    value: str
+    exact_quote: str
+    transcript_start: int
+    transcript_end: int
+    audio_asset_id: uuid.UUID
+    audio_start_ms: int
+    audio_end_ms: int
+    status: str
+    stale: bool
+
+
+class TranscriptRevisionPublic(SQLModel):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    revision_no: int
+    previous_revision_id: uuid.UUID | None
+    text: str
+    text_sha256: str
+    summary: str | None
+    provider: str
+    model: str
+    detected_language: str | None
+    status: str
+    needs_review: bool
+    stale: bool
+    fallback: bool
+    warning_codes: list[str]
+    segments: list[TranscriptSegmentPublic]
+    facts: list[ClinicalFactPublic]
+    created_at: datetime
+
+
+class TranscriptCorrection(SQLModel):
+    text: str = Field(min_length=1, max_length=500_000)
+
+
+class VoiceReanalyzePublic(SQLModel):
+    session_id: uuid.UUID
+    job_id: uuid.UUID
+    state: str
+
+
+class VoicePublishPublic(SQLModel):
+    session_id: uuid.UUID
+    entry_id: uuid.UUID
+    entry_version_id: uuid.UUID
+    state: Literal["published"] = "published"
+
+
+class LiveTranscriptAvailability(SQLModel):
+    available: bool
+    status: Literal["available", "unavailable"]
+    reason_code: str | None = None

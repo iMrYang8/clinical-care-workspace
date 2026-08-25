@@ -47,7 +47,9 @@ class SyntheticFixtureProvider:
         cursor = 0
         segments: list[TranscriptSegmentResult] = []
         for index, item in enumerate(fixture):
-            segment_text, start_ms, end_ms, speaker, language, confidence, overlap = item
+            segment_text, start_ms, end_ms, speaker, language, confidence, overlap = (
+                item
+            )
             text_start = cursor
             text_end = cursor + len(segment_text)
             segments.append(

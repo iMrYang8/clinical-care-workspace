@@ -12,6 +12,7 @@ from app.services.ai_jobs import (
     process_job,
     worker_context_for_job,
 )
+from app.services.voice.worker import process_voice_job
 
 router = APIRouter(tags=["ai"])
 
@@ -125,7 +126,10 @@ async def retry_job(
         job.updated_at = get_datetime_utc()
         session.add(job)
     else:
-        await process_job(session, worker_context, job.id)
+        if job.kind in {"voice_process", "voice_reanalyze"}:
+            await process_voice_job(session, worker_context, job.id)
+        else:
+            await process_job(session, worker_context, job.id)
     session.commit()
     session.refresh(job)
     return job_public(session, job)

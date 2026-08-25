@@ -5,9 +5,9 @@ inside their methods so the default model-free demo never downloads weights.
 """
 
 from app.services.voice.providers.base import (
+    TranscriptionProvider,
     TranscriptResult,
     TranscriptSegmentResult,
-    TranscriptionProvider,
 )
 
 __all__ = [
