@@ -12,6 +12,16 @@ Upstream license: MIT. The MIT license text is retained in LICENSE.
 The Nightingale name and the baseline configuration changes in this repository
 do not remove the upstream attribution or its MIT notice.
 
-THIRD_PARTY_NOTICES.md records the status of planned integrations and design
-references. Entries marked planned, optional, or design reference are not
-bundled dependencies, vendored source, or shipped assets in this baseline.
+The care-note editor directly uses the MIT-licensed Tiptap open-source packages
+at version 3.30.3 and the MIT-licensed Serene in Serenade Tiptap Comment
+Extension at version 0.2.0:
+https://github.com/ueberdosis/tiptap
+https://github.com/sereneinserenade/tiptap-comment-extension
+
+The third-party comment extension is isolated behind Nightingale's
+CommentAnchorAdapter. No extension source is vendored or modified in this
+repository.
+
+THIRD_PARTY_NOTICES.md records direct dependencies, planned integrations, and
+design references. Entries marked planned, optional, or design reference are
+not bundled dependencies, vendored source, or shipped assets in this baseline.

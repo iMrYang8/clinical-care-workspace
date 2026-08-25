@@ -1,31 +1,34 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { LoaderCircle } from "lucide-react"
+import { useEffect } from "react"
 
-import useAuth from "@/hooks/useAuth"
+import { Button } from "@/components/ui/button"
+import useAuth, { roleHome } from "@/hooks/useAuth"
 
 export const Route = createFileRoute("/_layout/")({
-  component: Dashboard,
-  head: () => ({
-    meta: [
-      {
-        title: "Dashboard - Nightingale",
-      },
-    ],
-  }),
+  component: RoleHomeRedirect,
 })
 
-function Dashboard() {
-  const { user: currentUser } = useAuth()
+function RoleHomeRedirect() {
+  const navigate = useNavigate()
+  const { user, meQuery, logout } = useAuth()
+
+  useEffect(() => {
+    if (user) void navigate({ to: roleHome(user.role), replace: true })
+  }, [navigate, user])
 
   return (
-    <div>
-      <div>
-        <h1 className="text-2xl truncate max-w-sm">
-          Hi, {currentUser?.full_name || currentUser?.email} 👋
-        </h1>
-        <p className="text-muted-foreground">
-          Welcome back, nice to see you again!!!
+    <div className="grid min-h-[50vh] place-items-center text-slate-500">
+      {meQuery.isError ? (
+        <div className="space-y-4 text-center">
+          <p>Membership could not be resolved.</p>
+          <Button onClick={logout}>Clear local session</Button>
+        </div>
+      ) : (
+        <p className="flex items-center gap-2">
+          <LoaderCircle className="animate-spin" /> Opening your workspace…
         </p>
-      </div>
+      )}
     </div>
   )
 }

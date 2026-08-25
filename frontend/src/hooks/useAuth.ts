@@ -1,18 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 
+import type { MePublic } from "@/client"
 import {
-  type Body_login_login_access_token as AccessToken,
-  LoginService,
-  type UserPublic,
-  type UserRegister,
-  UsersService,
-} from "@/client"
-import { handleError } from "@/utils"
+  authApi,
+  type DemoPersona,
+  discardAccessToken,
+  getAccessToken,
+} from "@/features/api"
 import useCustomToast from "./useCustomToast"
 
 const isLoggedIn = () => {
-  return localStorage.getItem("access_token") !== null
+  return getAccessToken() !== null
+}
+
+export function roleHome(
+  role: MePublic["role"],
+): "/my-care" | "/patients" | "/admin" {
+  if (role === "patient") return "/my-care"
+  if (role === "staff" || role === "clinician") return "/patients"
+  return "/admin"
 }
 
 const useAuth = () => {
@@ -20,49 +27,42 @@ const useAuth = () => {
   const queryClient = useQueryClient()
   const { showErrorToast } = useCustomToast()
 
-  const { data: user } = useQuery<UserPublic | null, Error>({
-    queryKey: ["currentUser"],
-    queryFn: async () => (await UsersService.readUserMe()).data,
+  const meQuery = useQuery<MePublic, Error>({
+    queryKey: ["auth", "me"],
+    queryFn: authApi.me,
     enabled: isLoggedIn(),
+    retry: false,
+    staleTime: 30_000,
   })
-
-  const signUpMutation = useMutation({
-    mutationFn: (data: UserRegister) =>
-      UsersService.registerUser({ body: data }),
-    onSuccess: () => {
-      navigate({ to: "/login" })
-    },
-    onError: handleError.bind(showErrorToast),
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["users"] })
-    },
-  })
-
-  const login = async (data: AccessToken) => {
-    const response = await LoginService.loginAccessToken({
-      body: data,
-    })
-    localStorage.setItem("access_token", response.data.access_token)
-  }
 
   const loginMutation = useMutation({
-    mutationFn: login,
-    onSuccess: () => {
-      navigate({ to: "/" })
+    mutationFn: (persona: DemoPersona) => authApi.demoLogin(persona),
+    onSuccess: async () => {
+      const me = await queryClient.fetchQuery({
+        queryKey: ["auth", "me"],
+        queryFn: authApi.me,
+      })
+      await navigate({ to: roleHome(me.role) })
     },
-    onError: handleError.bind(showErrorToast),
+    onError: (error) => showErrorToast(error.message),
   })
 
-  const logout = () => {
-    localStorage.removeItem("access_token")
-    navigate({ to: "/login" })
+  const logout = async () => {
+    const token = getAccessToken()
+    // Clear PHI-bearing client state synchronously. Server logout is best
+    // effort because the current bearer JWT is stateless and the API may be
+    // offline exactly when a user needs to leave the clinical screen.
+    discardAccessToken()
+    queryClient.clear()
+    await navigate({ to: "/login", replace: true })
+    if (token) void authApi.logout(token).catch(() => undefined)
   }
 
   return {
-    signUpMutation,
     loginMutation,
     logout,
-    user,
+    user: meQuery.data,
+    meQuery,
   }
 }
 

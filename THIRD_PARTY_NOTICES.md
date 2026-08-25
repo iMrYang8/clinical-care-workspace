@@ -12,11 +12,12 @@ applicable license and model terms to the release notice.
 | --- | --- | --- |
 | FastAPI Full Stack FastAPI Template | **Direct — incorporated baseline.** This repository is adapted from upstream commit [`68adb40d`](https://github.com/fastapi/full-stack-fastapi-template/commit/68adb40d). | [fastapi/full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template) | MIT; attribution and license retention are recorded in [`ATTRIBUTION.txt`](./ATTRIBUTION.txt) and [`LICENSE`](./LICENSE). |
 
-## Planned direct components
+## Direct frontend dependencies
 
-| Component | Status | Intended role | Licensing note |
+| Component | Version | Role | License / notice |
 | --- | --- | --- | --- |
-| [Tiptap](https://github.com/ueberdosis/tiptap) | **Planned direct dependency — not installed.** | Rich-text editing. | The open-source core is MIT. Any separately licensed Tiptap Pro/Cloud product must be reviewed and recorded before use. |
+| [Tiptap core, React, ProseMirror bridge, and Starter Kit](https://github.com/ueberdosis/tiptap) | `3.30.3` (all four packages) | Open-source rich-text editing for care-note content. | MIT. This repository does not use Tiptap Pro, Cloud Comments, or Versioning. |
+| [Serene in Serenade Tiptap Comment Extension](https://github.com/sereneinserenade/tiptap-comment-extension) | `0.2.0` | Adds the selected-text `commentId` mark only; Nightingale owns persistence, immutable anchoring, review state, mentions, assignment, and audit behavior. | MIT. Used as an npm dependency through `CommentAnchorAdapter`; no source is vendored or modified. |
 
 ## Optional integrations
 
@@ -35,7 +36,6 @@ not dependencies or upstream code.
 
 | Reference | Status | Source / licensing note |
 | --- | --- | --- |
-| Serene | **Design reference only.** | The canonical upstream and terms have not been selected. No Serene material may be imported until both are recorded. |
 | [open-medical-scribe](https://github.com/BirgerMoell/open-medical-scribe) | **Design reference only.** | MIT upstream; no material is incorporated. |
 | [AI-Medical-Scribe](https://github.com/hutchpd/AI-Medical-Scribe) | **Design reference only.** | MIT upstream; no material is incorporated. |
 | open-scribe / OpenScribe | **Design reference only.** | The supplied name corresponds to multiple public projects. No material is incorporated; select a canonical upstream and record its license before any adoption. |
