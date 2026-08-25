@@ -62,6 +62,10 @@ if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
   echo "verify-release chooses isolated project names; unset COMPOSE_PROJECT_NAME." >&2
   exit 2
 fi
+if [[ -n "${NIGHTINGALE_BACKEND_IMAGE:-}" ]]; then
+  echo "verify-release builds and selects its own candidate; unset NIGHTINGALE_BACKEND_IMAGE." >&2
+  exit 2
+fi
 
 if [[ -n "${BUN_BIN:-}" ]]; then
   if command -v "$BUN_BIN" >/dev/null 2>&1; then
@@ -187,6 +191,11 @@ live_http_port=""
 live_https_port=""
 benchmark_output=""
 benchmark_output_is_temporary=false
+verified_backend_image_id=""
+production_project=""
+production_created=false
+production_http_port=""
+production_https_port=""
 cleanup_live() {
   if [[ -n "$live_project" && "$live_created" == true ]]; then
     if ! ./scripts/assert-demo-project-ownership.sh "$live_project" --temporary; then
@@ -202,6 +211,19 @@ cleanup_live() {
   if [[ -n "$benchmark_output" && "$benchmark_output_is_temporary" == true ]]; then
     rm -f "$benchmark_output"
   fi
+}
+
+cleanup_production() {
+  if [[ -z "$production_project" || "$production_created" != true ]]; then
+    return 0
+  fi
+  if ! ./scripts/assert-production-project-ownership.sh "$production_project"; then
+    echo "Refusing cleanup for unverified production-topology project $production_project" >&2
+    return 1
+  fi
+  docker compose --project-name "$production_project" \
+    -f compose.yml -f compose.deploy.yml down --volumes --remove-orphans
+  production_created=false
 }
 
 assert_live_release_topology() {
@@ -233,6 +255,7 @@ assert_live_release_topology() {
     echo "Backend/worker image revision is not the checkout HEAD." >&2
     return 1
   }
+  verified_backend_image_id="$backend_image"
 
   worker_state="$(docker inspect --format '{{.State.Running}}' "$worker_id")"
   worker_command="$(docker inspect --format '{{json .Config.Cmd}}' "$worker_id")"
@@ -256,6 +279,103 @@ assert_live_release_topology() {
     echo "TLS application health check did not return true." >&2
     return 1
   }
+}
+
+assert_production_release_topology() {
+  local backend_id worker_id prestart_id proxy_id
+  local backend_image worker_image prestart_image
+  local backend_env worker_env proxy_command health_body http_status
+  local demo_status demo_headers demo_body clinic_count
+
+  backend_id="$(docker compose --project-name "$production_project" \
+    -f compose.yml -f compose.deploy.yml ps -q backend)"
+  worker_id="$(docker compose --project-name "$production_project" \
+    -f compose.yml -f compose.deploy.yml ps -q ai-worker)"
+  proxy_id="$(docker compose --project-name "$production_project" \
+    -f compose.yml -f compose.deploy.yml ps -q proxy)"
+  prestart_id="$(docker compose --project-name "$production_project" \
+    -f compose.yml -f compose.deploy.yml ps -aq prestart)"
+  [[ -n "$backend_id" && -n "$worker_id" && -n "$proxy_id" && -n "$prestart_id" ]] || {
+    echo "Production topology is missing proxy, prestart, backend, or ai-worker." >&2
+    return 1
+  }
+
+  backend_image="$(docker inspect --format '{{.Image}}' "$backend_id")"
+  worker_image="$(docker inspect --format '{{.Image}}' "$worker_id")"
+  prestart_image="$(docker inspect --format '{{.Image}}' "$prestart_id")"
+  [[ "$backend_image" == "$verified_backend_image_id" \
+     && "$worker_image" == "$verified_backend_image_id" \
+     && "$prestart_image" == "$verified_backend_image_id" ]] || {
+    echo "Production topology did not run the exact verified content-addressed image." >&2
+    return 1
+  }
+
+  backend_env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$backend_id")"
+  worker_env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$worker_id")"
+  grep -Fxq 'FASTAPI_ENV=production' <<<"$backend_env"
+  grep -Fxq 'ENABLE_DEMO_AUTH=false' <<<"$backend_env"
+  grep -Fxq 'FASTAPI_ENV=production' <<<"$worker_env"
+  grep -Fxq 'ENABLE_DEMO_AUTH=false' <<<"$worker_env"
+  proxy_command="$(docker inspect --format '{{json .Config.Cmd}}' "$proxy_id")"
+  [[ "$proxy_command" == *'certificatesresolvers.le.acme.tlschallenge=true'* ]] || {
+    echo "Production proxy is not running the declared ACME TLS topology." >&2
+    return 1
+  }
+
+  docker compose --project-name "$production_project" \
+    -f compose.yml -f compose.deploy.yml exec -T ai-worker \
+    python -c "import app.ai_worker; from app.core.db import assert_restricted_runtime_database; assert_restricted_runtime_database()"
+
+  clinic_count="$(docker compose --project-name "$production_project" \
+    -f compose.yml -f compose.deploy.yml exec -T db \
+    psql -U postgres -d app -Atc 'SELECT count(*) FROM clinics')"
+  [[ "$clinic_count" == 0 ]] || {
+    echo "Production prestart unexpectedly seeded demo data." >&2
+    return 1
+  }
+
+  health_body=""
+  for _ in {1..24}; do
+    if health_body="$(curl --fail --silent --show-error --insecure --noproxy '*' \
+      --resolve "${DOMAIN}:${production_https_port}:127.0.0.1" \
+      "https://${DOMAIN}:${production_https_port}/api/v1/utils/health-check/")"; then
+      break
+    fi
+    sleep 2
+  done
+  [[ "$health_body" == true ]] || {
+    echo "Production HTTPS topology health check did not return true." >&2
+    return 1
+  }
+
+  http_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    --noproxy '*' --resolve "${DOMAIN}:${production_http_port}:127.0.0.1" \
+    "http://${DOMAIN}:${production_http_port}/api/v1/utils/health-check/")"
+  [[ "$http_status" == 301 || "$http_status" == 302 \
+     || "$http_status" == 307 || "$http_status" == 308 ]] || {
+    echo "Production HTTP entrypoint did not redirect to HTTPS (status $http_status)." >&2
+    return 1
+  }
+
+  demo_headers="$(mktemp "${TMPDIR:-/tmp}/nightingale-production-demo-headers.XXXXXX")"
+  demo_body="$(mktemp "${TMPDIR:-/tmp}/nightingale-production-demo-body.XXXXXX")"
+  demo_status="$(curl --silent --show-error --insecure --noproxy '*' \
+    --resolve "${DOMAIN}:${production_https_port}:127.0.0.1" \
+    --dump-header "$demo_headers" --output "$demo_body" --write-out '%{http_code}' \
+    -H "Origin: https://${DOMAIN}" -H 'Content-Type: application/json' \
+    --data '{"persona":"clinician"}' \
+    "https://${DOMAIN}:${production_https_port}/api/v1/auth/demo-login")"
+  if [[ "$demo_status" != 404 ]]; then
+    rm -f "$demo_headers" "$demo_body"
+    echo "Production demo-login unexpectedly succeeded (status $demo_status)." >&2
+    return 1
+  fi
+  if grep -qi '^set-cookie:' "$demo_headers"; then
+    rm -f "$demo_headers" "$demo_body"
+    echo "Production demo-login unexpectedly set an authentication cookie." >&2
+    return 1
+  fi
+  rm -f "$demo_headers" "$demo_body"
 }
 
 if [[ "$run_e2e" == true || "$run_benchmark" == true ]]; then
@@ -319,6 +439,71 @@ if [[ "$run_ffmpeg" == true ]]; then
   else
     ./scripts/capture_ffmpeg_inventory.sh
   fi
+  if [[ -n "$evidence_dir" ]]; then
+    ffmpeg_evidence="$evidence_dir/ffmpeg-container-version.txt"
+  else
+    ffmpeg_evidence="$root/docs/evidence/ffmpeg-container-version.txt"
+  fi
+  ffmpeg_image_id="$(sed -n 's/^backend_image_id=//p' "$ffmpeg_evidence")"
+  [[ -n "$ffmpeg_image_id" ]] || {
+    echo "FFmpeg evidence did not identify its content-addressed backend image." >&2
+    exit 1
+  }
+  if [[ -n "$verified_backend_image_id" \
+        && "$verified_backend_image_id" != "$ffmpeg_image_id" ]]; then
+    echo "Live gates and FFmpeg evidence did not use the same backend image." >&2
+    exit 1
+  fi
+  verified_backend_image_id="$ffmpeg_image_id"
+fi
+
+if [[ "$run_e2e" == true || "$run_benchmark" == true || "$run_ffmpeg" == true ]]; then
+  section "Exact-image production Compose topology"
+  [[ -n "$verified_backend_image_id" ]] || {
+    echo "No content-addressed backend image is available for production verification." >&2
+    exit 1
+  }
+  if [[ -n "$evidence_dir" ]]; then
+    printf '%s\n' "$verified_backend_image_id" > \
+      "$evidence_dir/verified-backend-image-id.txt"
+  fi
+
+  production_project="$(./scripts/temporary-project-name.sh release)"
+  production_http_port="$(python3 scripts/free-local-port.py)"
+  production_https_port="$(python3 scripts/free-local-port.py)"
+  while [[ "$production_https_port" == "$production_http_port" ]]; do
+    production_https_port="$(python3 scripts/free-local-port.py)"
+  done
+  ./scripts/assert-compose-project-empty.sh "$production_project"
+
+  export DOMAIN=nightingale.invalid
+  export PROJECT_NAME="Nightingale production release verification"
+  export SECRET_KEY="$(openssl rand -hex 32)"
+  export FIELD_ENCRYPTION_MASTER_KEY="$(openssl rand -base64 32 | tr -d '\n')"
+  export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+  export POSTGRES_APP_PASSWORD="$(openssl rand -hex 24)"
+  export SMTP_HOST=smtp.invalid
+  export SMTP_USER=""
+  export SMTP_PASSWORD=""
+  export EMAILS_FROM_EMAIL=nightingale@nightingale.invalid
+  export NIGHTINGALE_BACKEND_IMAGE="$verified_backend_image_id"
+  export NIGHTINGALE_PRODUCTION_BIND_ADDRESS=127.0.0.1
+  export NIGHTINGALE_PRODUCTION_HTTP_PORT="$production_http_port"
+  export NIGHTINGALE_PRODUCTION_HTTPS_PORT="$production_https_port"
+  export FASTAPI_ENV=production
+  export ENABLE_DEMO_AUTH=false
+
+  trap 'cleanup_production || true' EXIT INT TERM
+  production_created=true
+  docker compose --project-name "$production_project" \
+    -f compose.yml -f compose.deploy.yml \
+    up --no-build --detach --wait --wait-timeout 180 \
+    proxy db prestart backend ai-worker
+  ./scripts/assert-production-project-ownership.sh "$production_project"
+  assert_production_release_topology
+  cleanup_production
+  trap - EXIT INT TERM
+  production_project=""
 fi
 
 section "Release verification complete"

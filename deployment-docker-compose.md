@@ -76,11 +76,12 @@ To use an authenticated email provider, also set `SMTP_PASSWORD`.
 ```bash
 cd /root/code/app/
 export NIGHTINGALE_SOURCE_COMMIT="$(git rev-parse HEAD)"
-export NIGHTINGALE_BACKEND_IMAGE="nightingale-backend:${NIGHTINGALE_SOURCE_COMMIT}"
-docker compose -f compose.yml -f compose.deploy.yml build backend
-release_image_id="$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEND_IMAGE")"
-test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image_id")" = "$NIGHTINGALE_SOURCE_COMMIT"
-export NIGHTINGALE_BACKEND_IMAGE="$release_image_id"
+release_evidence="$(mktemp -d /var/tmp/nightingale-release.XXXXXXXX)"
+NIGHTINGALE_RELEASE_EVIDENCE_DIR="$release_evidence" \
+  ./scripts/verify-release.sh --e2e --benchmark --ffmpeg
+export NIGHTINGALE_BACKEND_IMAGE="$(cat "$release_evidence/verified-backend-image-id.txt")"
+test "$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEND_IMAGE")" = \
+  "$NIGHTINGALE_BACKEND_IMAGE"
 docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
 docker compose -f compose.yml -f compose.deploy.yml \
   up -d --wait --wait-timeout 180 proxy backend ai-worker
@@ -92,11 +93,12 @@ docker compose -f compose.yml -f compose.deploy.yml exec -T ai-worker \
 
 The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to the shared `compose.yml` configuration. Explicitly listing both files excludes the local settings from `compose.override.yml`.
 
-The production overlay requires `NIGHTINGALE_BACKEND_IMAGE`. Build first with
-the commit-specific tag, verify its OCI revision label, then replace the
-variable with the inspected image ID as shown. The migration owner, API, and
-worker therefore use identical content even if another checkout builds on the
-same Docker daemon.
+The production overlay requires `NIGHTINGALE_BACKEND_IMAGE`. The full gate
+writes the exact content-addressed ID that passed Scenario A-F, benchmark,
+FFmpeg, and production-topology smoke to
+`verified-backend-image-id.txt`. Use that ID directly and do not rebuild between
+verification and migration. The migration owner, API, and worker therefore use
+identical content even if another checkout builds on the same Docker daemon.
 
 The backend Docker image builds the frontend, so the server does not need Bun or prebuilt frontend files.
 
@@ -133,7 +135,11 @@ The owner URL exists only in that one-shot container. The backend and
 
 ## Deploy with GitHub Actions
 
-The included `.github/workflows/deploy-docker-compose.yml` workflow runs the deployment commands on the server when manually triggered from GitHub Actions.
+The included `.github/workflows/deploy-docker-compose.yml` workflow runs the
+deployment commands on the server when manually triggered from GitHub Actions.
+Its hosted gate saves the exact verified image as an integrity-hashed OCI
+artifact; the protected self-hosted job loads and verifies that artifact rather
+than rebuilding from mutable base images.
 
 Use a self-hosted runner only for a repository whose contributors and workflow code you trust. GitHub recommends using self-hosted runners with private repositories because workflows execute directly on the runner machine.
 

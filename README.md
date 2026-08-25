@@ -148,8 +148,10 @@ rendering):
 ./scripts/verify-release.sh
 ```
 
-The complete deployment gate creates a collision-resistant, checkout-bound
-temporary synthetic demo on dynamically selected loopback ports:
+The complete deployment gate first creates a collision-resistant,
+checkout-bound synthetic demo on dynamic loopback ports, then boots the exact
+same content-addressed backend image with `compose.yml + compose.deploy.yml` in
+an independently scoped production-topology project:
 
 ```bash
 ./scripts/verify-release.sh --e2e --benchmark --ffmpeg
@@ -162,10 +164,12 @@ output at
 for a release image, the container build must be recorded as **not tested**;
 host FFmpeg output is not a substitute.
 
-Both production workflows run this complete command before crossing the
-protected release boundary. Scenario A-F runs with `--repeat-each=3`; the live
-benchmark rejects a running backend image whose OCI revision differs from
-checkout `HEAD`, and the worker/TLS topology must be ready.
+The protected Docker Compose workflow runs this complete command before its
+release boundary. Scenario A-F runs with `--repeat-each=3`; the live benchmark
+rejects a running backend image whose OCI revision differs from checkout
+`HEAD`. The second topology proves production mode, disabled demo auth, no
+automatic fixture seed, HTTPS redirect/routing, the durable worker, and its
+restricted database role without rebuilding the verified image.
 
 Individual commands are documented in the verification section of the demo
 runbook. The checked-in **historical** measurement for commit
@@ -188,11 +192,12 @@ deployment files and publishes 80/443:
 
 ```bash
 export NIGHTINGALE_SOURCE_COMMIT="$(git rev-parse HEAD)"
-export NIGHTINGALE_BACKEND_IMAGE="nightingale-backend:${NIGHTINGALE_SOURCE_COMMIT}"
-docker compose -f compose.yml -f compose.deploy.yml build backend
-release_image_id="$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEND_IMAGE")"
-test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image_id")" = "$NIGHTINGALE_SOURCE_COMMIT"
-export NIGHTINGALE_BACKEND_IMAGE="$release_image_id"
+release_evidence="$(mktemp -d /var/tmp/nightingale-release.XXXXXXXX)"
+NIGHTINGALE_RELEASE_EVIDENCE_DIR="$release_evidence" \
+  ./scripts/verify-release.sh --e2e --benchmark --ffmpeg
+export NIGHTINGALE_BACKEND_IMAGE="$(cat "$release_evidence/verified-backend-image-id.txt")"
+test "$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEND_IMAGE")" = \
+  "$NIGHTINGALE_BACKEND_IMAGE"
 docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
 docker compose -f compose.yml -f compose.deploy.yml \
   up -d --wait --wait-timeout 180 proxy backend ai-worker
@@ -203,8 +208,9 @@ docker compose -f compose.yml -f compose.deploy.yml exec -T ai-worker \
 ```
 
 Production Compose refuses an implicit `backend:latest`. Migration, API, and
-worker all receive the one inspected content-addressed image ID, so another
-checkout cannot replace the release between build, migration, and startup.
+worker all receive the exact image ID that passed the full gate, so another
+checkout or a later rebuild cannot replace the release between verification,
+migration, and startup.
 
 The base configuration sets `FASTAPI_ENV=production` and
 `ENABLE_DEMO_AUTH=false`; production prestart runs role bootstrap and Alembic
@@ -223,20 +229,21 @@ as the rest of the browser UI and never persists the returned bearer-compatible
 response token. Development persona buttons are deliberately disabled by the
 production API.
 
-Production GitHub deployments share one non-cancelling `production-main`
-concurrency lane. The entry-metadata Alembic revision retains explicit
-`legacy_review_required`/timestamp server defaults as an expand-compatible
-bridge for an old API process during migration; a later contract migration may
-remove them only after old binaries are retired.
+The supported Docker Compose deployment alone owns the non-cancelling
+`production-main` concurrency lane. The entry-metadata Alembic revision retains
+explicit `legacy_review_required`/timestamp server defaults as an
+expand-compatible bridge for an old API process during migration; a later
+contract migration may remove them only after old binaries are retired.
 
-Both production workflows run full live release gates without production
-secrets and upload current-SHA evidence. The Docker Compose workflow is the
-only complete supported deployment and deploys that exact SHA on `main` after
-approval. The FastAPI Cloud workflow is intentionally verification-only because
-a one-process deployment does not start the durable `python -m app.ai_worker`
-required for voice and AI jobs. Repository operators must configure required
-reviewers and a main-only branch rule on the GitHub `production` environment
-before enabling Compose deployment.
+The Docker Compose workflow runs full live release gates without production
+secrets, archives the exact OCI image that passed them, and after approval loads
+that same artifact on the self-hosted runner rather than rebuilding it. It is
+the only complete supported deployment. The FastAPI Cloud workflow is an
+unprivileged verification-only check: it has no production environment,
+secrets, or production concurrency lock because a one-process deployment does
+not start the durable `python -m app.ai_worker` required for voice and AI jobs.
+Repository operators must configure required reviewers and a main-only branch
+rule on the GitHub `production` environment before enabling Compose deployment.
 
 ## Repository map
 

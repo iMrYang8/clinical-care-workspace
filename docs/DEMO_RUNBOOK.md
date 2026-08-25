@@ -173,10 +173,13 @@ The orchestrated check is:
 ./scripts/verify-release.sh --e2e --benchmark --ffmpeg
 ```
 
-The second command is the mandatory pre-deployment gate in both production
-workflows. It runs Scenario A-F with three repetitions, checks the local TLS
-route and durable worker process, benchmarks the exact running backend image,
-and captures FFmpeg from a current-revision container. Set
+The second command is the mandatory pre-deployment gate in the protected Docker
+Compose workflow. It runs Scenario A-F with three repetitions, checks the local
+TLS route and durable worker process, benchmarks the exact running backend
+image, captures FFmpeg from it, and then boots that content-addressed image
+without rebuilding under the production Compose selection. The production
+runtime check requires production mode, demo auth off, zero auto-seeded clinics,
+HTTPS redirect/routing, and restricted worker database access. Set
 `NIGHTINGALE_RELEASE_EVIDENCE_DIR` to a directory outside the worktree when the
 evidence must be preserved as a CI artifact.
 
@@ -231,18 +234,20 @@ historical evidence only and cannot satisfy a current release gate.
 
 ## Production migration/deploy ordering
 
-Both GitHub production workflows use the same literal `production-main`
+Only the supported Docker Compose workflow owns the literal `production-main`
 concurrency group with `cancel-in-progress: false`; one protected release
-finishes before the newest pending main SHA begins, preventing an older SHA
-from deploying later. Both workflows skip every non-main ref, run the complete
-live gates without production secrets, and bind approval to an uploaded
-current-SHA evidence artifact. Only the Docker Compose workflow deploys: it
-uses `--wait`, then checks public HTTPS, the running worker command, restricted
-worker database access, and the exact image ID. The FastAPI Cloud workflow is
-verification-only because that single-service path does not provision the
-required durable `python -m app.ai_worker` process. Repository operators must
-add required reviewers and a main-only deployment-branch rule to the GitHub
-`production` environment; YAML cannot configure those repository settings.
+finishes before the next can migrate or replace it. It skips non-main refs,
+runs the complete live gates without production secrets, saves the exact
+content-addressed image that passed them as an integrity-hashed OCI artifact,
+and binds approval to that artifact and SHA. The protected runner loads and
+verifies the artifact instead of rebuilding, then uses `--wait` and checks
+public HTTPS, the worker command, restricted database access, and running image
+IDs. The FastAPI Cloud workflow is an unprivileged verification-only check with
+no production environment, secrets, or concurrency lock because that
+single-service path does not provision the required durable
+`python -m app.ai_worker` process. Repository operators must add required
+reviewers and a main-only deployment-branch rule to the GitHub `production`
+environment; YAML cannot configure those repository settings.
 The `f9127d3b4c50` entry-metadata migration is an expand
 step: existing rows use trusted backfill, while old API binaries may still
 insert using `legacy_review_required` and `CURRENT_TIMESTAMP` server defaults.
