@@ -180,10 +180,19 @@ ports bind to `127.0.0.1` only. Production explicitly selects only the base and
 deployment files and publishes 80/443:
 
 ```bash
-docker compose -f compose.yml -f compose.deploy.yml build
+export NIGHTINGALE_SOURCE_COMMIT="$(git rev-parse HEAD)"
+export NIGHTINGALE_BACKEND_IMAGE="nightingale-backend:${NIGHTINGALE_SOURCE_COMMIT}"
+docker compose -f compose.yml -f compose.deploy.yml build backend
+release_image_id="$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEND_IMAGE")"
+test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image_id")" = "$NIGHTINGALE_SOURCE_COMMIT"
+export NIGHTINGALE_BACKEND_IMAGE="$release_image_id"
 docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
 docker compose -f compose.yml -f compose.deploy.yml up -d
 ```
+
+Production Compose refuses an implicit `backend:latest`. Migration, API, and
+worker all receive the one inspected content-addressed image ID, so another
+checkout cannot replace the release between build, migration, and startup.
 
 The base configuration sets `FASTAPI_ENV=production` and
 `ENABLE_DEMO_AUTH=false`; production prestart runs role bootstrap and Alembic

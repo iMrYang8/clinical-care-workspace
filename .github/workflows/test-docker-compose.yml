@@ -26,7 +26,7 @@ jobs:
       - name: Demo reset scripts are path-bound
         run: bash scripts/test-demo-script-safety.sh
       - name: Production ports are explicitly public
-        run: DOMAIN=nightingale.invalid docker compose -f compose.yml -f compose.deploy.yml config --format json | python3 scripts/assert_compose_ports.py production
+        run: DOMAIN=nightingale.invalid NIGHTINGALE_BACKEND_IMAGE=nightingale-backend:test docker compose -f compose.yml -f compose.deploy.yml config --format json | python3 scripts/assert_compose_ports.py production
       - name: Build and test the complete HTTPS route
         run: |
           set -euo pipefail

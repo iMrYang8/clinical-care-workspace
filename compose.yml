@@ -40,7 +40,9 @@ services:
       - POSTGRES_DB=app
 
   prestart:
-    image: backend:latest
+    # Local development keeps the conventional tag. Production overrides this
+    # with a SHA tag for build and then the inspected immutable image ID.
+    image: ${NIGHTINGALE_BACKEND_IMAGE:-backend:latest}
     depends_on:
       db:
         condition: service_healthy
@@ -72,7 +74,7 @@ services:
     restart: "no"
 
   backend:
-    image: backend:latest
+    image: ${NIGHTINGALE_BACKEND_IMAGE:-backend:latest}
     depends_on:
       db:
         condition: service_healthy
@@ -140,7 +142,7 @@ services:
       - traefik.http.routers.backend-https.tls=true
 
   ai-worker:
-    image: backend:latest
+    image: ${NIGHTINGALE_BACKEND_IMAGE:-backend:latest}
     depends_on:
       db:
         condition: service_healthy

@@ -202,7 +202,7 @@ BUN_BIN="$(command -v bun)" ./scripts/generate-client.sh
 git ls-files --error-unmatch frontend/openapi.json
 git diff --exit-code -- frontend/openapi.json frontend/src/client
 docker compose config --quiet
-DOMAIN=nightingale.invalid \
+DOMAIN=nightingale.invalid NIGHTINGALE_BACKEND_IMAGE=nightingale-backend:config-check \
   docker compose -f compose.yml -f compose.deploy.yml config --quiet
 ```
 

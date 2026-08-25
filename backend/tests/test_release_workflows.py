@@ -30,6 +30,38 @@ def test_deployment_waits_for_main_sha_release_gate(name: str) -> None:
     assert "cancel-in-progress: false" in workflow
 
 
+def test_compose_deploy_uses_one_inspected_content_addressed_backend_image() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "deploy-docker-compose.yml"
+    ).read_text()
+    compose = (ROOT / "compose.yml").read_text()
+    deploy_compose = (ROOT / "compose.deploy.yml").read_text()
+
+    assert compose.count("image: ${NIGHTINGALE_BACKEND_IMAGE:-backend:latest}") == 3
+    assert (
+        deploy_compose.count(
+            "image: ${NIGHTINGALE_BACKEND_IMAGE:?Set to a verified release image}"
+        )
+        == 3
+    )
+    assert (
+        "NIGHTINGALE_BACKEND_IMAGE: nightingale-backend:${{ github.sha }}" in workflow
+    )
+    assert (
+        "docker compose -f compose.yml -f compose.deploy.yml build backend" in workflow
+    )
+    assert "docker image inspect --format '{{.Id}}'" in workflow
+    assert "org.opencontainers.image.revision" in workflow
+    assert (
+        'printf \'NIGHTINGALE_BACKEND_IMAGE=%s\\n\' "$image_id" >> "$GITHUB_ENV"'
+        in workflow
+    )
+    build = workflow.index("Build and bind the immutable release image")
+    migrate = workflow.index("Prepare database")
+    start = workflow.index("Start application")
+    assert build < migrate < start
+
+
 def test_playwright_required_check_always_runs_and_cannot_allow_skip() -> None:
     workflow = (ROOT / ".github" / "workflows" / "playwright.yml").read_text()
     assert "paths-filter" not in workflow

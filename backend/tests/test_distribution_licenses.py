@@ -1,3 +1,5 @@
+import hashlib
+import re
 from pathlib import Path
 
 import pytest
@@ -47,3 +49,19 @@ def test_backend_image_copies_notices_and_binds_source_commit() -> None:
     )
     assert "run --rm --no-deps -T backend" not in capture
     assert "image_commit" in capture and "immutable_image_id" in capture
+
+
+def test_distributed_notices_bind_the_exact_ffmpeg_evidence_digest() -> None:
+    evidence = ROOT / "docs" / "evidence" / "ffmpeg-container-version.txt"
+    expected = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    for notice in (
+        ROOT / "THIRD_PARTY_NOTICES.md",
+        ROOT / "THIRD_PARTY_LICENSES" / "THIRD_PARTY_NOTICES.md",
+    ):
+        content = notice.read_text()
+        match = re.search(
+            r"ffmpeg-container-version\.txt`.*file SHA-256 `([0-9a-f]{64})`",
+            content,
+        )
+        assert match, f"{notice} has no FFmpeg evidence digest declaration"
+        assert match.group(1) == expected

@@ -17,7 +17,7 @@ The local override enables only synthetic demo authentication and deterministic
 fixtures. The explicit production file never seeds demo data:
 
 ```bash
-DOMAIN=nightingale.invalid \
+DOMAIN=nightingale.invalid NIGHTINGALE_BACKEND_IMAGE=nightingale-backend:config-check \
   docker compose -f compose.yml -f compose.deploy.yml config --quiet
 ```
 

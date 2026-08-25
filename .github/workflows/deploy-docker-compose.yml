@@ -72,6 +72,10 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
       NIGHTINGALE_SOURCE_COMMIT: ${{ github.sha }}
+      # The build receives a collision-resistant release tag. The Build step
+      # replaces this job environment variable with the inspected image ID for
+      # every later Compose command.
+      NIGHTINGALE_BACKEND_IMAGE: nightingale-backend:${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,8 +91,14 @@ jobs:
         run: |
           test "$(cat .verified-release/verified-sha.txt)" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-      - name: Build
-        run: docker compose -f compose.yml -f compose.deploy.yml build
+      - name: Build and bind the immutable release image
+        run: |
+          docker compose -f compose.yml -f compose.deploy.yml build backend
+          image_id="$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEND_IMAGE")"
+          image_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image_id")"
+          test -n "$image_id"
+          test "$image_revision" = "$GITHUB_SHA"
+          printf 'NIGHTINGALE_BACKEND_IMAGE=%s\n' "$image_id" >> "$GITHUB_ENV"
       - name: Prepare database
         run: docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
       - name: Start application

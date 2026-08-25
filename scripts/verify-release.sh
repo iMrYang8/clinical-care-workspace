@@ -99,8 +99,10 @@ docker compose config --quiet
 docker compose config --format json | \
   python3 scripts/assert_compose_ports.py development
 DOMAIN="${DOMAIN:-nightingale.invalid}" \
+NIGHTINGALE_BACKEND_IMAGE="nightingale-backend:${NIGHTINGALE_SOURCE_COMMIT}" \
   docker compose -f compose.yml -f compose.deploy.yml config --quiet
 DOMAIN="${DOMAIN:-nightingale.invalid}" \
+NIGHTINGALE_BACKEND_IMAGE="nightingale-backend:${NIGHTINGALE_SOURCE_COMMIT}" \
   docker compose -f compose.yml -f compose.deploy.yml config --format json | \
   python3 scripts/assert_compose_ports.py production
 

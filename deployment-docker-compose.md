@@ -75,12 +75,23 @@ To use an authenticated email provider, also set `SMTP_PASSWORD`.
 
 ```bash
 cd /root/code/app/
-docker compose -f compose.yml -f compose.deploy.yml build
+export NIGHTINGALE_SOURCE_COMMIT="$(git rev-parse HEAD)"
+export NIGHTINGALE_BACKEND_IMAGE="nightingale-backend:${NIGHTINGALE_SOURCE_COMMIT}"
+docker compose -f compose.yml -f compose.deploy.yml build backend
+release_image_id="$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEND_IMAGE")"
+test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image_id")" = "$NIGHTINGALE_SOURCE_COMMIT"
+export NIGHTINGALE_BACKEND_IMAGE="$release_image_id"
 docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
 docker compose -f compose.yml -f compose.deploy.yml up -d
 ```
 
 The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to the shared `compose.yml` configuration. Explicitly listing both files excludes the local settings from `compose.override.yml`.
+
+The production overlay requires `NIGHTINGALE_BACKEND_IMAGE`. Build first with
+the commit-specific tag, verify its OCI revision label, then replace the
+variable with the inspected image ID as shown. The migration owner, API, and
+worker therefore use identical content even if another checkout builds on the
+same Docker daemon.
 
 The backend Docker image builds the frontend, so the server does not need Bun or prebuilt frontend files.
 

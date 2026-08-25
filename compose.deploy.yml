@@ -36,7 +36,14 @@ services:
   db:
     restart: always
 
+  prestart:
+    # Production callers must select a release image explicitly. The deploy
+    # workflow replaces the initial SHA tag with its inspected image ID before
+    # migration or application startup.
+    image: ${NIGHTINGALE_BACKEND_IMAGE:?Set to a verified release image}
+
   backend:
+    image: ${NIGHTINGALE_BACKEND_IMAGE:?Set to a verified release image}
     restart: always
     environment:
       FRONTEND_HOST: https://${DOMAIN:?Variable not set}
@@ -49,6 +56,7 @@ services:
       - traefik.http.routers.backend-https.tls.certresolver=le
 
   ai-worker:
+    image: ${NIGHTINGALE_BACKEND_IMAGE:?Set to a verified release image}
     restart: always
 
 volumes:
