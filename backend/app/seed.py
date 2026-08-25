@@ -2,6 +2,7 @@
 
 import hashlib
 import uuid
+from datetime import timedelta
 
 from sqlmodel import Session, col, select
 
@@ -11,10 +12,12 @@ from app.models import (
     Clinic,
     ClinicMembership,
     Job,
+    JobAttempt,
     Patient,
     PatientGlanceSnapshot,
     PatientUserLink,
     User,
+    get_datetime_utc,
 )
 
 DEMO_NAMESPACE = uuid.UUID("8b54f8b7-7bca-4513-838c-15ac2b6758ad")
@@ -107,6 +110,7 @@ def seed_demo_data(session: Session) -> None:
     )
     session.flush()
     worker_job_id = demo_id("job-worker-demo")
+    worker_attempt_id = demo_id("job-worker-demo-attempt")
     session.add(
         Job(
             id=worker_job_id,
@@ -114,12 +118,24 @@ def seed_demo_data(session: Session) -> None:
             patient_id=primary_patient_id,
             kind="synthetic_worker_fixture",
             state="running",
+            attempt_count=1,
+            locked_by=str(worker_attempt_id),
+            locked_until=get_datetime_utc() + timedelta(hours=8),
             idempotency_key=hashlib.sha256(b"synthetic-worker-fixture-key").hexdigest(),
             request_sha256=hashlib.sha256(b"synthetic-worker-fixture").hexdigest(),
             payload_ciphertext=field_codec.encrypt_json(
                 primary.id, "job.payload", worker_job_id, {"synthetic": True}
             ),
             created_by_id=personas["worker"].id,
+        )
+    )
+    session.add(
+        JobAttempt(
+            id=worker_attempt_id,
+            clinic_id=primary.id,
+            job_id=worker_job_id,
+            worker_membership_id=demo_id("membership-worker"),
+            attempt_no=1,
         )
     )
     session.add(

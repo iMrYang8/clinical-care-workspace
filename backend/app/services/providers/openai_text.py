@@ -125,11 +125,12 @@ class OpenAITextProvider:
                 invalid_fact = True
                 continue
         raw_warnings = raw.get("warnings", [])
-        warnings = (
-            [str(item) for item in raw_warnings]
-            if isinstance(raw_warnings, list)
-            else ["PROVIDER_WARNING_SCHEMA_INVALID"]
-        )
+        if isinstance(raw_warnings, list):
+            # Provider text is untrusted and may itself contain PHI. Persist a
+            # fixed taxonomy code rather than reflecting model strings.
+            warnings = ["PROVIDER_REPORTED_WARNING"] if raw_warnings else []
+        else:
+            warnings = ["PROVIDER_WARNING_SCHEMA_INVALID"]
         needs_review = bool(raw.get("needs_review", False))
         if invalid_fact:
             warnings.append("PROVIDER_FACT_SCHEMA_INVALID")

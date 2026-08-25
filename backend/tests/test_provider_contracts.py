@@ -2,6 +2,7 @@ import asyncio
 import uuid
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.providers.base import (
     ClinicalFact,
@@ -106,6 +107,9 @@ def test_openai_boundary_runs_primary_then_configured_review_model() -> None:
 def test_openai_responses_envelope_text_is_parsed_without_sdk_shape_assumptions() -> (
     None
 ):
+    assert _response_text({"output_text": '{"summary":"direct"}'}) == (
+        '{"summary":"direct"}'
+    )
     assert (
         _response_text(
             {
@@ -121,3 +125,43 @@ def test_openai_responses_envelope_text_is_parsed_without_sdk_shape_assumptions(
     )
     with pytest.raises(ValueError, match="PROVIDER_INVALID_RESPONSE"):
         _response_text({"output": [{"content": [{"type": "refusal"}]}]})
+
+
+def test_openai_warning_text_is_never_reflected_from_provider() -> None:
+    draft = OpenAITextProvider._draft_from_raw(
+        {
+            "summary": "safe",
+            "facts": [],
+            "warnings": ["S1234567D", "TAN_MEI_LING"],
+        },
+        model="configured-model",
+    )
+    assert draft.warnings == ["PROVIDER_REPORTED_WARNING"]
+
+
+def test_worker_control_codes_and_loop_entrypoints_are_bounded(monkeypatch) -> None:
+    import app.ai_worker as ai_worker
+
+    assert (
+        ai_worker._safe_http_code(
+            HTTPException(status_code=409, detail={"code": "JOB_CLAIM_LOST"})
+        )
+        == "JOB_CLAIM_LOST"
+    )
+    assert (
+        ai_worker._safe_http_code(HTTPException(status_code=500, detail="S1234567D"))
+        == "JOB_PROCESSING_REJECTED"
+    )
+
+    async def stop() -> int:
+        raise RuntimeError("STOP_LOOP")
+
+    monkeypatch.setattr(ai_worker, "run_once", stop)
+    with pytest.raises(RuntimeError, match="STOP_LOOP"):
+        asyncio.run(ai_worker.run_forever())
+
+    async def complete() -> None:
+        return None
+
+    monkeypatch.setattr(ai_worker, "run_forever", complete)
+    ai_worker.main()

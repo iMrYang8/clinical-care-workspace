@@ -5,7 +5,7 @@ You can deploy the project to your own remote server with Docker Compose. The de
 ## Preparation
 
 * Have a remote server ready and available.
-* Configure DNS records pointing to the server for the application domain and any supporting service subdomains you want to expose, such as `fastapi-project.example.com` and `adminer.fastapi-project.example.com`.
+* Configure a DNS record pointing to the server for the application domain, such as `fastapi-project.example.com`.
 * Install and configure [Docker](https://docs.docker.com/engine/install/) on the remote server (Docker Engine, not Docker Desktop).
 
 ## Copy the Code
@@ -41,6 +41,7 @@ Generate and set secure values for the database password, token signing key, and
 
 ```bash
 export POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export POSTGRES_APP_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export FIRST_SUPERUSER_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ```
@@ -52,7 +53,7 @@ To use an authenticated email provider, also set `SMTP_PASSWORD`.
 ```bash
 cd /root/code/app/
 docker compose -f compose.yml -f compose.deploy.yml build
-docker compose -f compose.yml -f compose.deploy.yml run --rm backend bash scripts/prestart.sh
+docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
 docker compose -f compose.yml -f compose.deploy.yml up -d
 ```
 
@@ -85,6 +86,7 @@ To enable Sentry, add the optional `SENTRY_DSN` repository variable.
 Add these repository secrets:
 
 * `POSTGRES_PASSWORD`
+* `POSTGRES_APP_PASSWORD` (an independent runtime-role password)
 * `SECRET_KEY`
 * `FIRST_SUPERUSER_PASSWORD`
 
@@ -126,4 +128,4 @@ Application (frontend and API): `https://fastapi-project.example.com`
 
 Interactive API docs: `https://fastapi-project.example.com/docs`
 
-Adminer: `https://adminer.fastapi-project.example.com`
+No database administration UI is included in the production Compose files.

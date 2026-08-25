@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlmodel import Session, col, select
 
 from app.api.deps import RequestContext
@@ -20,6 +21,7 @@ from app.models import (
     Entry,
     EntryVersion,
     Highlight,
+    Patient,
     RetentionLock,
 )
 from app.services.nightingale import decrypt_version
@@ -54,14 +56,17 @@ def _active_retention_lock(
     entry: Entry,
     version: EntryVersion,
     now: datetime,
+    *,
+    lock: bool = False,
 ) -> bool:
-    locks = session.exec(
-        select(RetentionLock).where(
-            RetentionLock.clinic_id == clinic_id,
-            col(RetentionLock.entity_id).in_([entry.id, version.id]),
-            col(RetentionLock.entity_type).in_(["entry", "entry_version"]),
-        )
-    ).all()
+    statement = select(RetentionLock).where(
+        RetentionLock.clinic_id == clinic_id,
+        col(RetentionLock.entity_id).in_([entry.id, version.id]),
+        col(RetentionLock.entity_type).in_(["entry", "entry_version"]),
+    )
+    if lock:
+        statement = statement.with_for_update()
+    locks = session.exec(statement).all()
     return any(
         lock.locked_until is None or _aware(lock.locked_until) > now for lock in locks
     )
@@ -74,20 +79,22 @@ def protected_reasons(
     version: EntryVersion,
     *,
     now: datetime,
+    lock: bool = False,
 ) -> list[str]:
     reasons: list[str] = []
-    highlights = session.exec(
-        select(Highlight).where(
-            Highlight.clinic_id == context.clinic_id,
-            Highlight.source_entry_version_id == version.id,
-            (
-                col(Highlight.critical).is_(True)
-                | col(Highlight.unresolved).is_(True)
-                | col(Highlight.pinned).is_(True)
-                | col(Highlight.clinician_confirmed).is_(True)
-            ),
-        )
-    ).all()
+    highlight_statement = select(Highlight).where(
+        Highlight.clinic_id == context.clinic_id,
+        Highlight.source_entry_version_id == version.id,
+        (
+            col(Highlight.critical).is_(True)
+            | col(Highlight.unresolved).is_(True)
+            | col(Highlight.pinned).is_(True)
+            | col(Highlight.clinician_confirmed).is_(True)
+        ),
+    )
+    if lock:
+        highlight_statement = highlight_statement.with_for_update()
+    highlights = session.exec(highlight_statement).all()
     for highlight in highlights:
         if highlight.critical:
             reasons.append("critical")
@@ -97,26 +104,30 @@ def protected_reasons(
             reasons.append("pinned")
         if highlight.clinician_confirmed:
             reasons.append("clinician_confirmed")
-    conflict = session.exec(
-        select(ConflictCase).where(
-            ConflictCase.clinic_id == context.clinic_id,
-            ConflictCase.status == "unresolved",
-            (ConflictCase.left_entry_id == entry.id)
-            | (ConflictCase.right_entry_id == entry.id),
-        )
-    ).first()
+    conflict_statement = select(ConflictCase).where(
+        ConflictCase.clinic_id == context.clinic_id,
+        ConflictCase.status == "unresolved",
+        (ConflictCase.left_entry_id == entry.id)
+        | (ConflictCase.right_entry_id == entry.id),
+    )
+    if lock:
+        conflict_statement = conflict_statement.with_for_update()
+    conflict = session.exec(conflict_statement).first()
     if conflict is not None:
         reasons.append("unresolved_conflict")
-    task = session.exec(
-        select(CareTask).where(
-            CareTask.clinic_id == context.clinic_id,
-            CareTask.patient_id == entry.patient_id,
-            CareTask.status != "completed",
-        )
-    ).first()
+    task_statement = select(CareTask).where(
+        CareTask.clinic_id == context.clinic_id,
+        CareTask.patient_id == entry.patient_id,
+        CareTask.status != "completed",
+    )
+    if lock:
+        task_statement = task_statement.with_for_update()
+    task = session.exec(task_statement).first()
     if task is not None:
         reasons.append("open_task")
-    if _active_retention_lock(session, context.clinic_id, entry, version, now):
+    if _active_retention_lock(
+        session, context.clinic_id, entry, version, now, lock=lock
+    ):
         reasons.append("retention_lock")
     return sorted(set(reasons))
 
@@ -256,19 +267,71 @@ def archive_version(
     *,
     now: datetime | None = None,
 ) -> ArchiveBlob:
-    candidates = {
-        item.entry_version_id: item
-        for item in list_decay_candidates(session, context, now=now)
-    }
-    candidate = candidates.get(version.id)
-    if candidate is None or not candidate.eligible_for_cold:
+    effective_now = _aware(now or datetime.now(UTC))
+    # Serialize the polymorphic legal-hold relation first. The DB trigger on
+    # retention_locks takes the same lock for INSERT/UPDATE/DELETE.
+    if session.get_bind().dialect.name == "postgresql":
+        for entity_id in sorted((version.entry_id, version.id), key=str):
+            session.connection().execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:subject, 0))"),
+                {"subject": f"nightingale-decay:{entity_id}"},
+            )
+    locked_version = session.exec(
+        select(EntryVersion)
+        .where(
+            EntryVersion.clinic_id == context.clinic_id,
+            EntryVersion.id == version.id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if locked_version is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    entry = session.exec(
+        select(Entry)
+        .where(
+            Entry.clinic_id == context.clinic_id,
+            Entry.id == locked_version.entry_id,
+        )
+        .with_for_update()
+    ).first()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    # New tasks and conflicts acquire FK key-share locks on these protected
+    # subjects; existing protection rows are locked by protected_reasons().
+    session.exec(
+        select(Patient)
+        .where(
+            Patient.clinic_id == context.clinic_id,
+            Patient.id == entry.patient_id,
+        )
+        .with_for_update()
+    ).one()
+    reasons = protected_reasons(
+        session,
+        context,
+        entry,
+        locked_version,
+        now=effective_now,
+        lock=True,
+    )
+    age_days = max(0, (effective_now - _aware(locked_version.created_at)).days)
+    eligible = (
+        age_days > WARM_DAYS
+        and locked_version.storage_tier != "cold"
+        and not reasons
+        and locked_version.content_ciphertext is not None
+        and locked_version.title_ciphertext is not None
+    )
+    if not eligible:
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "DECAY_NOT_ELIGIBLE",
-                "protected_reasons": candidate.protected_reasons if candidate else [],
+                "protected_reasons": reasons,
             },
         )
+    version = locked_version
     title, content = decrypt_version(version)
     plaintext = canonical_payload(title, content)
     if version.archive_blob_id is not None:

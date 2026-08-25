@@ -360,6 +360,35 @@ def downgrade() -> None:
         $$;
         """
     )
+    # This revision owns the only durable copy of a cold payload. Destructive
+    # downgrade is therefore forbidden until every version has been rehydrated
+    # and authenticated by the application. Rehydration intentionally retains
+    # archive_blob_id for auditability, so clear those verified references
+    # before dropping the blob table; otherwise a later upgrade cannot restore
+    # the FK against an empty archive table.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM entry_versions
+            WHERE storage_tier = 'cold'
+               OR title_ciphertext IS NULL
+               OR content_ciphertext IS NULL
+          ) THEN
+            RAISE EXCEPTION
+              'AI trust downgrade blocked: rehydrate every cold entry version first'
+              USING ERRCODE = '55000';
+          END IF;
+
+          UPDATE entry_versions
+          SET archive_blob_id = NULL
+          WHERE archive_blob_id IS NOT NULL;
+        END;
+        $$;
+        """
+    )
     op.drop_constraint("fk_version_archive_blob_tenant", "entry_versions", type_="foreignkey")
     op.drop_constraint("fk_entry_source_job_tenant", "entries", type_="foreignkey")
     op.drop_index("ix_highlights_final_score", table_name="highlights")

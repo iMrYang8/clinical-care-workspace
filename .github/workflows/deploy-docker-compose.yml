@@ -27,6 +27,8 @@ jobs:
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       EMAILS_FROM_EMAIL: ${{ vars.EMAILS_FROM_EMAIL }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      # Independent from POSTGRES_PASSWORD; never use the committed local value.
+      POSTGRES_APP_PASSWORD: ${{ secrets.POSTGRES_APP_PASSWORD }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
     steps:
       - name: Checkout
@@ -36,6 +38,6 @@ jobs:
       - name: Build
         run: docker compose -f compose.yml -f compose.deploy.yml build
       - name: Prepare database
-        run: docker compose -f compose.yml -f compose.deploy.yml run --rm backend bash scripts/prestart.sh
+        run: docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
       - name: Start application
         run: docker compose -f compose.yml -f compose.deploy.yml up -d

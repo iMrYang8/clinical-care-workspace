@@ -1,13 +1,15 @@
 import hashlib
 import math
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from app.core.db import engine, set_rls_clinic
-from app.models import ImportanceFeatureStat, ImportanceFeedbackEvent
+from app.models import Highlight, ImportanceFeatureStat, ImportanceFeedbackEvent
 from app.seed import demo_id
 from app.services.importance import (
     MAX_FEATURE_WEIGHT,
@@ -143,6 +145,7 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
             )
         ).all()
         assert len(events) == 1
+        assert len(events[0].request_sha256) == 64
 
     with Session(engine) as session:
         set_rls_clinic(session, demo_id("clinic-other"))
@@ -166,3 +169,97 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
     assert glance.status_code == 200
     assert glance.json()["cards"]
     assert "score_components" not in glance.json()["cards"][0]
+
+
+def test_feedback_idempotency_key_is_bound_to_target_and_signal(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    first = _create_allergy_highlight(client, headers, section="clinician")
+    second = _create_allergy_highlight(client, headers, section="clinician")
+    shared = headers | {"Idempotency-Key": "resource-bound-key"}
+
+    accepted = client.post(f"/api/v1/highlights/{first['id']}/pin", headers=shared)
+    assert accepted.status_code == 200, accepted.text
+    rejected = client.post(f"/api/v1/highlights/{second['id']}/pin", headers=shared)
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+    with Session(engine) as session:
+        stored_second = session.get(Highlight, uuid.UUID(second["id"]))
+        assert stored_second is not None
+        assert stored_second.pinned is False
+        events = session.exec(
+            select(ImportanceFeedbackEvent).where(
+                ImportanceFeedbackEvent.idempotency_key
+                == hashlib.sha256(b"resource-bound-key").hexdigest()
+            )
+        ).all()
+        assert len(events) == 1
+        assert events[0].highlight_id == uuid.UUID(first["id"])
+        assert events[0].signal == "pin"
+
+
+def test_concurrent_first_feature_and_same_request_feedback_are_atomic(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    headers = auth_headers("clinician")
+    first = _create_allergy_highlight(client, headers, section="clinician")
+    second = _create_allergy_highlight(client, headers, section="clinician")
+
+    # Highlight creation intentionally learns a manual signal. Remove that
+    # owner-side fixture state so the concurrent pin requests race on the first
+    # feature-stat observation.
+    owner_session.exec(delete(ImportanceFeedbackEvent))
+    owner_session.exec(delete(ImportanceFeatureStat))
+    owner_session.commit()
+
+    barrier = Barrier(2)
+
+    def pin(highlight_id: str, key: str) -> int:
+        barrier.wait()
+        return client.post(
+            f"/api/v1/highlights/{highlight_id}/pin",
+            headers=headers | {"Idempotency-Key": key},
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        statuses = [
+            future.result()
+            for future in (
+                pool.submit(pin, first["id"], "concurrent-first-a"),
+                pool.submit(pin, second["id"], "concurrent-first-b"),
+            )
+        ]
+    assert statuses == [200, 200]
+    with Session(engine) as session:
+        stat = session.exec(
+            select(ImportanceFeatureStat).where(
+                ImportanceFeatureStat.feature_key == "entity:allergy"
+            )
+        ).one()
+        assert stat.observation_count == 2
+
+    third = _create_allergy_highlight(client, headers, section="clinician")
+    replay_barrier = Barrier(2)
+
+    def replay() -> int:
+        replay_barrier.wait()
+        return client.post(
+            f"/api/v1/highlights/{third['id']}/pin",
+            headers=headers | {"Idempotency-Key": "concurrent-same-request"},
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replay_statuses = [
+            future.result() for future in (pool.submit(replay), pool.submit(replay))
+        ]
+    assert replay_statuses == [200, 200]
+    with Session(engine) as session:
+        events = session.exec(
+            select(ImportanceFeedbackEvent).where(
+                ImportanceFeedbackEvent.idempotency_key
+                == hashlib.sha256(b"concurrent-same-request").hexdigest()
+            )
+        ).all()
+        assert len(events) == 1

@@ -21,6 +21,8 @@ from app.models import (
     EntryVersion,
     EntryVersionPublic,
     Highlight,
+    Job,
+    JobAttempt,
     Patient,
     PatientGlanceSnapshot,
     PatientPublic,
@@ -182,6 +184,46 @@ def authorize_entry_write(context: RequestContext, entry: Entry) -> None:
         raise HTTPException(status_code=403, detail="Role cannot edit this section")
 
 
+def _assert_worker_job_write(
+    session: Session, context: RequestContext, patient_id: uuid.UUID
+) -> None:
+    if context.role != "worker" or context.job_id is None:
+        return
+    job = session.exec(
+        select(Job)
+        .where(
+            Job.clinic_id == context.clinic_id,
+            Job.id == context.job_id,
+            Job.patient_id == patient_id,
+            Job.state == "running",
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if (
+        job is None
+        or job.locked_by is None
+        or job.locked_until is None
+        or job.locked_until <= get_datetime_utc()
+    ):
+        raise HTTPException(status_code=403, detail="Active worker job required")
+    try:
+        attempt_id = uuid.UUID(job.locked_by)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Active worker job required")
+    attempt = session.exec(
+        select(JobAttempt).where(
+            JobAttempt.clinic_id == context.clinic_id,
+            JobAttempt.id == attempt_id,
+            JobAttempt.job_id == job.id,
+            JobAttempt.worker_membership_id == context.membership.id,
+            JobAttempt.status == "started",
+        )
+    ).first()
+    if attempt is None:
+        raise HTTPException(status_code=403, detail="Active worker job required")
+
+
 def _new_version(
     *,
     entry: Entry,
@@ -275,6 +317,7 @@ def create_entry(
 ) -> EntryPublic:
     get_patient(session, context, data.patient_id)
     origin, patient_facing = authorize_entry_create(context, data)
+    _assert_worker_job_write(session, context, data.patient_id)
     entry = Entry(
         clinic_id=context.clinic_id,
         patient_id=data.patient_id,

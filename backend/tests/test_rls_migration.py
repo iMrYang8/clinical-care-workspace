@@ -100,7 +100,8 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
                       AND tgname IN (
                         'trg_entry_version_append_only',
                         'trg_provenance_append_only',
-                        'trg_highlight_anchor_guard'
+                        'trg_highlight_anchor_guard',
+                        'trg_retention_lock_decay_subject'
                       )
                     """
                 )
@@ -111,6 +112,7 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
         "trg_entry_version_append_only",
         "trg_provenance_append_only",
         "trg_highlight_anchor_guard",
+        "trg_retention_lock_decay_subject",
     }
 
     inspector = inspect(engine)
@@ -119,7 +121,7 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
     }
     assert "uq_membership_clinic_id" in membership_uniques
     expected_fks = {
-        "entries": {"fk_entry_source_job_tenant"},
+        "entries": {"fk_entry_source_job_patient_tenant"},
         "entry_versions": {"fk_version_archive_blob_tenant"},
         "comments": {"fk_comment_parent_tenant", "fk_comment_assignment_tenant"},
         "comment_mentions": {"fk_comment_mention_tenant"},
@@ -132,6 +134,8 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
     for table, expected in expected_fks.items():
         actual = {item["name"] for item in inspector.get_foreign_keys(table)}
         assert expected <= actual
+    job_uniques = {item["name"] for item in inspector.get_unique_constraints("jobs")}
+    assert "uq_job_clinic_id_patient" in job_uniques
 
 
 def test_runtime_login_is_restricted_non_owner_and_rls_is_enforced() -> None:
@@ -169,7 +173,15 @@ def test_runtime_login_is_restricted_non_owner_and_rls_is_enforced() -> None:
                   has_table_privilege(current_user, 'patients', 'TRUNCATE')
                     AS can_truncate_patients,
                   has_table_privilege(current_user, 'alembic_version', 'UPDATE')
-                    AS can_mutate_migration_history
+                    AS can_mutate_migration_history,
+                  has_table_privilege(current_user, 'audit_events', 'UPDATE')
+                    AS can_update_audit,
+                  has_table_privilege(current_user, 'domain_events', 'DELETE')
+                    AS can_delete_events,
+                  has_table_privilege(current_user, 'provenance_pointers', 'UPDATE')
+                    AS can_update_provenance,
+                  has_table_privilege(current_user, 'archive_blobs', 'DELETE')
+                    AS can_delete_archive
                 """
             )
         ).one()
@@ -186,6 +198,10 @@ def test_runtime_login_is_restricted_non_owner_and_rls_is_enforced() -> None:
     assert privileges.can_select_patients is True
     assert privileges.can_truncate_patients is False
     assert privileges.can_mutate_migration_history is False
+    assert privileges.can_update_audit is False
+    assert privileges.can_delete_events is False
+    assert privileges.can_update_provenance is False
+    assert privileges.can_delete_archive is False
 
     # SET LOCAL is intentionally pool-safe; the Session hook reapplies the
     # trusted value when application code commits and then refreshes/queries.
@@ -292,7 +308,7 @@ def test_cross_clinic_composite_fk_and_append_only_triggers(
         ).one()
         pointer.review_required = True
         session.add(pointer)
-        with pytest.raises(DBAPIError, match="append-only"):
+        with pytest.raises(DBAPIError, match="append-only|permission denied"):
             session.commit()
 
 

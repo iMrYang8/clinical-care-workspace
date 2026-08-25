@@ -4,7 +4,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from app.api.deps import CurrentContext, SessionDep
 from app.core.config import settings
-from app.models import AIIngestRequest, JobPublic
+from app.models import AIIngestRequest, JobPublic, get_datetime_utc
 from app.services.ai_jobs import (
     create_or_replay_job,
     get_scoped_job,
@@ -112,10 +112,18 @@ async def retry_job(
             status_code=409,
             detail={"code": "JOB_NOT_RETRYABLE", "state": job.state},
         )
+    if job.attempt_count >= job.max_attempts:
+        raise HTTPException(status_code=409, detail={"code": "JOB_ATTEMPTS_EXHAUSTED"})
     worker_context = worker_context_for_job(session, job)
     if worker_context is None:
         raise HTTPException(status_code=503, detail={"code": "WORKER_UNAVAILABLE"})
-    await process_job(session, worker_context, job.id)
+    if settings.AI_PROVIDER == "openai":
+        job.state = "pending"
+        job.error_code = None
+        job.updated_at = get_datetime_utc()
+        session.add(job)
+    else:
+        await process_job(session, worker_context, job.id)
     session.commit()
     session.refresh(job)
     return job_public(session, job)

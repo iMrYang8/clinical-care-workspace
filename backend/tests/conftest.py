@@ -69,6 +69,15 @@ def client() -> Generator[TestClient]:
         yield test_client
 
 
+@pytest.fixture()
+def owner_session() -> Generator[Session]:
+    """Migration-owner session for DDL/integrity assertions, never app paths."""
+
+    with Session(migration_engine) as session:
+        yield session
+        session.rollback()
+
+
 def headers_for(client: TestClient, persona: str) -> dict[str, str]:
     response = client.post("/api/v1/auth/demo-login", json={"persona": persona})
     assert response.status_code == 200, response.text

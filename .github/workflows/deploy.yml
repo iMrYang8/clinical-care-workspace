@@ -39,10 +39,16 @@ jobs:
         with:
           version: "0.11.18"
       - name: Prepare database
-        run: uv run bash scripts/prestart.sh
+        run: |
+          : "${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL secret is required}"
+          : "${DATABASE_URL:?DATABASE_URL secret is required}"
+          : "${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD secret is required}"
+          uv run bash scripts/prestart.sh
         working-directory: backend
         env:
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POSTGRES_APP_PASSWORD: ${{ secrets.POSTGRES_APP_PASSWORD }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
@@ -52,3 +58,8 @@ jobs:
         env:
           FASTAPI_CLOUD_TOKEN: ${{ secrets.FASTAPI_CLOUD_TOKEN }}
           FASTAPI_CLOUD_APP_ID: ${{ secrets.FASTAPI_CLOUD_APP_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
+          FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}

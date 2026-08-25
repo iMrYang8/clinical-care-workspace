@@ -82,7 +82,10 @@ requires all of `AI_PROVIDER=openai`, `REMOTE_TEXT_EGRESS_ENABLED=true`,
 `OPENAI_API_KEY`, and `OPENAI_EXTRACT_MODEL`. Model IDs are read only from the
 environment. Configured remote jobs are queued for a leased worker rather than
 executed in the submitting HTTP request; the offline deterministic fixture may
-complete synchronously for the demo. Before any remote call, Nightingale
+complete synchronously for the demo. Docker Compose runs that consumer as the
+`ai-worker` service (`python -m app.ai_worker`); every completion is fenced by a
+unique attempt token, an unexpired lease, and a live Worker membership. Before
+any remote call, Nightingale
 performs NFC normalization, server-decrypted patient-name and Singapore
 identifier/contact redaction, embedded Presidio analysis, and a residual scan.
 Missing Presidio NLP models, analyzer errors, or residual findings block remote
@@ -102,6 +105,8 @@ The API database login is `nightingale_app`, a non-owner
 `NOSUPERUSER NOBYPASSRLS` role. The one-shot prestart/Alembic path alone receives
 the owner URL. Tenant RLS context is transaction-local and is restored from the
 already-verified server membership after a request-side commit.
+Production Compose does not include Adminer or expose a database UI. The
+optional local-only Adminer profile binds to `127.0.0.1` with Traefik disabled.
 
 Importance features are bounded taxonomy keys rather than free text. Weights
 are clinic-scoped, use diminishing updates, and clamp to `[-0.20, 0.20]`.

@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -6,7 +7,7 @@ from threading import Barrier
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.db import engine
 from app.models import (
@@ -129,7 +130,7 @@ def test_ai_job_idempotency_attempts_fallback_and_domain_event(
     reused = client.post(
         f"/api/v1/patients/{patient_id}/ai/ingest",
         headers=headers | {"Idempotency-Key": "synthetic-ingest-1"},
-        json=payload | {"interaction_type": "different"},
+        json=payload | {"interaction_type": "patient_insight"},
     )
     assert reused.status_code == 409
     assert reused.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
@@ -143,7 +144,9 @@ def test_ai_job_idempotency_attempts_fallback_and_domain_event(
     assert other_clinic.status_code == 404
 
     with Session(engine) as session:
-        attempt = session.exec(select(JobAttempt)).one()
+        attempt = session.exec(
+            select(JobAttempt).where(JobAttempt.job_id == uuid.UUID(body["id"]))
+        ).one()
         run = session.exec(select(AIRun)).one()
         redaction = session.exec(select(RedactionRun)).one()
         events = session.exec(
@@ -167,7 +170,7 @@ def test_failed_job_retry_persists_each_attempt(
         async def extract(
             self, redacted_text: str, context: ExtractionContext
         ) -> ClinicalNoteDraft:
-            raise RuntimeError("synthetic provider outage")
+            raise RuntimeError("S1234567D")
 
     class WorkingProvider:
         async def extract(
@@ -214,6 +217,8 @@ def test_failed_job_retry_persists_each_attempt(
     assert failed.status_code == 200, failed.text
     assert failed.json()["state"] == "failed"
     assert failed.json()["attempt_count"] == 1
+    assert failed.json()["error_code"] == "AI_JOB_FAILED"
+    assert "S1234567D" not in failed.text
 
     monkeypatch.setattr(
         ai_jobs, "_configured_remote_provider", lambda: WorkingProvider()
@@ -390,7 +395,8 @@ def test_concurrent_idempotency_and_skip_locked_worker_lease(
         assert first_context is not None and second_context is not None
         claimed = claim_job(first, first_context, job_id)
         assert claimed.state == "running"
-        assert claimed.locked_by == str(first_context.membership.id)
+        assert claimed.locked_by is not None
+        uuid.UUID(claimed.locked_by)
         with pytest.raises(HTTPException) as busy:
             claim_job(second, second_context, job_id)
         assert busy.value.detail["code"] == "JOB_NOT_CLAIMABLE"
@@ -398,11 +404,13 @@ def test_concurrent_idempotency_and_skip_locked_worker_lease(
 
         claimed_after_release = claim_job(second, second_context, job_id)
         assert claimed_after_release.id == job_id
+        assert claimed_after_release.locked_by is not None
         claimed_after_release.attempt_count = 1
         claimed_after_release.locked_until = get_datetime_utc() - timedelta(seconds=1)
         second.add(claimed_after_release)
         second.add(
             JobAttempt(
+                id=uuid.UUID(claimed_after_release.locked_by),
                 clinic_id=claimed_after_release.clinic_id,
                 job_id=job_id,
                 worker_membership_id=second_context.membership.id,
@@ -424,3 +432,274 @@ def test_concurrent_idempotency_and_skip_locked_worker_lease(
         ).one()
         assert expired.status == "failed"
         assert expired.error_code == "WORKER_LEASE_EXPIRED"
+
+
+def test_invalid_interaction_type_never_reaches_provider_or_plaintext_storage(
+    client: TestClient, auth_headers, monkeypatch
+) -> None:
+    import app.services.ai_jobs as ai_jobs
+
+    outbound: list[str] = []
+
+    class SpyProvider:
+        async def extract(
+            self, redacted_text: str, context: ExtractionContext
+        ) -> ClinicalNoteDraft:
+            outbound.append(redacted_text)
+            raise AssertionError("provider must not be called")
+
+    monkeypatch.setattr(ai_jobs, "_configured_remote_provider", lambda: SpyProvider())
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Taxonomy boundary",
+            "content": "routine follow up",
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "invalid-interaction"},
+        json={
+            "source_entry_version_id": source["version_id"],
+            "interaction_type": "S1234567D",
+        },
+    )
+    assert response.status_code == 422
+    assert outbound == []
+    with Session(engine) as session:
+        assert (
+            session.exec(
+                select(Job).where(col(Job.kind).in_(["ai_ingest", "ai_reanalyze"]))
+            ).all()
+            == []
+        )
+
+
+def test_provider_warning_and_exception_text_are_mapped_to_fixed_codes(
+    client: TestClient, auth_headers, monkeypatch
+) -> None:
+    import app.services.ai_jobs as ai_jobs
+    from app.core.config import settings
+
+    class WarningProvider:
+        async def extract(
+            self, redacted_text: str, context: ExtractionContext
+        ) -> ClinicalNoteDraft:
+            return ClinicalNoteDraft(
+                summary="fixed summary",
+                facts=[],
+                provider="synthetic-remote",
+                model="configured-test-model",
+                warnings=["S1234567D", "TAN_MEI_LING"],
+            )
+
+    monkeypatch.setattr(settings, "PRESIDIO_REQUIRED", False)
+    monkeypatch.setattr(
+        ai_jobs, "_configured_remote_provider", lambda: WarningProvider()
+    )
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Warning boundary",
+            "content": "routine follow up",
+        },
+    ).json()
+    response = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "provider-warning-boundary"},
+        json={"source_entry_version_id": source["version_id"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["ai_run"]["warnings"] == ["PROVIDER_REPORTED_WARNING"]
+    assert "S1234567D" not in response.text
+    assert "TAN_MEI_LING" not in response.text
+    with Session(engine) as session:
+        run = session.exec(select(AIRun)).one()
+        events = session.exec(select(DomainEvent)).all()
+        assert run.warnings_json == ["PROVIDER_REPORTED_WARNING"]
+        assert all("S1234567D" not in str(event.payload_json) for event in events)
+
+
+def test_worker_runner_drains_remote_queue_with_job_semantics(
+    client: TestClient, auth_headers, monkeypatch
+) -> None:
+    import app.ai_worker as ai_worker
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "openai")
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Queued worker fixture",
+            "content": "routine follow up",
+        },
+    ).json()
+    queued = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "worker-runner-queue"},
+        json={"source_entry_version_id": source["version_id"]},
+    )
+    assert queued.status_code == 200
+    assert queued.json()["state"] == "pending"
+
+    async def unexpected_failure(*_args, **_kwargs) -> None:
+        raise RuntimeError("untrusted worker exception")
+
+    with monkeypatch.context() as isolated:
+        isolated.setattr(ai_worker, "process_job", unexpected_failure)
+        assert asyncio.run(ai_worker.run_once()) == 0
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "deterministic")
+    monkeypatch.setattr(settings, "PRESIDIO_REQUIRED", False)
+    assert asyncio.run(ai_worker.run_once()) == 1
+    status = client.get(f"/api/v1/jobs/{queued.json()['id']}", headers=headers)
+    assert status.status_code == 200
+    assert status.json()["state"] in {"completed", "needs_review"}
+    assert status.json()["attempt_count"] == 1
+
+
+def test_expired_claim_cannot_finalize_after_new_worker_reclaims(
+    client: TestClient, auth_headers, monkeypatch
+) -> None:
+    import app.services.ai_jobs as ai_jobs
+    from app.core.config import settings
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingProvider:
+        async def extract(
+            self, redacted_text: str, context: ExtractionContext
+        ) -> ClinicalNoteDraft:
+            started.set()
+            await release.wait()
+            return ClinicalNoteDraft(
+                summary="stale attempt output",
+                facts=[],
+                provider="synthetic-remote",
+                model="configured-test-model",
+            )
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "openai")
+    monkeypatch.setattr(settings, "PRESIDIO_REQUIRED", False)
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Lease fence fixture",
+            "content": "routine follow up",
+        },
+    ).json()
+    queued = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "lease-fence"},
+        json={"source_entry_version_id": source["version_id"]},
+    ).json()
+    job_id = uuid.UUID(queued["id"])
+    monkeypatch.setattr(
+        ai_jobs, "_configured_remote_provider", lambda: BlockingProvider()
+    )
+
+    async def scenario() -> None:
+        with Session(engine) as old_worker:
+            job = old_worker.get(Job, job_id)
+            assert job is not None
+            old_context = worker_context_for_job(old_worker, job)
+            assert old_context is not None
+            task = asyncio.create_task(
+                ai_jobs.process_job(old_worker, old_context, job_id)
+            )
+            await started.wait()
+
+            with Session(engine) as new_worker:
+                current = new_worker.get(Job, job_id)
+                assert current is not None
+                new_context = worker_context_for_job(new_worker, current)
+                assert new_context is not None
+                current.locked_until = get_datetime_utc() - timedelta(seconds=1)
+                new_worker.add(current)
+                new_worker.commit()
+                new_token = uuid.uuid4()
+                reclaimed = claim_job(
+                    new_worker, new_context, job_id, claim_token=new_token
+                )
+                assert reclaimed.locked_by == str(new_token)
+                new_worker.commit()
+
+            release.set()
+            with pytest.raises(HTTPException) as lost:
+                await task
+            assert lost.value.detail["code"] == "JOB_CLAIM_LOST"
+
+    asyncio.run(scenario())
+    with Session(engine) as session:
+        assert session.exec(select(AIRun).where(AIRun.job_id == job_id)).first() is None
+        attempts = session.exec(
+            select(JobAttempt).where(JobAttempt.job_id == job_id)
+        ).all()
+        assert len(attempts) == 1
+        assert attempts[0].status == "failed"
+        assert attempts[0].error_code == "WORKER_LEASE_EXPIRED"
+
+
+def test_revoked_worker_context_cannot_claim_new_job(
+    client: TestClient, auth_headers, monkeypatch, owner_session: Session
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "openai")
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Revoked worker fixture",
+            "content": "routine follow up",
+        },
+    ).json()
+    queued = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "revoked-worker-claim"},
+        json={"source_entry_version_id": source["version_id"]},
+    ).json()
+    job_id = uuid.UUID(queued["id"])
+
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        stale_context = worker_context_for_job(session, job)
+        assert stale_context is not None
+        membership = owner_session.get(ClinicMembership, demo_id("membership-worker"))
+        assert membership is not None
+        membership.is_active = False
+        owner_session.add(membership)
+        owner_session.commit()
+        with pytest.raises(HTTPException) as denied:
+            claim_job(session, stale_context, job_id)
+        assert denied.value.status_code == 403
+    from app.ai_worker import run_once
+
+    assert asyncio.run(run_once()) == 0

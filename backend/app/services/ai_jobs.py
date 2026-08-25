@@ -6,7 +6,7 @@ import re
 import uuid
 from dataclasses import replace
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -24,6 +24,7 @@ from app.models import (
     Entry,
     EntryVersion,
     Highlight,
+    InteractionType,
     Job,
     JobAttempt,
     JobPublic,
@@ -45,12 +46,51 @@ from app.services.providers.deterministic import DeterministicClinicalNoteProvid
 from app.services.providers.openai_text import OpenAITextProvider
 from app.services.redaction import ClinicalScribePipeline, RedactionService
 
-_SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,79}$")
 _HIGH_RISK_TEXT = re.compile(
     r"\b(?:anaphylaxis|anaphylactic|suicid(?:e|al)|chest pain|stroke|"
     r"sepsis|critical|emergency|overdose)\b",
     re.IGNORECASE,
 )
+_INTERACTION_TYPES: frozenset[str] = frozenset(
+    {"care_note", "doctor_consult", "patient_insight", "voice_session"}
+)
+_WARNING_CODES: frozenset[str] = frozenset(
+    {
+        "HIGH_RISK_REVIEW_FAILED",
+        "HIGH_RISK_REVIEW_MODEL_UNAVAILABLE",
+        "INVALID_EVIDENCE_SPAN",
+        "INVALID_RAW_EVIDENCE_SPAN",
+        "NO_STRUCTURED_FACTS",
+        "PRESIDIO_UNAVAILABLE",
+        "PROVIDER_FACT_SCHEMA_INVALID",
+        "PROVIDER_REPORTED_WARNING",
+        "PROVIDER_WARNING_SCHEMA_INVALID",
+        "REDACTION_REVIEW",
+        "RESIDUAL_PHI_DETECTED",
+    }
+)
+
+
+class _InternalJobError(Exception):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _safe_warning_codes(values: list[str]) -> list[str]:
+    return sorted(
+        {
+            value if value in _WARNING_CODES else "PROVIDER_REPORTED_WARNING"
+            for value in values
+        }
+    )
+
+
+def _trusted_interaction_type(payload: dict[str, Any]) -> InteractionType:
+    candidate = payload.get("interaction_type", "care_note")
+    if not isinstance(candidate, str) or candidate not in _INTERACTION_TYPES:
+        raise _InternalJobError("INVALID_INTERACTION_TYPE")
+    return cast(InteractionType, candidate)
 
 
 def canonical_request_hash(
@@ -495,7 +535,41 @@ def _create_fact_provenance(
         )
 
 
-def claim_job(session: Session, context: RequestContext, job_id: uuid.UUID) -> Job:
+class _JobClaimLost(Exception):
+    pass
+
+
+def _active_worker(
+    session: Session, context: RequestContext
+) -> tuple[ClinicMembership, User] | None:
+    membership = session.exec(
+        select(ClinicMembership)
+        .where(
+            ClinicMembership.id == context.membership.id,
+            ClinicMembership.clinic_id == context.clinic_id,
+            ClinicMembership.user_id == context.user_id,
+            ClinicMembership.role == "worker",
+            col(ClinicMembership.is_active).is_(True),
+        )
+        .execution_options(populate_existing=True)
+    ).first()
+    if membership is None:
+        return None
+    user = session.exec(
+        select(User)
+        .where(User.id == membership.user_id, col(User.is_active).is_(True))
+        .execution_options(populate_existing=True)
+    ).first()
+    return (membership, user) if user is not None else None
+
+
+def claim_job(
+    session: Session,
+    context: RequestContext,
+    job_id: uuid.UUID,
+    *,
+    claim_token: uuid.UUID | None = None,
+) -> Job:
     """Atomically claim one clinic/job-bound lease with SKIP LOCKED."""
 
     if (
@@ -505,6 +579,8 @@ def claim_job(session: Session, context: RequestContext, job_id: uuid.UUID) -> J
     ):
         raise HTTPException(status_code=403, detail="Worker job binding required")
     set_rls_clinic(session, context.clinic_id)
+    if _active_worker(session, context) is None:
+        raise HTTPException(status_code=403, detail="Active worker required")
     now = get_datetime_utc()
     claimable = (
         col(Job.state).in_(["pending", "failed"])
@@ -539,7 +615,7 @@ def claim_job(session: Session, context: RequestContext, job_id: uuid.UUID) -> J
             expired_attempt.completed_at = now
             session.add(expired_attempt)
     job.state = "running"
-    job.locked_by = str(context.membership.id)
+    job.locked_by = str(claim_token or uuid.uuid4())
     job.locked_until = now + timedelta(seconds=max(30, settings.AI_JOB_LEASE_SECONDS))
     job.error_code = None
     job.updated_at = now
@@ -548,10 +624,52 @@ def claim_job(session: Session, context: RequestContext, job_id: uuid.UUID) -> J
     return job
 
 
+def _lock_current_claim(
+    session: Session,
+    context: RequestContext,
+    job_id: uuid.UUID,
+    claim_token: uuid.UUID,
+) -> tuple[Job, JobAttempt]:
+    """Fence finalization against lease expiry, reclaim, or worker revocation."""
+
+    set_rls_clinic(session, context.clinic_id)
+    job = session.exec(
+        select(Job)
+        .where(Job.clinic_id == context.clinic_id, Job.id == job_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    attempt = session.exec(
+        select(JobAttempt)
+        .where(
+            JobAttempt.clinic_id == context.clinic_id,
+            JobAttempt.id == claim_token,
+            JobAttempt.job_id == job_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    now = get_datetime_utc()
+    if (
+        job is None
+        or attempt is None
+        or job.state != "running"
+        or job.locked_by != str(claim_token)
+        or job.locked_until is None
+        or job.locked_until <= now
+        or attempt.status != "started"
+        or attempt.worker_membership_id != context.membership.id
+        or _active_worker(session, context) is None
+    ):
+        raise _JobClaimLost
+    return job, attempt
+
+
 async def process_job(
     session: Session, context: RequestContext, job_id: uuid.UUID
 ) -> Job:
-    job = claim_job(session, context, job_id)
+    claim_token = uuid.uuid4()
+    job = claim_job(session, context, job_id, claim_token=claim_token)
     if (
         session.exec(
             select(AIRun).where(
@@ -563,6 +681,7 @@ async def process_job(
         raise HTTPException(status_code=409, detail={"code": "JOB_ALREADY_COMPLETED"})
 
     attempt = JobAttempt(
+        id=claim_token,
         clinic_id=context.clinic_id,
         job_id=job.id,
         worker_membership_id=context.membership.id,
@@ -581,9 +700,9 @@ async def process_job(
             context.clinic_id, "job.payload", job.id, job.payload_ciphertext
         )
         if not isinstance(payload, dict):
-            raise ValueError("INVALID_JOB_PAYLOAD")
+            raise _InternalJobError("INVALID_JOB_PAYLOAD")
         source_version, source_text = _source_for_job(session, context, job, payload)
-        interaction_type = str(payload.get("interaction_type", "care_note"))[:60]
+        interaction_type = _trusted_interaction_type(payload)
         high_risk, conflict_review = _server_risk_flags(
             session, context, job.patient_id, source_version, source_text
         )
@@ -641,23 +760,14 @@ async def process_job(
                         else "disagreed"
                     )
                     review_warnings.extend(review_draft.warnings)
-                except Exception as review_error:
+                except Exception:
                     review_status = "error"
-                    candidate = str(review_error)
-                    review_warnings.append(
-                        candidate
-                        if _SAFE_ERROR_CODE.fullmatch(candidate)
-                        else "HIGH_RISK_REVIEW_FAILED"
-                    )
+                    review_warnings.append("HIGH_RISK_REVIEW_FAILED")
 
         facts, raw_mapping_failed = _map_facts_to_source(
             result.draft.facts, source_text
         )
-        warnings = [
-            warning
-            for warning in [*result.draft.warnings, *review_warnings]
-            if _SAFE_ERROR_CODE.fullmatch(warning)
-        ]
+        warnings = _safe_warning_codes([*result.draft.warnings, *review_warnings])
         if raw_mapping_failed:
             warnings.append("INVALID_RAW_EVIDENCE_SPAN")
         needs_review = (
@@ -667,6 +777,10 @@ async def process_job(
             or (review_required and review_status != "consistent")
             or bool(review_draft and review_draft.needs_review)
         )
+
+        # External work ran after the durable lease commit. Re-lock and verify
+        # the unique attempt token before any derived row is written.
+        job, attempt = _lock_current_claim(session, context, job_id, claim_token)
 
         redaction_run = RedactionRun(
             clinic_id=context.clinic_id,
@@ -771,14 +885,19 @@ async def process_job(
         )
         session.flush()
         attempt_work.commit()
+    except _JobClaimLost:
+        attempt_work.rollback()
+        session.rollback()
+        raise HTTPException(status_code=409, detail={"code": "JOB_CLAIM_LOST"})
     except Exception as exc:
         attempt_work.rollback()
-        candidate_code = str(exc)
-        error_code = (
-            candidate_code
-            if _SAFE_ERROR_CODE.fullmatch(candidate_code)
-            else "AI_JOB_FAILED"
-        )
+        session.rollback()
+        try:
+            job, attempt = _lock_current_claim(session, context, job_id, claim_token)
+        except _JobClaimLost:
+            session.rollback()
+            raise HTTPException(status_code=409, detail={"code": "JOB_CLAIM_LOST"})
+        error_code = exc.code if isinstance(exc, _InternalJobError) else "AI_JOB_FAILED"
         attempt.status = "failed"
         attempt.error_code = error_code
         attempt.completed_at = get_datetime_utc()

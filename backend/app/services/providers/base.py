@@ -4,13 +4,15 @@ import uuid
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
+from app.models import InteractionType
+
 
 @dataclass(frozen=True)
 class ExtractionContext:
     clinic_id: uuid.UUID
     patient_id: uuid.UUID
     source_version_id: uuid.UUID
-    interaction_type: str = "care_note"
+    interaction_type: InteractionType = "care_note"
     high_risk: bool = False
     conflict_review: bool = False
 

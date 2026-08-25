@@ -1,10 +1,16 @@
 import hashlib
+import importlib
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from time import sleep
 
 import pytest
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 from sqlmodel import Session, select
 
 from app.api.deps import RequestContext
@@ -16,6 +22,7 @@ from app.models import (
     DecayRun,
     EntryVersion,
     ProvenancePointer,
+    RetentionLock,
     User,
 )
 from app.seed import demo_id
@@ -30,7 +37,7 @@ from app.services.nightingale import resolve_pointer
 
 
 def test_zstd_aes_archive_rehydrate_preserves_hash_and_provenance_and_rejects_tamper(
-    client: TestClient, auth_headers
+    client: TestClient, auth_headers, owner_session: Session
 ) -> None:
     headers = auth_headers("clinician")
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
@@ -88,8 +95,9 @@ def test_zstd_aes_archive_rehydrate_preserves_hash_and_provenance_and_rejects_ta
         # canonical plaintext hash, so swapping either metadata field fails.
         original_plaintext_hash = blob.plaintext_sha256
         blob.plaintext_sha256 = "0" * 64
-        with pytest.raises(HTTPException) as aad_error:
-            rehydrate_version(session, context, version)
+        with session.no_autoflush:
+            with pytest.raises(HTTPException) as aad_error:
+                rehydrate_version(session, context, version)
         assert aad_error.value.detail["code"] == "ARCHIVE_INTEGRITY_ERROR"
         session.rollback()
         version = session.get(EntryVersion, uuid.UUID(entry.json()["version_id"]))
@@ -108,12 +116,15 @@ def test_zstd_aes_archive_rehydrate_preserves_hash_and_provenance_and_rejects_ta
 
         archive_version(session, context, version, now=future)
         session.commit()
-        session.refresh(blob)
-        blob.payload_ciphertext = (
-            bytes([blob.payload_ciphertext[0] ^ 1]) + blob.payload_ciphertext[1:]
+        stored_blob = owner_session.get(ArchiveBlob, blob.id)
+        assert stored_blob is not None
+        stored_blob.payload_ciphertext = (
+            bytes([stored_blob.payload_ciphertext[0] ^ 1])
+            + stored_blob.payload_ciphertext[1:]
         )
-        session.add(blob)
-        session.commit()
+        owner_session.add(stored_blob)
+        owner_session.commit()
+        session.expire_all()
         with pytest.raises(HTTPException) as error:
             rehydrate_version(session, context, version)
         assert error.value.detail["code"] == "ARCHIVE_INTEGRITY_ERROR"
@@ -219,3 +230,135 @@ def test_archive_expansion_limit_returns_413() -> None:
     with pytest.raises(HTTPException) as error:
         decode_archive(blob)
     assert error.value.status_code == 413
+
+
+def test_concurrent_retention_lock_serializes_before_archive_recheck(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    entry = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Concurrent retention fixture",
+            "content": "retained history",
+        },
+    ).json()
+    version_id = uuid.UUID(entry["version_id"])
+    version = owner_session.get(EntryVersion, version_id)
+    user = owner_session.get(User, demo_id("user-clinician"))
+    assert version is not None and user is not None
+    future = version.created_at + timedelta(days=731)
+    owner_session.add(
+        RetentionLock(
+            clinic_id=version.clinic_id,
+            entity_type="entry_version",
+            entity_id=version.id,
+            reason_code="SYNTHETIC_LEGAL_HOLD",
+            created_by_id=user.id,
+        )
+    )
+    owner_session.flush()  # trigger holds the shared advisory lock until commit
+
+    def attempt_archive() -> dict:
+        with Session(engine) as session:
+            worker_user = session.get(User, demo_id("user-clinician"))
+            membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+            candidate = session.get(EntryVersion, version_id)
+            assert worker_user is not None and membership is not None
+            assert candidate is not None
+            try:
+                archive_version(
+                    session,
+                    RequestContext(user=worker_user, membership=membership),
+                    candidate,
+                    now=future,
+                )
+            except HTTPException as exc:
+                session.rollback()
+                assert isinstance(exc.detail, dict)
+                return exc.detail
+            raise AssertionError("retention-protected version was archived")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(attempt_archive)
+        sleep(0.15)
+        assert pending.done() is False
+        owner_session.commit()
+        detail = pending.result(timeout=5)
+    assert detail["code"] == "DECAY_NOT_ELIGIBLE"
+    assert detail["protected_reasons"] == ["retention_lock"]
+
+
+def test_ai_trust_downgrade_blocks_cold_data_then_clears_rehydrated_reference(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    hardening = importlib.import_module(
+        "app.alembic.versions.b5e7a9c2d140_harden_worker_feedback_and_decay"
+    )
+    trust = importlib.import_module(
+        "app.alembic.versions.e8b5c1d7a2f0_ai_trust_importance_decay"
+    )
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    entry = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Downgrade fixture",
+            "content": "durable history",
+        },
+    ).json()
+    version_id = uuid.UUID(entry["version_id"])
+    with Session(engine) as session:
+        user = session.get(User, demo_id("user-clinician"))
+        membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+        version = session.get(EntryVersion, version_id)
+        assert user is not None and membership is not None and version is not None
+        context = RequestContext(user=user, membership=membership)
+        future = version.created_at + timedelta(days=731)
+        archive_version(session, context, version, now=future)
+        session.commit()
+
+    migration_engine = owner_session.get_bind()
+    with migration_engine.connect() as connection:
+        transaction = connection.begin()
+        migration_context = MigrationContext.configure(connection)
+        with pytest.raises(DBAPIError, match="rehydrate every cold"):
+            with Operations.context(migration_context):
+                hardening.downgrade()
+                trust.downgrade()
+        transaction.rollback()
+
+    with Session(engine) as session:
+        user = session.get(User, demo_id("user-clinician"))
+        membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+        version = session.get(EntryVersion, version_id)
+        assert user is not None and membership is not None and version is not None
+        rehydrate_version(
+            session, RequestContext(user=user, membership=membership), version
+        )
+        session.commit()
+
+    with migration_engine.connect() as connection:
+        transaction = connection.begin()
+        migration_context = MigrationContext.configure(connection)
+        with Operations.context(migration_context):
+            hardening.downgrade()
+            trust.downgrade()
+        row = connection.execute(
+            select(
+                EntryVersion.archive_blob_id,
+                EntryVersion.title_ciphertext,
+                EntryVersion.content_ciphertext,
+            ).where(EntryVersion.id == version_id)
+        ).one()
+        assert row.archive_blob_id is None
+        assert row.title_ciphertext is not None
+        assert row.content_ciphertext is not None
+        transaction.rollback()

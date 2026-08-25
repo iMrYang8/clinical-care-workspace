@@ -54,21 +54,6 @@ services:
     command: ["bash", "scripts/prestart.sh"]
     restart: "no"
 
-  adminer:
-    image: adminer
-    depends_on:
-      - db
-    environment:
-      - ADMINER_DESIGN=pepa-linha-dark
-    labels:
-      # Enable Traefik for this service
-      - traefik.enable=true
-      # Route HTTP traffic for the Adminer subdomain
-      - traefik.http.routers.adminer-http.rule=Host(`adminer.${DOMAIN:-localhost}`)
-      - traefik.http.routers.adminer-http.entrypoints=http
-      # Define the port inside of the Docker service to use
-      - traefik.http.services.adminer.loadbalancer.server.port=8080
-
   backend:
     image: backend:latest
     depends_on:
@@ -94,6 +79,7 @@ services:
       OPENAI_EXTRACT_MODEL: ${OPENAI_EXTRACT_MODEL:-}
       OPENAI_REVIEW_MODEL: ${OPENAI_REVIEW_MODEL:-}
       AI_JOB_LEASE_SECONDS: ${AI_JOB_LEASE_SECONDS:-300}
+      AI_WORKER_POLL_SECONDS: ${AI_WORKER_POLL_SECONDS:-2}
       PRESIDIO_REQUIRED: ${PRESIDIO_REQUIRED:-true}
       PRESIDIO_NLP_MODEL: ${PRESIDIO_NLP_MODEL:-en_core_web_sm}
       IMPORTANCE_LEARNING_ENABLED: ${IMPORTANCE_LEARNING_ENABLED:-true}
@@ -120,6 +106,43 @@ services:
       # Route HTTP traffic for this domain
       - traefik.http.routers.backend-http.rule=Host(`${DOMAIN:-localhost}`)
       - traefik.http.routers.backend-http.entrypoints=http
+
+  ai-worker:
+    image: backend:latest
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      prestart:
+        condition: service_completed_successfully
+    environment:
+      PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
+      SECRET_KEY: ${SECRET_KEY:?Variable not set}
+      FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
+      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
+      DATABASE_URL: postgresql://nightingale_app:${POSTGRES_APP_PASSWORD:?Variable not set}@db:5432/app
+      AI_PROVIDER: ${AI_PROVIDER:-deterministic}
+      REMOTE_TEXT_EGRESS_ENABLED: ${REMOTE_TEXT_EGRESS_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EXTRACT_MODEL: ${OPENAI_EXTRACT_MODEL:-}
+      OPENAI_REVIEW_MODEL: ${OPENAI_REVIEW_MODEL:-}
+      AI_JOB_LEASE_SECONDS: ${AI_JOB_LEASE_SECONDS:-300}
+      AI_WORKER_POLL_SECONDS: ${AI_WORKER_POLL_SECONDS:-2}
+      PRESIDIO_REQUIRED: ${PRESIDIO_REQUIRED:-true}
+      PRESIDIO_NLP_MODEL: ${PRESIDIO_NLP_MODEL:-en_core_web_sm}
+      IMPORTANCE_LEARNING_ENABLED: ${IMPORTANCE_LEARNING_ENABLED:-true}
+      DATA_DECAY_ENABLED: ${DATA_DECAY_ENABLED:-true}
+      DATA_DECAY_DRY_RUN: ${DATA_DECAY_DRY_RUN:-true}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "app.ai_worker"]
+    restart: unless-stopped
 
 volumes:
   nightingale-db-data:

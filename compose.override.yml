@@ -28,8 +28,16 @@ services:
       - "5432:5432"
 
   adminer:
+    profiles: ["dev-tools"]
+    image: adminer
+    depends_on:
+      - db
+    environment:
+      - ADMINER_DESIGN=pepa-linha-dark
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
+    labels:
+      - traefik.enable=false
 
   prestart:
     environment:
@@ -75,6 +83,11 @@ services:
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
+
+  ai-worker:
+    environment:
+      FASTAPI_ENV: "development"
+      ENABLE_DEMO_AUTH: "true"
 
   mailpit:
     image: axllent/mailpit

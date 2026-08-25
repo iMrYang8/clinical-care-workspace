@@ -78,6 +78,9 @@ keep-runtime-typing = true
 [tool.coverage.run]
 source = ["app"]
 dynamic_context = "test_function"
+# Alembic revisions are exercised by PostgreSQL upgrade/downgrade contract
+# tests, but generated migration bodies are not application branch coverage.
+omit = ["app/alembic/versions/*"]
 
 [tool.coverage.report]
 show_missing = true

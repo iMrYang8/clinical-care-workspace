@@ -32,7 +32,10 @@ Add these required values and mark them as secrets:
 
 * `SECRET_KEY`: A secret key used to sign security tokens.
 * `FIRST_SUPERUSER_PASSWORD`: The password of the first superuser.
-* `DATABASE_URL`: The PostgreSQL connection URL, configured automatically when using a database integration.
+* `DATABASE_URL`: the restricted `nightingale_app` runtime connection URL.
+* `MIGRATION_DATABASE_URL`: an independent owner URL used only by prestart.
+* `POSTGRES_APP_PASSWORD`: a generated password used by prestart to create or
+  rotate the restricted runtime role.
 
 To enable emails with an authenticated provider, add `SMTP_PASSWORD` as a secret.
 
@@ -60,13 +63,19 @@ The workflow runs database migrations and creates the first superuser before dep
 * `PROJECT_NAME`
 * `FIRST_SUPERUSER`
 
-Add these repository secrets:
+Add these repository secrets (the workflow fails before reading `.env` if any
+database boundary secret is missing):
 
 * `DATABASE_URL`
+* `MIGRATION_DATABASE_URL`
+* `POSTGRES_APP_PASSWORD`
 * `SECRET_KEY`
 * `FIRST_SUPERUSER_PASSWORD`
 
-Use the same values configured in FastAPI Cloud. For `DATABASE_URL`, use the connection URL from your database provider. The database must be reachable from GitHub-hosted runners so the preparation step can connect to it.
+Use the restricted URL in the application and the owner URL only in GitHub
+Actions. The database must be reachable from GitHub-hosted runners. Remote AI
+jobs additionally require a separately deployed long-running
+`python -m app.ai_worker` process; otherwise keep `AI_PROVIDER=deterministic`.
 
 The deployment workflow performs these steps:
 

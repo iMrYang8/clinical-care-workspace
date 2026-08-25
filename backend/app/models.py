@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import EmailStr
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -30,6 +31,12 @@ def get_datetime_utc() -> datetime:
 Role = Literal["patient", "staff", "clinician", "admin", "worker"]
 Section = Literal["patient", "staff", "clinician", "system"]
 EntryOrigin = Literal["human", "ai", "system"]
+InteractionType = Literal[
+    "care_note",
+    "doctor_consult",
+    "patient_insight",
+    "voice_session",
+]
 
 
 class TenantRow(SQLModel):
@@ -145,9 +152,9 @@ class Entry(TenantRow, table=True):
             initially="DEFERRED",
         ),
         ForeignKeyConstraint(
-            ["clinic_id", "source_job_id"],
-            ["jobs.clinic_id", "jobs.id"],
-            name="fk_entry_source_job_tenant",
+            ["clinic_id", "source_job_id", "patient_id"],
+            ["jobs.clinic_id", "jobs.id", "jobs.patient_id"],
+            name="fk_entry_source_job_patient_tenant",
             use_alter=True,
         ),
     )
@@ -552,6 +559,9 @@ class Job(TenantRow, table=True):
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_job_clinic_id"),
         UniqueConstraint(
+            "clinic_id", "id", "patient_id", name="uq_job_clinic_id_patient"
+        ),
+        UniqueConstraint(
             "clinic_id", "kind", "idempotency_key", name="uq_job_idempotency"
         ),
         Index("ix_job_clinic_state_next", "clinic_id", "state", "next_run_at"),
@@ -661,6 +671,11 @@ class AIRun(TenantRow, table=True):
         UniqueConstraint("clinic_id", "job_id", name="uq_ai_run_job"),
         Index("ix_ai_run_patient_created", "clinic_id", "patient_id", "created_at"),
         Index("ix_ai_run_worker", "clinic_id", "executed_by_worker_membership_id"),
+        CheckConstraint(
+            "interaction_type IN ('care_note', 'doctor_consult', "
+            "'patient_insight', 'voice_session')",
+            name="ck_ai_run_interaction_type",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -763,6 +778,7 @@ class ImportanceFeedbackEvent(TenantRow, table=True):
     )
     applied_delta: float = Field(sa_column=Column(Float, nullable=False))
     idempotency_key: str = Field(max_length=200)
+    request_sha256: str = Field(max_length=64)
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -1081,7 +1097,7 @@ class ClinicalGlancePublic(SQLModel):
 
 class AIIngestRequest(SQLModel):
     source_entry_version_id: uuid.UUID
-    interaction_type: str = Field(default="care_note", max_length=60)
+    interaction_type: InteractionType = "care_note"
 
 
 class AIRunPublic(SQLModel):

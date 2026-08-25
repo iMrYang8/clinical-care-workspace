@@ -57,7 +57,7 @@ The build is written to `backend/app/frontend` and served by FastAPI at <http://
 To run the backend and built frontend in Docker Compose:
 
 ```bash
-docker compose run --rm backend bash scripts/prestart.sh
+docker compose run --rm prestart
 docker compose watch
 ```
 
@@ -67,7 +67,10 @@ Application, with the frontend and API served by FastAPI: <http://localhost:8000
 
 Automatic interactive API documentation with Swagger UI: <http://localhost:8000/docs>
 
-Adminer, database web administration: <http://localhost:8080>
+For optional local database inspection only, start the isolated profile with
+`docker compose --profile dev-tools up -d adminer`. Adminer then binds only to
+<http://127.0.0.1:8080>; Traefik routing is disabled and the service is absent
+from production Compose.
 
 Traefik UI, to see how the routes are being handled by the proxy: <http://localhost:8090>
 

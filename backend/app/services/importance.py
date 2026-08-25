@@ -7,11 +7,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
 from sqlmodel import Session, col, select
 
 from app.api.deps import RequestContext
 from app.core.config import settings
 from app.models import (
+    Clinic,
     Highlight,
     ImportanceFeatureStat,
     ImportanceFeedbackEvent,
@@ -177,7 +179,22 @@ def record_feedback(
         return False, {highlight.patient_id}
     if signal not in SIGNAL_DELTAS:
         raise ValueError("Unsupported importance signal")
+    feature_keys = sanitize_feature_keys(highlight.feature_keys_json)
+    request_hash = hashlib.sha256(
+        (f"{highlight.id}:{signal}:" + ",".join(sorted(feature_keys))).encode()
+    ).hexdigest()
     idempotency_token = hashlib.sha256(idempotency_key.encode()).hexdigest()
+
+    # The clinic row is the serialization point for learning. It makes first
+    # observation creation and idempotency replay atomic without introducing a
+    # global lock across tenants.
+    # Do not autoflush a just-mutated highlight before taking the clinic lock:
+    # two concurrent feedback requests would otherwise each hold a highlight
+    # row while waiting on the other's clinic/candidate work.
+    with session.no_autoflush:
+        session.exec(
+            select(Clinic).where(Clinic.id == context.clinic_id).with_for_update()
+        ).one()
     existing = session.exec(
         select(ImportanceFeedbackEvent).where(
             ImportanceFeedbackEvent.clinic_id == context.clinic_id,
@@ -185,9 +202,20 @@ def record_feedback(
         )
     ).first()
     if existing is not None:
+        if (
+            existing.request_sha256 != request_hash
+            or existing.highlight_id != highlight.id
+            or existing.signal != signal
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "IDEMPOTENCY_KEY_REUSED",
+                    "message": "The key was already used for different feedback",
+                },
+            )
         return False, set()
 
-    feature_keys = sanitize_feature_keys(highlight.feature_keys_json)
     delta = SIGNAL_DELTAS[signal]
     for feature_key in feature_keys:
         stat = session.exec(
@@ -223,6 +251,7 @@ def record_feedback(
             feature_keys_json=feature_keys,
             applied_delta=delta,
             idempotency_key=idempotency_token,
+            request_sha256=request_hash,
         )
     )
     session.flush()
