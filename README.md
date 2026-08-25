@@ -163,9 +163,14 @@ for a release image, the container build must be recorded as **not tested**;
 host FFmpeg output is not a substitute.
 
 Individual commands are documented in the verification section of the demo
-runbook. The measured Glance evidence committed for this checkout is
-[`docs/evidence/glance-benchmark.json`](./docs/evidence/glance-benchmark.json);
-rerun the benchmark for the actual release commit and hardware.
+runbook. The checked-in measurement for commit `ced58bf7501182b0b46147ebbe3a189eede3511a`
+used the exact **Alex Synthetic** fixture (4/4 expected cards), 20 warmups and
+100 local HTTPS samples on the recorded arm64 host: median `3.124 ms`, p95
+`3.508 ms`, and p99 `3.707 ms`. The schema/body, Compose config, and backend
+image fingerprints are in
+[`docs/evidence/glance-benchmark.json`](./docs/evidence/glance-benchmark.json).
+It measures the precomputed read path, not a model call; rerun it for a newer
+release commit or different hardware.
 
 ## Production boundary
 

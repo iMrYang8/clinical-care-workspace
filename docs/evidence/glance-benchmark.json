@@ -1,7 +1,8 @@
 {
-  "schema_version": 1,
-  "measured_at": "2026-08-25T20:07:13.777460+00:00",
-  "commit": "74d873a277e5518865e5920b50a015d387d3d0db",
+  "schema_version": 2,
+  "measured_at": "2026-08-25T22:09:55.541554+00:00",
+  "commit": "ced58bf7501182b0b46147ebbe3a189eede3511a",
+  "dirty": false,
   "hardware": {
     "platform": "macOS-26.4.1-arm64-arm-64bit",
     "machine": "arm64",
@@ -9,7 +10,7 @@
     "logical_cpu_count": 10
   },
   "config": {
-    "base_url": "https://localhost",
+    "base_url": "https://localhost:53223",
     "endpoint": "/api/v1/patients/{synthetic_patient_id}/glance",
     "auth_transport": "bearer (benchmark/API compatibility only)",
     "warmup": 20,
@@ -17,12 +18,44 @@
     "tls_verification": false,
     "threshold_ms": 300.0
   },
+  "target": {
+    "patient_id": "c5f06c6d-7ded-55cd-b5b0-23beac7f7765",
+    "patient_display_name": "Alex Synthetic",
+    "card_count": 4,
+    "expected_card_count": 4
+  },
+  "response": {
+    "schema": {
+      "top_level_keys": [
+        "cards",
+        "generated_at",
+        "patient_id",
+        "source"
+      ],
+      "card_keys": [
+        "critical",
+        "highlight_id",
+        "label",
+        "pinned",
+        "provenance_pointer_id",
+        "risk_reason",
+        "score_components"
+      ]
+    },
+    "schema_sha256": "04a2bf4000854b8f0fdaaab8e991f8c697fe352c317abc72e046daa4d8c180a5",
+    "body_sha256": "37e6bf3c2905b869793f3b4487936561bbea753faa4f353afb7752cfc46d3723"
+  },
+  "compose": {
+    "project": "nightingale-release-520d3ceb074c-f5da1aafb93a7bd0",
+    "config_sha256": "4443594a9eb7721258ecca112705f08c3bec8a633f9f94094952419d6750b3f5",
+    "backend_image_digest": "sha256:964365b2ab2712523c2ebf6693bbc794127bb301b7fed08dfd448382dae7f59a"
+  },
   "latency_ms": {
-    "median": 4.274,
-    "p95": 4.781,
-    "p99": 5.607,
-    "min": 3.869,
-    "max": 6.925
+    "median": 3.124,
+    "p95": 3.508,
+    "p99": 3.707,
+    "min": 2.808,
+    "max": 3.922
   },
   "gate": {
     "p95_lte_300ms": true
