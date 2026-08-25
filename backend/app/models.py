@@ -10,7 +10,6 @@ from typing import Literal
 
 from pydantic import EmailStr
 from sqlalchemy import (
-    JSON,
     BigInteger,
     Column,
     DateTime,
@@ -19,6 +18,7 @@ from sqlalchemy import (
     LargeBinary,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 
@@ -32,13 +32,17 @@ EntryOrigin = Literal["human", "ai", "system"]
 
 
 class TenantRow(SQLModel):
-    clinic_id: uuid.UUID = Field(foreign_key="clinics.id", index=True)
+    clinic_id: uuid.UUID = Field(foreign_key="clinics.id", ondelete="CASCADE")
 
 
 class Clinic(SQLModel, table=True):
     __tablename__ = "clinics"
+    __table_args__ = (
+        UniqueConstraint("slug", name="clinics_slug_key"),
+        Index("ix_clinics_slug", "slug"),
+    )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    slug: str = Field(unique=True, index=True, max_length=80)
+    slug: str = Field(max_length=80)
     name: str = Field(max_length=255)
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
@@ -48,8 +52,12 @@ class Clinic(SQLModel, table=True):
 
 class User(SQLModel, table=True):
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("email", name="users_email_key"),
+        Index("ix_users_email", "email"),
+    )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    email: EmailStr = Field(unique=True, index=True, max_length=255)
+    email: EmailStr = Field(max_length=255)
     full_name: str | None = Field(default=None, max_length=255)
     hashed_password: str
     is_active: bool = True
@@ -65,10 +73,11 @@ class ClinicMembership(TenantRow, table=True):
         UniqueConstraint("clinic_id", "user_id", name="uq_membership_clinic_user"),
         UniqueConstraint("clinic_id", "id", name="uq_membership_clinic_id"),
         Index("ix_membership_user_active", "user_id", "is_active"),
+        Index("ix_clinic_memberships_clinic_id", "clinic_id"),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
-    role: str = Field(max_length=20, index=True)
+    user_id: uuid.UUID = Field(foreign_key="users.id", ondelete="CASCADE")
+    role: str = Field(max_length=20)
     is_active: bool = True
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
@@ -107,8 +116,8 @@ class PatientUserLink(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    patient_id: uuid.UUID = Field(index=True)
-    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    patient_id: uuid.UUID
+    user_id: uuid.UUID = Field(foreign_key="users.id", ondelete="CASCADE")
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -136,12 +145,12 @@ class Entry(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    patient_id: uuid.UUID = Field(index=True)
-    section: str = Field(max_length=20, index=True)
-    origin: str = Field(default="human", max_length=20, index=True)
-    patient_facing: bool = Field(default=False, index=True)
+    patient_id: uuid.UUID
+    section: str = Field(max_length=20)
+    origin: str = Field(default="human", max_length=20)
+    patient_facing: bool = Field(default=False)
     source_job_id: uuid.UUID | None = Field(default=None, index=True)
-    current_version_id: uuid.UUID | None = Field(default=None, index=True)
+    current_version_id: uuid.UUID | None = None
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -167,7 +176,7 @@ class EntryVersion(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    entry_id: uuid.UUID = Field(index=True)
+    entry_id: uuid.UUID
     version_no: int = Field(ge=1)
     title_ciphertext: bytes | None = Field(
         default=None, sa_column=Column(LargeBinary, nullable=True)
@@ -177,10 +186,10 @@ class EntryVersion(TenantRow, table=True):
     )
     content_sha256: str = Field(max_length=64)
     patient_facing: bool = Field(default=False, index=True)
-    author_id: uuid.UUID = Field(foreign_key="users.id", index=True)
-    reverted_from_version_id: uuid.UUID | None = Field(default=None, index=True)
-    storage_tier: str = Field(default="hot", max_length=10, index=True)
-    archive_blob_id: uuid.UUID | None = Field(default=None, index=True)
+    author_id: uuid.UUID = Field(foreign_key="users.id")
+    reverted_from_version_id: uuid.UUID | None = None
+    storage_tier: str = Field(default="hot", max_length=10)
+    archive_blob_id: uuid.UUID | None = None
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -211,8 +220,8 @@ class EntryRelation(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    source_entry_id: uuid.UUID = Field(index=True)
-    target_entry_id: uuid.UUID = Field(index=True)
+    source_entry_id: uuid.UUID
+    target_entry_id: uuid.UUID
     relation_type: str = Field(max_length=40)
     created_by_id: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(
@@ -249,10 +258,10 @@ class Comment(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    entry_id: uuid.UUID = Field(index=True)
-    entry_version_id: uuid.UUID = Field(index=True)
+    entry_id: uuid.UUID
+    entry_version_id: uuid.UUID
     parent_id: uuid.UUID | None = Field(default=None)
-    author_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    author_id: uuid.UUID = Field(foreign_key="users.id")
     body_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     start_offset: int | None = None
     end_offset: int | None = None
@@ -292,8 +301,8 @@ class CommentMention(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    comment_id: uuid.UUID = Field(index=True)
-    mentioned_user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    comment_id: uuid.UUID
+    mentioned_user_id: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -321,10 +330,10 @@ class CareTask(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    patient_id: uuid.UUID = Field(index=True)
+    patient_id: uuid.UUID
     comment_id: uuid.UUID | None = Field(default=None)
     assignee_membership_id: uuid.UUID
-    status: str = Field(default="open", max_length=20, index=True)
+    status: str = Field(default="open", max_length=20)
     title_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
@@ -356,14 +365,14 @@ class Highlight(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    patient_id: uuid.UUID = Field(index=True)
-    entry_id: uuid.UUID = Field(index=True)
-    source_entry_version_id: uuid.UUID = Field(index=True)
+    patient_id: uuid.UUID
+    entry_id: uuid.UUID
+    source_entry_version_id: uuid.UUID
     label_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
-    status: str = Field(default="pending", max_length=20, index=True)
-    pinned: bool = Field(default=False, index=True)
-    critical: bool = Field(default=False, index=True)
-    patient_facing: bool = Field(default=False, index=True)
+    status: str = Field(default="pending", max_length=20)
+    pinned: bool = Field(default=False)
+    critical: bool = Field(default=False)
+    patient_facing: bool = Field(default=False)
     anchor_state: str = Field(default="resolved", max_length=20)
     review_required: bool = False
     created_by_id: uuid.UUID = Field(foreign_key="users.id")
@@ -399,7 +408,7 @@ class ProvenancePointer(TenantRow, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     highlight_id: uuid.UUID | None = Field(default=None)
     comment_id: uuid.UUID | None = Field(default=None)
-    entry_version_id: uuid.UUID = Field(index=True)
+    entry_version_id: uuid.UUID
     start_offset: int
     end_offset: int
     exact_quote_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
@@ -408,7 +417,7 @@ class ProvenancePointer(TenantRow, table=True):
     quote_sha256: str = Field(max_length=64)
     anchor_state: str = Field(default="resolved", max_length=20)
     review_required: bool = False
-    audio_asset_id: uuid.UUID | None = Field(default=None, index=True)
+    audio_asset_id: uuid.UUID | None = None
     audio_start_ms: int | None = None
     audio_end_ms: int | None = None
     created_at: datetime = Field(
@@ -438,10 +447,10 @@ class ConflictCase(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    patient_id: uuid.UUID = Field(index=True)
+    patient_id: uuid.UUID
     left_entry_id: uuid.UUID
     right_entry_id: uuid.UUID
-    status: str = Field(default="unresolved", max_length=20, index=True)
+    status: str = Field(default="unresolved", max_length=20)
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -455,12 +464,12 @@ class AuditEvent(TenantRow, table=True):
         Index("ix_audit_resource", "resource_type", "resource_id"),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    actor_id: uuid.UUID = Field(foreign_key="users.id", index=True)
-    action: str = Field(max_length=80, index=True)
+    actor_id: uuid.UUID = Field(foreign_key="users.id")
+    action: str = Field(max_length=80)
     resource_type: str = Field(max_length=40)
-    resource_id: uuid.UUID = Field(index=True)
+    resource_id: uuid.UUID
     metadata_json: dict[str, object] = Field(
-        default_factory=dict, sa_column=Column(JSON, nullable=False)
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
     )
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
@@ -480,9 +489,11 @@ class PatientGlanceSnapshot(TenantRow, table=True):
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    patient_id: uuid.UUID = Field(index=True)
+    patient_id: uuid.UUID
     payload_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
-    source_event_sequence: int | None = None
+    source_event_sequence: int | None = Field(
+        default=None, sa_column=Column(BigInteger, nullable=True)
+    )
     generated_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -493,17 +504,18 @@ class DomainEvent(TenantRow, table=True):
     __tablename__ = "domain_events"
     __table_args__ = (
         Index("ix_domain_event_clinic_sequence", "clinic_id", "sequence_no"),
+        UniqueConstraint("id", name="domain_events_id_key"),
     )
     sequence_no: int | None = Field(
         default=None, sa_column=Column(BigInteger, primary_key=True, autoincrement=True)
     )
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, unique=True, index=True)
-    event_type: str = Field(max_length=100, index=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    event_type: str = Field(max_length=100)
     aggregate_type: str = Field(max_length=40)
-    aggregate_id: uuid.UUID = Field(index=True)
+    aggregate_id: uuid.UUID
     actor_id: uuid.UUID = Field(foreign_key="users.id")
     payload_json: dict[str, object] = Field(
-        default_factory=dict, sa_column=Column(JSON, nullable=False)
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
     )
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
