@@ -57,7 +57,51 @@
 
 ## How to Use It
 
-Nightingale currently preserves the FastAPI template baseline, including its Item examples, while product-specific functionality is developed separately.
+Nightingale retains the template infrastructure while replacing its example
+Item domain with clinic-scoped patients, entries, collaboration, trust, and
+audit capabilities.
+
+## AI trust, importance, and retention
+
+The backend now exposes clinic-scoped AI ingestion and reanalysis, persistent
+jobs/attempts, fail-closed redaction, immutable AI output entries, evidence
+spans, bounded importance feedback, and encrypted cold archive/rehydration:
+
+```text
+POST /api/v1/patients/{patient_id}/ai/ingest     (Idempotency-Key required)
+POST /api/v1/patients/{patient_id}/ai/reanalyze  (Idempotency-Key required)
+GET  /api/v1/jobs/{job_id}
+POST /api/v1/jobs/{job_id}/retry
+GET  /api/v1/decay/preview
+POST /api/v1/decay/archive
+POST /api/v1/decay/entries/{version_id}/rehydrate
+```
+
+`AI_PROVIDER=deterministic` is the default offline fixture. OpenAI text egress
+requires all of `AI_PROVIDER=openai`, `REMOTE_TEXT_EGRESS_ENABLED=true`,
+`OPENAI_API_KEY`, and `OPENAI_EXTRACT_MODEL`. Model IDs are read only from the
+environment. Before any remote call, Nightingale performs NFC normalization,
+known-name and Singapore identifier/contact redaction, embedded Presidio
+analysis, and a residual scan. Missing Presidio NLP models, analyzer errors, or
+residual findings block remote egress and produce explicit
+`fallback/needs_review` state. Application code never downloads a language
+model.
+
+Importance features are bounded taxonomy keys rather than free text. Weights
+are clinic-scoped, use diminishing updates, and clamp to `[-0.20, 0.20]`.
+Patient Glance responses omit internal score components. Cold decay is limited
+to unprotected content older than 730 days; canonical plaintext is hashed,
+zstd-compressed, AES-256-GCM encrypted, reread and verified before active
+ciphertext is cleared. Versions, audit events, and provenance pointers remain.
+
+Optional dependency groups are not installed by the default demo:
+
+```bash
+uv sync --project backend --group local-asr
+uv sync --project backend --group diarization
+```
+
+Neither group downloads or validates model weights automatically.
 
 ## Backend Development
 
