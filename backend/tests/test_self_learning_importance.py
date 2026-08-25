@@ -9,7 +9,13 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, delete, select
 
 from app.core.db import engine, set_rls_clinic
-from app.models import Highlight, ImportanceFeatureStat, ImportanceFeedbackEvent
+from app.models import (
+    AuditEvent,
+    DomainEvent,
+    Highlight,
+    ImportanceFeatureStat,
+    ImportanceFeedbackEvent,
+)
 from app.seed import demo_id
 from app.services.importance import (
     MAX_FEATURE_WEIGHT,
@@ -181,6 +187,13 @@ def test_feedback_idempotency_key_is_bound_to_target_and_signal(
 
     accepted = client.post(f"/api/v1/highlights/{first['id']}/pin", headers=shared)
     assert accepted.status_code == 200, accepted.text
+    already_pinned = client.post(
+        f"/api/v1/highlights/{second['id']}/pin",
+        headers=headers | {"Idempotency-Key": "second-resource-key"},
+    )
+    assert already_pinned.status_code == 200, already_pinned.text
+    # Request binding is checked even though the second target is already in
+    # the requested state; a no-op cannot bypass idempotency-key ownership.
     rejected = client.post(f"/api/v1/highlights/{second['id']}/pin", headers=shared)
     assert rejected.status_code == 409, rejected.text
     assert rejected.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
@@ -188,7 +201,7 @@ def test_feedback_idempotency_key_is_bound_to_target_and_signal(
     with Session(engine) as session:
         stored_second = session.get(Highlight, uuid.UUID(second["id"]))
         assert stored_second is not None
-        assert stored_second.pinned is False
+        assert stored_second.pinned is True
         events = session.exec(
             select(ImportanceFeedbackEvent).where(
                 ImportanceFeedbackEvent.idempotency_key
@@ -263,3 +276,59 @@ def test_concurrent_first_feature_and_same_request_feedback_are_atomic(
             )
         ).all()
         assert len(events) == 1
+        audits = session.exec(
+            select(AuditEvent).where(
+                AuditEvent.resource_id == uuid.UUID(third["id"]),
+                AuditEvent.action == "highlight.pin",
+            )
+        ).all()
+        domain_events = session.exec(
+            select(DomainEvent).where(
+                DomainEvent.aggregate_id == uuid.UUID(third["id"]),
+                DomainEvent.event_type == "highlight.pin",
+            )
+        ).all()
+        assert len(audits) == 1
+        assert len(domain_events) == 1
+
+    fourth = _create_allergy_highlight(client, headers, section="clinician")
+    transition_barrier = Barrier(2)
+
+    def distinct_request(key: str) -> int:
+        transition_barrier.wait()
+        return client.post(
+            f"/api/v1/highlights/{fourth['id']}/pin",
+            headers=headers | {"Idempotency-Key": key},
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        distinct_statuses = [
+            future.result()
+            for future in (
+                pool.submit(distinct_request, "same-transition-a"),
+                pool.submit(distinct_request, "same-transition-b"),
+            )
+        ]
+    assert distinct_statuses == [200, 200]
+    with Session(engine) as session:
+        events = session.exec(
+            select(ImportanceFeedbackEvent).where(
+                ImportanceFeedbackEvent.highlight_id == uuid.UUID(fourth["id"]),
+                ImportanceFeedbackEvent.signal == "pin",
+            )
+        ).all()
+        audits = session.exec(
+            select(AuditEvent).where(
+                AuditEvent.resource_id == uuid.UUID(fourth["id"]),
+                AuditEvent.action == "highlight.pin",
+            )
+        ).all()
+        domain_events = session.exec(
+            select(DomainEvent).where(
+                DomainEvent.aggregate_id == uuid.UUID(fourth["id"]),
+                DomainEvent.event_type == "highlight.pin",
+            )
+        ).all()
+        assert len(events) == 1
+        assert len(audits) == 1
+        assert len(domain_events) == 1

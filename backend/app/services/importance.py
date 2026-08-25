@@ -166,6 +166,73 @@ def refresh_highlight_score(session: Session, highlight: Highlight) -> ScoreResu
     return score
 
 
+def lock_importance_scope(session: Session, clinic_id: uuid.UUID) -> None:
+    """Serialize clinic-scoped feedback before locking or mutating a highlight."""
+
+    # Keep a single lock order everywhere: clinic first, then highlight/stat rows.
+    # Suppressing autoflush is essential when callers have already staged a
+    # highlight mutation (for example comment/edit-derived weak feedback).
+    with session.no_autoflush:
+        session.exec(
+            select(Clinic).where(Clinic.id == clinic_id).with_for_update()
+        ).one()
+
+
+def _feedback_request_identity(
+    highlight: Highlight, signal: str, idempotency_key: str
+) -> tuple[list[str], str, str]:
+    if signal not in SIGNAL_DELTAS:
+        raise ValueError("Unsupported importance signal")
+    feature_keys = sanitize_feature_keys(highlight.feature_keys_json)
+    request_hash = hashlib.sha256(
+        (f"{highlight.id}:{signal}:" + ",".join(sorted(feature_keys))).encode()
+    ).hexdigest()
+    idempotency_token = hashlib.sha256(idempotency_key.encode()).hexdigest()
+    return feature_keys, request_hash, idempotency_token
+
+
+def feedback_idempotency_replayed(
+    session: Session,
+    context: RequestContext,
+    highlight: Highlight,
+    *,
+    signal: str,
+    idempotency_key: str,
+) -> bool:
+    """Validate a feedback key and report an already-applied request.
+
+    The caller must hold the clinic serialization lock. This check deliberately
+    also runs before no-op state transitions, so a key used for another target
+    or signal cannot bypass request binding merely because the target is already
+    pinned, accepted, rejected, or dismissed.
+    """
+
+    _, request_hash, idempotency_token = _feedback_request_identity(
+        highlight, signal, idempotency_key
+    )
+    existing = session.exec(
+        select(ImportanceFeedbackEvent).where(
+            ImportanceFeedbackEvent.clinic_id == context.clinic_id,
+            ImportanceFeedbackEvent.idempotency_key == idempotency_token,
+        )
+    ).first()
+    if existing is None:
+        return False
+    if (
+        existing.request_sha256 != request_hash
+        or existing.highlight_id != highlight.id
+        or existing.signal != signal
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "IDEMPOTENCY_KEY_REUSED",
+                "message": "The key was already used for different feedback",
+            },
+        )
+    return True
+
+
 def record_feedback(
     session: Session,
     context: RequestContext,
@@ -174,16 +241,9 @@ def record_feedback(
     signal: str,
     idempotency_key: str,
 ) -> tuple[bool, set[uuid.UUID]]:
-    if not settings.IMPORTANCE_LEARNING_ENABLED:
-        refresh_highlight_score(session, highlight)
-        return False, {highlight.patient_id}
-    if signal not in SIGNAL_DELTAS:
-        raise ValueError("Unsupported importance signal")
-    feature_keys = sanitize_feature_keys(highlight.feature_keys_json)
-    request_hash = hashlib.sha256(
-        (f"{highlight.id}:{signal}:" + ",".join(sorted(feature_keys))).encode()
-    ).hexdigest()
-    idempotency_token = hashlib.sha256(idempotency_key.encode()).hexdigest()
+    feature_keys, request_hash, idempotency_token = _feedback_request_identity(
+        highlight, signal, idempotency_key
+    )
 
     # The clinic row is the serialization point for learning. It makes first
     # observation creation and idempotency replay atomic without introducing a
@@ -191,30 +251,18 @@ def record_feedback(
     # Do not autoflush a just-mutated highlight before taking the clinic lock:
     # two concurrent feedback requests would otherwise each hold a highlight
     # row while waiting on the other's clinic/candidate work.
-    with session.no_autoflush:
-        session.exec(
-            select(Clinic).where(Clinic.id == context.clinic_id).with_for_update()
-        ).one()
-    existing = session.exec(
-        select(ImportanceFeedbackEvent).where(
-            ImportanceFeedbackEvent.clinic_id == context.clinic_id,
-            ImportanceFeedbackEvent.idempotency_key == idempotency_token,
-        )
-    ).first()
-    if existing is not None:
-        if (
-            existing.request_sha256 != request_hash
-            or existing.highlight_id != highlight.id
-            or existing.signal != signal
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "IDEMPOTENCY_KEY_REUSED",
-                    "message": "The key was already used for different feedback",
-                },
-            )
+    lock_importance_scope(session, context.clinic_id)
+    if feedback_idempotency_replayed(
+        session,
+        context,
+        highlight,
+        signal=signal,
+        idempotency_key=idempotency_key,
+    ):
         return False, set()
+    if not settings.IMPORTANCE_LEARNING_ENABLED:
+        refresh_highlight_score(session, highlight)
+        return False, {highlight.patient_id}
 
     delta = SIGNAL_DELTAS[signal]
     for feature_key in feature_keys:

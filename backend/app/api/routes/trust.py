@@ -17,6 +17,8 @@ from app.models import (
     ProvenanceResolved,
 )
 from app.services.importance import (
+    feedback_idempotency_replayed,
+    lock_importance_scope,
     record_feedback,
     refresh_highlight_score,
     sanitize_feature_keys,
@@ -40,14 +42,21 @@ def _require_reviewer(context: RequestContext) -> None:
 
 
 def _get_highlight(
-    session: Session, context: RequestContext, highlight_id: uuid.UUID
+    session: Session,
+    context: RequestContext,
+    highlight_id: uuid.UUID,
+    *,
+    lock: bool = False,
 ) -> Highlight:
     _require_reviewer(context)
-    highlight = session.exec(
-        select(Highlight).where(
-            Highlight.id == highlight_id, Highlight.clinic_id == context.clinic_id
+    statement = select(Highlight).where(
+        Highlight.id == highlight_id, Highlight.clinic_id == context.clinic_id
+    )
+    if lock:
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
         )
-    ).first()
+    highlight = session.exec(statement).first()
     if highlight is None:
         raise HTTPException(status_code=404, detail="Highlight not found")
     get_scoped_entry(session, context, highlight.entry_id)
@@ -200,7 +209,17 @@ def _transition(
     action: str,
     idempotency_key: str | None = None,
 ) -> HighlightPublic:
-    highlight = _get_highlight(session, context, highlight_id)
+    request_key = idempotency_key or f"{action}:{highlight_id}:{uuid.uuid4()}"
+    lock_importance_scope(session, context.clinic_id)
+    highlight = _get_highlight(session, context, highlight_id, lock=True)
+    if feedback_idempotency_replayed(
+        session,
+        context,
+        highlight,
+        signal=action,
+        idempotency_key=request_key,
+    ):
+        return _highlight_public(session, context, highlight)
     if action in {"accept", "pin"} and (
         highlight.anchor_state != "resolved" or highlight.review_required
     ):
@@ -234,7 +253,7 @@ def _transition(
         context,
         highlight,
         signal=action,
-        idempotency_key=idempotency_key or f"{action}:{highlight.id}",
+        idempotency_key=request_key,
     )
     emit_change(
         session,
@@ -288,7 +307,16 @@ def feedback(
     context: CurrentContext,
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> HighlightPublic:
-    highlight = _get_highlight(session, context, highlight_id)
+    lock_importance_scope(session, context.clinic_id)
+    highlight = _get_highlight(session, context, highlight_id, lock=True)
+    if feedback_idempotency_replayed(
+        session,
+        context,
+        highlight,
+        signal=body.signal,
+        idempotency_key=idempotency_key,
+    ):
+        return _highlight_public(session, context, highlight)
     if highlight.status == "dismissed":
         return _highlight_public(session, context, highlight)
     highlight.status = "dismissed"
