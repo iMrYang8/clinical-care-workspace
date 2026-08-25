@@ -65,15 +65,22 @@ def test_cross_clinic_resources_are_hidden_as_404(
     primary_patient = _patients(client, staff_headers)[0]
     other_patient = _patients(client, other_headers)[0]
 
-    assert client.get(
-        f"/api/v1/patients/{other_patient['id']}/timeline", headers=staff_headers
-    ).status_code == 404
-    assert client.get(
-        f"/api/v1/patients/{primary_patient['id']}/timeline", headers=other_headers
-    ).status_code == 404
-    assert client.get(
-        f"/api/v1/entries/{uuid.uuid4()}", headers=staff_headers
-    ).status_code == 404
+    assert (
+        client.get(
+            f"/api/v1/patients/{other_patient['id']}/timeline", headers=staff_headers
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            f"/api/v1/patients/{primary_patient['id']}/timeline", headers=other_headers
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(f"/api/v1/entries/{uuid.uuid4()}", headers=staff_headers).status_code
+        == 404
+    )
 
 
 def test_patient_dto_and_query_exclude_internal_and_raw_ai(
@@ -129,9 +136,12 @@ def test_patient_dto_and_query_exclude_internal_and_raw_ai(
         assert forbidden_keys.isdisjoint(row.keys())
 
     other_patient = _patients(client, auth_headers("other_staff"))[0]
-    assert client.get(
-        f"/api/v1/patients/{other_patient['id']}/timeline", headers=patient_headers
-    ).status_code == 404
+    assert (
+        client.get(
+            f"/api/v1/patients/{other_patient['id']}/timeline", headers=patient_headers
+        ).status_code
+        == 404
+    )
 
 
 def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
@@ -145,12 +155,18 @@ def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
         "title": "Denied",
         "content": "Denied",
     }
-    assert client.post(
-        "/api/v1/entries", headers=auth_headers("admin"), json=body
-    ).status_code == 403
-    assert client.post(
-        "/api/v1/entries", headers=auth_headers("worker"), json=body
-    ).status_code == 403
+    assert (
+        client.post(
+            "/api/v1/entries", headers=auth_headers("admin"), json=body
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/v1/entries", headers=auth_headers("worker"), json=body
+        ).status_code
+        == 403
+    )
 
     system_body = body | {"section": "system", "origin": "system"}
     created = client.post(
