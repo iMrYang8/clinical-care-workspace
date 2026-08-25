@@ -1,21 +1,22 @@
-from collections.abc import Generator
-from typing import Annotated
+import uuid
+from collections.abc import Callable, Generator
+from dataclasses import dataclass
+from typing import Annotated, cast
 
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
+from sqlalchemy import text
 from sqlmodel import Session
 
 from app.core import security
 from app.core.config import settings
 from app.core.db import engine
-from app.models import TokenPayload, User
+from app.models import ClinicMembership, Role, TokenPayload, User
 
-reusable_oauth2 = OAuth2PasswordBearer(
-    tokenUrl=f"{settings.API_V1_STR}/login/access-token"
-)
+reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
 
 
 def get_db() -> Generator[Session]:
@@ -27,31 +28,89 @@ SessionDep = Annotated[Session, Depends(get_db)]
 TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
 
-def get_current_user(session: SessionDep, token: TokenDep) -> User:
+@dataclass(frozen=True)
+class RequestContext:
+    user: User
+    membership: ClinicMembership
+    job_id: uuid.UUID | None = None
+
+    @property
+    def user_id(self) -> uuid.UUID:
+        return self.user.id
+
+    @property
+    def clinic_id(self) -> uuid.UUID:
+        return self.membership.clinic_id
+
+    @property
+    def role(self) -> Role:
+        return cast(Role, self.membership.role)
+
+
+def _resolve_request_context(session: Session, token: str) -> RequestContext:
     try:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
         )
         token_data = TokenPayload(**payload)
-    except (InvalidTokenError, ValidationError):
+        user_id = uuid.UUID(token_data.sub or "")
+        membership_id = uuid.UUID(token_data.membership_id or "")
+        token_clinic_id = uuid.UUID(token_data.clinic_id or "")
+        job_id = uuid.UUID(token_data.job_id) if token_data.job_id else None
+    except (InvalidTokenError, ValidationError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Could not validate credentials",
         )
-    user = session.get(User, token_data.sub)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if not user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return user
 
-
-CurrentUser = Annotated[User, Depends(get_current_user)]
-
-
-def get_current_active_superuser(current_user: CurrentUser) -> User:
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=403, detail="The user doesn't have enough privileges"
+    # Bootstrap RLS from a signed server-issued claim, then verify it against the
+    # live membership row. A moved/revoked membership therefore invalidates the JWT.
+    if session.get_bind().dialect.name == "postgresql":
+        session.connection().execute(
+            text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
+            {"clinic_id": str(token_clinic_id)},
         )
-    return current_user
+    user = session.get(User, user_id)
+    membership = session.get(ClinicMembership, membership_id)
+    if (
+        user is None
+        or membership is None
+        or membership.user_id != user_id
+        or membership.clinic_id != token_clinic_id
+    ):
+        raise HTTPException(status_code=404, detail="Membership not found")
+    if not user.is_active or not membership.is_active:
+        raise HTTPException(status_code=403, detail="Inactive membership")
+    if membership.role not in {"patient", "staff", "clinician", "admin", "worker"}:
+        raise HTTPException(status_code=403, detail="Invalid membership role")
+
+    return RequestContext(user=user, membership=membership, job_id=job_id)
+
+
+def get_request_context(session: SessionDep, token: TokenDep) -> RequestContext:
+    return _resolve_request_context(session, token)
+
+
+def get_detached_request_context(token: TokenDep) -> RequestContext:
+    """Resolve SSE auth in a bounded session released before streaming starts."""
+
+    with Session(engine) as session:
+        context = _resolve_request_context(session, token)
+        session.expunge(context.user)
+        session.expunge(context.membership)
+        return context
+
+
+CurrentContext = Annotated[RequestContext, Depends(get_request_context)]
+EventContext = Annotated[RequestContext, Depends(get_detached_request_context)]
+
+
+def require_roles(*roles: Role) -> Callable[[RequestContext], RequestContext]:
+    allowed = set(roles)
+
+    def dependency(context: CurrentContext) -> RequestContext:
+        if context.role not in allowed:
+            raise HTTPException(status_code=403, detail="Role is not permitted")
+        return context
+
+    return dependency

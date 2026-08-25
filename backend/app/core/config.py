@@ -21,10 +21,14 @@ class Settings(BaseSettings):
     )
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str
+    # Base64/hex encoded 32-byte AES master key. Local demo falls back to a
+    # SHA-256 derivation of SECRET_KEY; deployed environments set this directly.
+    FIELD_ENCRYPTION_MASTER_KEY: str | None = None
     # 60 minutes * 24 hours * 8 days = 8 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
     FRONTEND_HOST: str = "http://localhost:5173"
     FASTAPI_ENV: Literal["development"] | None = None
+    ENABLE_DEMO_AUTH: bool = False
 
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
