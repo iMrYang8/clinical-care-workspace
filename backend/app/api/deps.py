@@ -29,6 +29,11 @@ SessionDep = Annotated[Session, Depends(get_db)]
 BearerTokenDep = Annotated[str | None, Depends(reusable_oauth2)]
 CookieTokenDep = Annotated[str | None, Cookie(alias=settings.AUTH_COOKIE_NAME)]
 
+# Fetch callers must distinguish an invalid authenticated context from an
+# ordinary role/record-level 403 without consuming or guessing at a JSON error
+# string. This response-only marker is intentionally absent from RBAC denials.
+SESSION_INVALID_HEADERS = {"X-Nightingale-Session-Invalid": "1"}
+
 
 @dataclass(frozen=True)
 class RequestContext:
@@ -63,6 +68,7 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Could not validate credentials",
+            headers=SESSION_INVALID_HEADERS,
         )
 
     # Bootstrap RLS from a signed server-issued claim, then verify it against the
@@ -78,9 +84,17 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
     ):
         raise HTTPException(status_code=404, detail="Membership not found")
     if not user.is_active or not membership.is_active:
-        raise HTTPException(status_code=403, detail="Inactive membership")
+        raise HTTPException(
+            status_code=403,
+            detail="Inactive membership",
+            headers=SESSION_INVALID_HEADERS,
+        )
     if membership.role not in {"patient", "staff", "clinician", "admin", "worker"}:
-        raise HTTPException(status_code=403, detail="Invalid membership role")
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid membership role",
+            headers=SESSION_INVALID_HEADERS,
+        )
 
     return RequestContext(user=user, membership=membership, job_id=job_id)
 

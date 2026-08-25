@@ -28,6 +28,7 @@ import {
   PatientsService,
   TrustService,
 } from "@/client"
+import { authenticatedFetch } from "@/features/authenticatedFetch"
 
 export type DemoPersona = "patient" | "staff" | "clinician" | "admin"
 export type ClinicalRole = MePublic["role"]
@@ -378,7 +379,7 @@ export async function streamDomainEvents(
   onEvent: (event: DomainEvent) => void,
   options: { signal: AbortSignal; lastEventId?: number },
 ): Promise<void> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${import.meta.env.VITE_API_URL ?? ""}/api/v1/events/stream`,
     {
       credentials: "same-origin",

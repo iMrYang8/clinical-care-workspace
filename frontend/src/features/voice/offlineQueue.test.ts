@@ -97,7 +97,7 @@ describe("encrypted voice offline queue", () => {
     }
 
     const getAllSpy = vi.spyOn(IDBIndex.prototype, "getAll")
-    const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }))
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }))
     vi.stubGlobal("fetch", fetchMock)
 
     await resetVoiceDatabaseForTests()

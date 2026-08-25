@@ -67,6 +67,7 @@ def test_trust_fields_are_ignored_and_role_is_server_derived(
         },
     )
     assert denied.status_code == 403
+    assert "X-Nightingale-Session-Invalid" not in denied.headers
 
 
 def test_cross_clinic_resources_are_hidden_as_404(

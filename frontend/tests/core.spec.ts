@@ -1,7 +1,74 @@
 import { randomUUID } from "node:crypto"
+import type { Page } from "@playwright/test"
 import { expect, test } from "@playwright/test"
 
 test.use({ storageState: { cookies: [], origins: [] } })
+
+async function seedQueuedVoiceChunk(
+  page: Page,
+  input: { captureId: string; deviceId: string; patientId: string },
+): Promise<void> {
+  await page.evaluate(async (fixture) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("nightingale-voice-v1", 2)
+      request.onupgradeneeded = () => {
+        const opened = request.result
+        if (!opened.objectStoreNames.contains("captures")) {
+          opened.createObjectStore("captures", { keyPath: "id" })
+        }
+        if (!opened.objectStoreNames.contains("chunks")) {
+          const chunks = opened.createObjectStore("chunks", { keyPath: "id" })
+          chunks.createIndex("by-capture", "captureId")
+          chunks.createIndex("by-capture-index", ["captureId", "chunkIndex"])
+        }
+      }
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => resolve(request.result)
+    })
+    const key = await crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    )
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const plaintext = new TextEncoder().encode("auth-fetch-voice-fixture")
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      plaintext,
+    )
+    const transaction = db.transaction(["captures", "chunks"], "readwrite")
+    transaction.objectStore("captures").put({
+      id: fixture.captureId,
+      serverSessionId: fixture.captureId,
+      serverDeviceId: fixture.deviceId,
+      patientId: fixture.patientId,
+      mediaType: "audio/webm",
+      key,
+      nextChunkIndex: 1,
+      createdAt: new Date().toISOString(),
+    })
+    transaction.objectStore("chunks").put({
+      id: `${fixture.captureId}:0`,
+      captureId: fixture.captureId,
+      chunkIndex: 0,
+      iv,
+      ciphertext,
+      sha256: "fixture",
+      byteLength: plaintext.byteLength,
+      mediaType: "audio/webm",
+      startMs: 0,
+      endMs: 1_000,
+      createdAt: new Date().toISOString(),
+    })
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    db.close()
+  }, input)
+}
 
 test("staff opens the real synthetic care note", async ({ page }) => {
   await page.goto("/login")
@@ -326,6 +393,180 @@ test("a revoked session masks every tab and deletes old encrypted voice before a
     page.getByRole("heading", { name: "Encrypted uploads to recover" }),
   ).toHaveCount(0)
   await expect(page.getByText("expired-session-fixture")).toHaveCount(0)
+})
+
+test("a native voice chunk 401 terminates every tab and purges encrypted recovery", async ({
+  page,
+}) => {
+  await page.goto("/login")
+  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  const patientHref = await page
+    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getAttribute("href")
+  expect(patientHref).toBeTruthy()
+  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
+    "/",
+  )[2]
+  expect(patientId).toBeTruthy()
+
+  const second = await page.context().newPage()
+  await second.goto(patientHref!)
+  await expect(
+    second.getByRole("heading", { name: "Alex Synthetic" }),
+  ).toBeVisible()
+
+  const captureId = `chunk-401-${randomUUID()}`
+  const deviceId = `device-${randomUUID()}`
+  await seedQueuedVoiceChunk(page, { captureId, deviceId, patientId })
+  await page.goto(`${patientHref}/voice/capture`)
+  await expect(page.getByText(captureId)).toBeVisible()
+  await expect
+    .poll(() =>
+      page.evaluate(async () =>
+        (await indexedDB.databases()).some(
+          (database) => database.name === "nightingale-voice-v1",
+        ),
+      ),
+    )
+    .toBe(true)
+
+  let releaseLogout!: () => void
+  const logoutGate = new Promise<void>((resolve) => {
+    releaseLogout = resolve
+  })
+  await page.route("**/api/v1/auth/logout", async (route) => {
+    await logoutGate
+    await route.continue()
+  })
+  let rejectedChunkUploads = 0
+  await page.route(
+    `**/api/v1/voice/sessions/${captureId}/devices/${deviceId}/chunks/0`,
+    async (route) => {
+      rejectedChunkUploads += 1
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Synthetic expired session" }),
+      })
+    },
+  )
+
+  await page.getByRole("button", { name: "Resume upload" }).click()
+
+  await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
+  await expect(second.getByTestId("session-termination-boundary")).toBeVisible()
+  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  expect(rejectedChunkUploads).toBe(1)
+
+  releaseLogout()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(second).toHaveURL(/\/login$/)
+  await expect
+    .poll(() =>
+      second.evaluate(async () =>
+        (await indexedDB.databases()).some(
+          (database) => database.name === "nightingale-voice-v1",
+        ),
+      ),
+    )
+    .toBe(false)
+  await second.close()
+})
+
+test("an authentication-marked native 403 masks all tabs and clears IndexedDB", async ({
+  page,
+}) => {
+  await page.goto("/login")
+  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  const patientHref = await page
+    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getAttribute("href")
+  expect(patientHref).toBeTruthy()
+  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
+    "/",
+  )[2]
+  expect(patientId).toBeTruthy()
+
+  const second = await page.context().newPage()
+  await second.goto(`${patientHref}/voice/capture`)
+  await expect(
+    second.getByRole("heading", { name: "Secure voice capture" }),
+  ).toBeVisible()
+  await seedQueuedVoiceChunk(second, {
+    captureId: `inactive-403-${randomUUID()}`,
+    deviceId: `device-${randomUUID()}`,
+    patientId,
+  })
+
+  let releaseLogout!: () => void
+  const logoutGate = new Promise<void>((resolve) => {
+    releaseLogout = resolve
+  })
+  await page.route("**/api/v1/auth/logout", async (route) => {
+    await logoutGate
+    await route.continue()
+  })
+  let rejectedStreams = 0
+  await page.route("**/api/v1/events/stream**", async (route) => {
+    rejectedStreams += 1
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      headers: { "X-Nightingale-Session-Invalid": "1" },
+      body: JSON.stringify({ detail: "Inactive membership" }),
+    })
+  })
+
+  await page.goto(patientHref!)
+
+  await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
+  await expect(second.getByTestId("session-termination-boundary")).toBeVisible()
+  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  expect(rejectedStreams).toBe(1)
+
+  releaseLogout()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(second).toHaveURL(/\/login$/)
+  await expect
+    .poll(() =>
+      second.evaluate(async () =>
+        (await indexedDB.databases()).some(
+          (database) => database.name === "nightingale-voice-v1",
+        ),
+      ),
+    )
+    .toBe(false)
+  await second.close()
+})
+
+test("an ordinary native permission 403 does not terminate the session", async ({
+  page,
+}) => {
+  let deniedStreams = 0
+  await page.route("**/api/v1/events/stream**", async (route) => {
+    deniedStreams += 1
+    await route.fulfill({
+      status: 403,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "Clinical event role required" }),
+    })
+  })
+  await page.goto("/login")
+  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  await page
+    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .click()
+
+  await expect.poll(() => deniedStreams).toBeGreaterThan(0)
+  await expect(
+    page.getByRole("heading", { name: "Alex Synthetic" }),
+  ).toBeVisible()
+  await expect(page.getByTestId("session-termination-boundary")).toHaveCount(0)
+  expect(
+    (await page.context().cookies()).some(
+      (cookie) => cookie.name === "nightingale_session",
+    ),
+  ).toBe(true)
 })
 
 test("expired cookie on direct login purges old voice before sign-in controls appear", async ({

@@ -11,6 +11,11 @@ import ReactDOM from "react-dom/client"
 import { client } from "./client/client.gen"
 import { ThemeProvider } from "./components/theme-provider"
 import { Toaster } from "./components/ui/sonner"
+import {
+  isAuthenticationRejectionStatus,
+  SESSION_INVALID_RESPONSE_HEADER,
+  setAuthenticationRejectionHandler,
+} from "./features/authenticatedFetch"
 import { terminateUnauthorizedSession } from "./hooks/useAuth"
 import "./index.css"
 import { routeTree } from "./routeTree.gen"
@@ -23,9 +28,12 @@ client.setConfig({
 const handleApiError = (error: Error) => {
   if (!(error instanceof AxiosError)) return
   const status = error.response?.status
-  const requestUrl = error.config?.url ?? ""
+  const sessionInvalid =
+    error.response?.headers[SESSION_INVALID_RESPONSE_HEADER.toLowerCase()] ===
+    "1"
   const authContextRejected =
-    status === 401 || (status === 403 && requestUrl.includes("/auth/me"))
+    status !== undefined &&
+    isAuthenticationRejectionStatus(status, sessionInvalid ? "1" : null)
   if (authContextRejected) {
     queryClient.clear()
     void terminateUnauthorizedSession()
@@ -38,6 +46,11 @@ export const queryClient = new QueryClient({
   mutationCache: new MutationCache({
     onError: handleApiError,
   }),
+})
+
+setAuthenticationRejectionHandler(() => {
+  queryClient.clear()
+  void terminateUnauthorizedSession()
 })
 
 const router = createRouter({ routeTree })

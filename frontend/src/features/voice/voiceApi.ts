@@ -4,6 +4,7 @@ import type {
   VoiceSessionPublic,
 } from "@/client"
 import { VoiceService } from "@/client"
+import { authenticatedFetch } from "@/features/authenticatedFetch"
 import {
   acknowledgeChunk,
   completeLocalCapture,
@@ -32,7 +33,7 @@ export async function uploadPendingChunks(captureId: string): Promise<{
     const chunk = await nextPendingChunk(captureId, maxChunkIndex)
     if (!chunk) break
     const plaintext = await decryptQueuedChunk(chunk)
-    const response = await fetch(
+    const response = await authenticatedFetch(
       apiUrl(
         `/api/v1/voice/sessions/${capture.serverSessionId}/devices/${capture.serverDeviceId}/chunks/${chunk.chunkIndex}`,
       ),
@@ -146,7 +147,7 @@ export function voiceAudioUrl(sessionId: string): string {
 }
 
 export async function loadAuthorizedAudio(sessionId: string): Promise<string> {
-  const response = await fetch(voiceAudioUrl(sessionId), {
+  const response = await authenticatedFetch(voiceAudioUrl(sessionId), {
     credentials: "same-origin",
   })
   if (!response.ok) throw new Error(`Audio unavailable (${response.status})`)

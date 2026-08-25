@@ -30,12 +30,11 @@ def test_password_login_logout_health_and_bad_token(client) -> None:
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
     assert client.post("/api/v1/auth/logout", headers=headers).status_code == 200
     assert client.get("/api/v1/utils/health-check/").json() is True
-    assert (
-        client.get(
-            "/api/v1/auth/me", headers={"Authorization": "Bearer invalid"}
-        ).status_code
-        == 403
+    invalid = client.get(
+        "/api/v1/auth/me", headers={"Authorization": "Bearer invalid"}
     )
+    assert invalid.status_code == 403
+    assert invalid.headers["X-Nightingale-Session-Invalid"] == "1"
 
     assert (
         client.post(
@@ -77,6 +76,24 @@ def test_password_login_requires_active_membership(client) -> None:
         },
     )
     assert response.status_code == 403
+
+
+def test_inactive_authenticated_membership_marks_session_invalid(
+    client, auth_headers
+) -> None:
+    headers = auth_headers("staff")
+    with Session(engine) as session:
+        membership = session.get(ClinicMembership, demo_id("membership-staff"))
+        assert membership is not None
+        membership.is_active = False
+        session.add(membership)
+        session.commit()
+
+    response = client.get("/api/v1/auth/me", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Inactive membership"
+    assert response.headers["X-Nightingale-Session-Invalid"] == "1"
 
 
 def test_sse_resumes_after_last_event_id(client, auth_headers) -> None:
