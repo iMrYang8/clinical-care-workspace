@@ -13,7 +13,7 @@ import {
 export type Item = {
   icon: LucideIcon
   title: string
-  path: string
+  path: "/my-care" | "/patients" | "/admin"
 }
 
 interface MainProps {

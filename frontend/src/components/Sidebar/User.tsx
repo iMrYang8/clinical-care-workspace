@@ -1,6 +1,5 @@
-import { Link as RouterLink } from "@tanstack/react-router"
-import { ChevronsUpDown, LogOut, Settings } from "lucide-react"
-
+import { ChevronsUpDown, LogOut } from "lucide-react"
+import type { MePublic } from "@/client"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   DropdownMenu,
@@ -20,7 +19,7 @@ import useAuth from "@/hooks/useAuth"
 import { getInitials } from "@/utils"
 
 interface UserInfoProps {
-  fullName?: string
+  fullName?: string | null
   email?: string
 }
 
@@ -40,19 +39,15 @@ function UserInfo({ fullName, email }: UserInfoProps) {
   )
 }
 
-export function User({ user }: { user: any }) {
+export function User({ user }: { user?: MePublic }) {
   const { logout } = useAuth()
   const { isMobile, setOpenMobile } = useSidebar()
 
   if (!user) return null
 
-  const handleMenuClick = () => {
-    if (isMobile) {
-      setOpenMobile(false)
-    }
-  }
   const handleLogout = async () => {
-    logout()
+    if (isMobile) setOpenMobile(false)
+    await logout()
   }
 
   return (
@@ -79,15 +74,12 @@ export function User({ user }: { user: any }) {
               <UserInfo fullName={user?.full_name} email={user?.email} />
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <RouterLink to="/settings" onClick={handleMenuClick}>
-              <DropdownMenuItem>
-                <Settings />
-                User Settings
-              </DropdownMenuItem>
-            </RouterLink>
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              {user.role} · clinic scoped
+            </DropdownMenuLabel>
             <DropdownMenuItem onClick={handleLogout}>
               <LogOut />
-              Log Out
+              Log out and clear data
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

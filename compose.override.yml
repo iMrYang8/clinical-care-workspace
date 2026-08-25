@@ -64,6 +64,9 @@ services:
       - ./backend/htmlcov:/app/backend/htmlcov
     environment:
       FASTAPI_ENV: "development"
+      # Synthetic persona auth is an explicit local-development boundary.
+      # Production compose leaves ENABLE_DEMO_AUTH unset/false.
+      ENABLE_DEMO_AUTH: "true"
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"

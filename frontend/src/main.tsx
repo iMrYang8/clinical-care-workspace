@@ -12,23 +12,21 @@ import { client } from "./client/client.gen"
 import { ThemeProvider } from "./components/theme-provider"
 import { Toaster } from "./components/ui/sonner"
 import "./index.css"
+import { ACCESS_TOKEN_KEY } from "./features/api"
 import { routeTree } from "./routeTree.gen"
 
 client.setConfig({
   baseURL: import.meta.env.VITE_API_URL ?? "",
-  auth: () => localStorage.getItem("access_token") || "",
+  auth: () => localStorage.getItem(ACCESS_TOKEN_KEY) || "",
 })
 
 const handleApiError = (error: Error) => {
-  if (
-    error instanceof AxiosError &&
-    [401, 403].includes(error.response?.status ?? 0)
-  ) {
-    localStorage.removeItem("access_token")
+  if (error instanceof AxiosError && error.response?.status === 401) {
+    localStorage.removeItem(ACCESS_TOKEN_KEY)
     window.location.href = "/login"
   }
 }
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: handleApiError,
   }),
@@ -46,7 +44,7 @@ declare module "@tanstack/react-router" {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+    <ThemeProvider defaultTheme="light" storageKey="nightingale-ui-theme">
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
         <Toaster richColors closeButton />

@@ -1,142 +1,143 @@
-import { zodResolver } from "@hookform/resolvers/zod"
+import { createFileRoute, redirect } from "@tanstack/react-router"
 import {
-  createFileRoute,
-  Link as RouterLink,
-  redirect,
-} from "@tanstack/react-router"
-import { useForm } from "react-hook-form"
-import { z } from "zod"
+  ArrowRight,
+  HeartHandshake,
+  LoaderCircle,
+  ShieldCheck,
+  Stethoscope,
+  UserRound,
+} from "lucide-react"
 
-import type { Body_login_login_access_token as AccessToken } from "@/client"
 import { AuthLayout } from "@/components/Common/AuthLayout"
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { LoadingButton } from "@/components/ui/loading-button"
-import { PasswordInput } from "@/components/ui/password-input"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import type { DemoPersona } from "@/features/api"
 import useAuth, { isLoggedIn } from "@/hooks/useAuth"
 
-const formSchema = z.object({
-  username: z.email({ message: "Invalid email address" }),
-  password: z
-    .string()
-    .min(1, { message: "Password is required" })
-    .min(8, { message: "Password must be at least 8 characters" }),
-}) satisfies z.ZodType<AccessToken>
-
-type FormData = z.infer<typeof formSchema>
-
 export const Route = createFileRoute("/login")({
-  component: Login,
   beforeLoad: async () => {
-    if (isLoggedIn()) {
-      throw redirect({
-        to: "/",
-      })
-    }
+    if (isLoggedIn()) throw redirect({ to: "/" })
   },
+  component: DemoLogin,
   head: () => ({
-    meta: [
-      {
-        title: "Log In - Nightingale",
-      },
-    ],
+    meta: [{ title: "Demo access · Nightingale" }],
   }),
 })
 
-function Login() {
-  const { loginMutation } = useAuth()
-  const form = useForm<FormData>({
-    resolver: zodResolver(formSchema),
-    mode: "onBlur",
-    criteriaMode: "all",
-    defaultValues: {
-      username: "",
-      password: "",
-    },
-  })
+const personas = [
+  {
+    persona: "staff" as const,
+    title: "Care staff",
+    description: "Review Glance, write the staff section, and collaborate.",
+    icon: HeartHandshake,
+    color: "border-blue-200 bg-blue-50 text-blue-950",
+    iconColor: "bg-blue-600 text-white",
+  },
+  {
+    persona: "clinician" as const,
+    title: "Clinician",
+    description: "Write clinical notes, review sources, and resolve comments.",
+    icon: Stethoscope,
+    color: "border-teal-200 bg-teal-50 text-teal-950",
+    iconColor: "bg-teal-700 text-white",
+  },
+  {
+    persona: "patient" as const,
+    title: "Patient",
+    description: "See only the patient-facing care view and add an insight.",
+    icon: UserRound,
+    color: "border-amber-200 bg-amber-50 text-amber-950",
+    iconColor: "bg-amber-500 text-white",
+  },
+  {
+    persona: "admin" as const,
+    title: "Clinic admin",
+    description: "See membership and audit boundaries—never clinical text.",
+    icon: ShieldCheck,
+    color: "border-slate-200 bg-slate-50 text-slate-950",
+    iconColor: "bg-slate-700 text-white",
+  },
+]
 
-  const onSubmit = (data: FormData) => {
-    if (loginMutation.isPending) return
-    loginMutation.mutate(data)
-  }
+function DemoLogin() {
+  const { loginMutation } = useAuth()
+
+  const signIn = (persona: DemoPersona) => loginMutation.mutate(persona)
 
   return (
     <AuthLayout>
-      <Form {...form}>
-        <form
-          onSubmit={form.handleSubmit(onSubmit)}
-          className="flex flex-col gap-6"
-        >
-          <div className="flex flex-col items-center gap-2 text-center">
-            <h1 className="text-2xl font-bold">Login to your account</h1>
-          </div>
+      <div className="space-y-7">
+        <div className="space-y-3">
+          <Badge className="bg-teal-100 text-teal-800 hover:bg-teal-100">
+            72-hour synthetic demo
+          </Badge>
+          <h2 className="font-serif text-4xl font-semibold tracking-tight text-slate-950">
+            Enter the care workspace
+          </h2>
+          <p className="leading-7 text-slate-600">
+            Choose one server-defined persona. The API resolves its clinic and
+            role from the signed membership—there is no client-side role switch.
+          </p>
+        </div>
 
-          <div className="grid gap-4">
-            <FormField
-              control={form.control}
-              name="username"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Email</FormLabel>
-                  <FormControl>
-                    <Input
-                      data-testid="email-input"
-                      placeholder="user@example.com"
-                      type="email"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage className="text-xs" />
-                </FormItem>
-              )}
-            />
+        {loginMutation.isError && (
+          <Alert className="border-red-200 bg-red-50 text-red-900" role="alert">
+            <AlertTitle>Demo login did not complete</AlertTitle>
+            <AlertDescription>{loginMutation.error.message}</AlertDescription>
+          </Alert>
+        )}
 
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <div className="flex items-center">
-                    <FormLabel>Password</FormLabel>
-                    <RouterLink
-                      to="/recover-password"
-                      className="ml-auto text-sm underline-offset-4 hover:underline"
-                    >
-                      Forgot your password?
-                    </RouterLink>
-                  </div>
-                  <FormControl>
-                    <PasswordInput
-                      data-testid="password-input"
-                      placeholder="Password"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage className="text-xs" />
-                </FormItem>
-              )}
-            />
+        <fieldset className="grid gap-3">
+          <legend className="sr-only">Demo personas</legend>
+          {personas.map(
+            ({ persona, title, description, icon: Icon, color, iconColor }) => (
+              <Card
+                className={`border shadow-none transition hover:-translate-y-0.5 hover:shadow-sm ${color}`}
+                key={persona}
+              >
+                <CardContent className="flex items-center gap-4 p-4">
+                  <span
+                    className={`grid size-11 shrink-0 place-items-center rounded-2xl ${iconColor}`}
+                  >
+                    <Icon aria-hidden="true" className="size-5" />
+                  </span>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block font-semibold">{title}</span>
+                    <span className="block text-sm leading-5 opacity-75">
+                      {description}
+                    </span>
+                  </span>
+                  <Button
+                    aria-label={`Continue as ${title}`}
+                    className="size-11 shrink-0 rounded-full"
+                    disabled={loginMutation.isPending}
+                    onClick={() => signIn(persona)}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    {loginMutation.isPending &&
+                    loginMutation.variables === persona ? (
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <ArrowRight aria-hidden="true" />
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            ),
+          )}
+        </fieldset>
 
-            <LoadingButton type="submit" loading={loginMutation.isPending}>
-              Log In
-            </LoadingButton>
-          </div>
-
-          <div className="text-center text-sm">
-            Don't have an account yet?{" "}
-            <RouterLink to="/signup" className="underline underline-offset-4">
-              Sign up
-            </RouterLink>
-          </div>
-        </form>
-      </Form>
+        <p className="text-xs leading-5 text-slate-500">
+          The destination after sign-in is selected from the trusted membership
+          returned by <code>/auth/me</code>, never from a browser role setting.
+        </p>
+      </div>
     </AuthLayout>
   )
 }
