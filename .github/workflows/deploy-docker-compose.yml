@@ -12,8 +12,6 @@ concurrency:
 
 jobs:
   deploy:
-    # Do not deploy the template repository, only projects created from it
-    if: github.repository != 'fastapi/full-stack-fastapi-template'
     runs-on: self-hosted
     timeout-minutes: 30
     env:

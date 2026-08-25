@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "measured_at": "2026-08-25T19:03:26.794566+00:00",
-  "commit": "7c873fcd4d42a101852859a9be6caaae8dd2b5c5",
+  "measured_at": "2026-08-25T19:41:32.178414+00:00",
+  "commit": "42db3b79e455b9d205e557decd10253274c8a89a",
   "hardware": {
     "platform": "macOS-26.4.1-arm64-arm-64bit",
     "machine": "arm64",
@@ -9,7 +9,7 @@
     "logical_cpu_count": 10
   },
   "config": {
-    "base_url": "http://127.0.0.1:18000",
+    "base_url": "https://localhost",
     "endpoint": "/api/v1/patients/{synthetic_patient_id}/glance",
     "auth_transport": "bearer (benchmark/API compatibility only)",
     "warmup": 20,
@@ -18,11 +18,11 @@
     "threshold_ms": 300.0
   },
   "latency_ms": {
-    "median": 7.031,
-    "p95": 10.292,
-    "p99": 12.077,
-    "min": 5.357,
-    "max": 12.558
+    "median": 3.639,
+    "p95": 4.694,
+    "p99": 6.616,
+    "min": 2.672,
+    "max": 7.274
   },
   "gate": {
     "p95_lte_300ms": true

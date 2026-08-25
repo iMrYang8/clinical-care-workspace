@@ -1,145 +1,71 @@
-# Nightingale - Backend
+# Nightingale backend
 
-## Requirements
+The backend is FastAPI + SQLModel + PostgreSQL. It enforces clinic-scoped
+memberships, role permissions, row-level security, immutable entry versions,
+metadata-only audit, encrypted clinical fields, deterministic and optional AI
+providers, data-decay archives, and the voice-review state machine.
 
-* [Docker](https://www.docker.com/).
-* [uv](https://docs.astral.sh/uv/) for Python package and environment management.
-
-## Local Development
-
-Run the backend locally and connect it to PostgreSQL in Docker Compose.
-
-From the project root, start PostgreSQL and Mailpit:
-
-```console
-$ docker compose up -d db mailpit
-```
-
-Then, from `./backend/`, install the dependencies, prepare the database, and start the development server:
-
-```console
-$ uv sync
-$ uv run bash scripts/prestart.sh
-$ uv run fastapi dev
-```
-
-The API is available at `http://localhost:8000`, with automatic interactive docs at `http://localhost:8000/docs`.
-
-## General Workflow
-
-Run backend commands from `./backend/` with `uv run`. Make sure your editor uses the Python interpreter at `.venv/bin/python` in the project root.
-
-Modify or add SQLModel models for data and SQL tables in `./backend/app/models.py`, API endpoints in `./backend/app/api/`, CRUD (Create, Read, Update, Delete) utils in `./backend/app/crud.py`.
-
-## VS Code
-
-There are already configurations in place to run the backend through the VS Code debugger, so that you can use breakpoints, pause and explore variables, etc.
-
-The setup is also already configured so you can run the tests through the VS Code Python tests tab.
-
-## Full Stack with Docker Compose
-
-To run the backend and built frontend in Docker Compose:
-
-```console
-$ docker compose run --rm prestart
-$ docker compose watch
-```
-
-The application is available at `http://localhost:8000`.
-
-### Docker Compose Override
-
-The `compose.override.yml` file contains local settings for published ports, source synchronization, automatic image rebuilds, and backend reloads. Docker Compose applies it automatically when you run `docker compose` without an explicit file list.
-
-To open a shell in the backend container:
-
-```console
-$ docker compose exec backend bash
-```
-
-## Backend Tests
-
-To test the backend from the `backend` directory, run:
-
-```console
-$ uv run bash scripts/test.sh
-```
-
-The tests run with Pytest. Modify existing tests or add new ones in `./backend/tests/`.
-
-If you use GitHub Actions, the tests will run automatically.
-
-### Test a Running Stack
-
-If your stack is already up and you just want to run the tests, you can use:
+Use the repository's HTTPS Compose path for an integrated environment:
 
 ```bash
-docker compose exec backend bash scripts/tests-start.sh
+./scripts/demo-up.sh
 ```
 
-The `/app/backend/scripts/tests-start.sh` script calls `pytest` after making sure that the rest of the stack is running. If you need to pass extra arguments to `pytest`, you can pass them to that command and they will be forwarded.
+The API is available through `https://localhost/api/v1`; the backend container
+port is not published by default. For host-side work, opt in to the loopback
+PostgreSQL port described in [`../development.md`](../development.md).
 
-For example, to stop on first error:
+## Static and test gates
+
+From the repository root, the complete gate is:
 
 ```bash
-docker compose exec backend bash scripts/tests-start.sh -x
+./scripts/verify-release.sh
 ```
 
-### Test Coverage
+Focused backend commands, run from this directory with an initialized test
+database, are:
 
-When the tests run, they generate `htmlcov/index.html`. Open it in your browser to inspect the test coverage.
+```bash
+uv run --frozen ruff check app tests
+uv run --frozen ruff format app tests --check
+uv run --frozen mypy app
+uv run --frozen ty check app
+uv run --frozen coverage run -m pytest tests
+uv run --frozen coverage report --fail-under=90
+```
+
+Tests reset only their configured PostgreSQL database and use synthetic
+fixtures. Never point the test environment at production or real patient data.
 
 ## Migrations
 
-Make sure you create a revision of your models and upgrade the database with that revision every time you change them. From the `backend` directory, use `uv` to run Alembic against the PostgreSQL container:
+Models live in `app/models.py` and migrations in `app/alembic/versions/`.
+Generate additive changes with:
 
-* Alembic is already configured to import your SQLModel models from `./backend/app/models.py`.
-
-* After changing a model (for example, adding a column), create a revision:
-
-```console
-$ uv run alembic revision --autogenerate -m "Add column last_name to User model"
+```bash
+uv run --frozen alembic revision --autogenerate -m "describe change"
+uv run --frozen alembic upgrade head
+uv run --frozen alembic check
 ```
 
-* Commit to the git repository the files generated in the alembic directory.
+The historical imported migrations are intentionally retained so a clean
+checkout can reproduce the baseline before Nightingale migrations remove the
+example schema. Runtime requests use the restricted `nightingale_app` role;
+only provisioning and migration commands receive `MIGRATION_DATABASE_URL`.
 
-* After creating the revision, run the migration in the database (this is what will actually change the database):
+## API and worker boundaries
 
-```console
-$ uv run alembic upgrade head
-```
+- Routes are under `app/api/routes/`; authorization comes from the current
+  server-side membership, not request-supplied role, actor, or clinic values.
+- Browser auth is a Secure/HttpOnly/SameSite cookie with Origin checks for
+  cookie-authenticated mutations. Bearer support remains for non-browser API
+  and worker compatibility.
+- AI jobs and voice jobs are durable; external providers remain disabled unless
+  every capability/egress/redaction setting is present.
+- The deterministic provider and synthetic voice fixture are test/demo tools,
+  not evidence of model or ASR quality.
 
-If you don't want to use migrations at all, uncomment the lines in the file at `./backend/app/core/db.py` that end in:
-
-```python
-SQLModel.metadata.create_all(engine)
-```
-
-and comment the line in the file `scripts/prestart.sh` that contains:
-
-```console
-$ alembic upgrade head
-```
-
-If you don't want to start with the default models and want to remove them / modify them, from the beginning, without having any previous revision, you can remove the revision files (`.py` Python files) under `./backend/app/alembic/versions/`. And then create a first migration as described above.
-
-## Email Templates
-
-The email templates are written with [React Email](https://react.email) in `./packages/react-email/`. The `emails` directory holds one component per email and the `ui` directory holds the shared components (layout, heading, button, link, callout).
-
-The rendered HTML in `./backend/app/email-templates/` is generated from those components. It is what the application sends and should not be edited by hand.
-
-To preview the emails while editing them, start the dev server from the root of the project:
-
-```console
-$ bun run email:dev
-```
-
-Values coming from the backend are declared as Jinja placeholders in the component props, for example `username = "{{ username }}"`. The context for each email is built in `generate_*_email()` in `./backend/app/utils.py`, so a new placeholder needs to be added there too.
-
-Once you are done, regenerate the templates used by the application:
-
-```console
-$ bun run email:export
-```
+See [`../MODEL_INVENTORY.md`](../MODEL_INVENTORY.md) and
+[`../docs/VOICE_PIPELINE.md`](../docs/VOICE_PIPELINE.md) for exact capability
+states and evidence boundaries.

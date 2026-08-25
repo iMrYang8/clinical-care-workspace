@@ -1,123 +1,63 @@
-# Nightingale - Frontend
+# Nightingale frontend
 
-The frontend is built with [Vite](https://vitejs.dev/), [React](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [TanStack Query](https://tanstack.com/query), [TanStack Router](https://tanstack.com/router), [Tailwind CSS](https://tailwindcss.com/), and [shadcn/ui](https://ui.shadcn.com/).
+The frontend is React, TypeScript, Vite, TanStack Router/Query, shadcn/ui, and
+Tiptap. It is built into FastAPI and served from the same HTTPS origin in the
+supported development and production paths.
 
-## Requirements
+## Integrated development
 
-- [Bun](https://bun.sh/)
-
-## Quick Start
-
-From the project root, install the dependencies and start the frontend development server:
+From the repository root:
 
 ```bash
-bun install
-bun run dev
+./scripts/demo-up.sh
 ```
 
-Then open <http://localhost:5173/> in your browser.
+Open `https://localhost`. Browser login uses only the same-origin Secure,
+HttpOnly, SameSite=Lax session cookie. Frontend code must not persist a bearer
+token in local storage, IndexedDB, a query string, or an SSE URL. Logout clears
+TanStack Query state and the local encrypted voice-upload queue.
 
-Run `uv run bash scripts/prestart.sh` and `uv run fastapi dev` from the `backend` directory, with PostgreSQL running in Docker Compose. See [../development.md](../development.md) for the complete setup.
+A standalone Vite server can be used for visual iteration, but it is not the
+cookie/TLS acceptance environment. Run authentication and end-to-end checks
+against the Compose HTTPS application.
 
-To serve the frontend with FastAPI, run `bun run build` from the `frontend` directory and open `http://localhost:8000`.
+## Commands
 
-Check `frontend/package.json` to see the other available commands.
-
-## Removing the Frontend
-
-If you are developing an API-only app and want to remove the frontend, you can do it easily:
-
-* Remove the `./frontend` directory.
-
-* In the `backend/app/main.py` file, remove the `app.frontend()` call.
-
-* In the `backend/Dockerfile` file, remove the frontend build stage and the `COPY --from=frontend-build` instruction.
-
-* In the `compose.override.yml` file, remove the `playwright` service.
-
-* In the `.github/workflows/deploy.yml` file, remove the **Set up Bun**, **Install frontend dependencies**, and **Build frontend** steps.
-
-* In the `.fastapicloudignore` file, remove the `!backend/app/frontend/` entry.
-
-Done, you now have an API-only app. 🤓
-
-## Generate Client
-
-### Automatically
-
-* From the project root, run the script:
+Use the repository-pinned Bun executable on local machines and CI:
 
 ```bash
-bash ./scripts/generate-client.sh
+bun run --filter frontend typecheck
+bun run --filter frontend lint
+bun run --filter frontend test
+bun run --filter frontend build
 ```
 
-* Commit the changes.
-
-### Manually
-
-* Make sure the backend is running.
-
-* Download the OpenAPI JSON file from `http://localhost:8000/api/v1/openapi.json` and copy it to a new file `openapi.json` at the root of the `frontend` directory.
-
-* To generate the frontend client, run:
+Playwright Scenario A-F is run through Compose so Chromium sees the same TLS,
+proxy, cookie, API, and worker boundaries as the demo:
 
 ```bash
-bun run generate-client
+docker compose run --rm -e CI=1 playwright bun run test:e2e
 ```
 
-* Commit the changes.
+## Generated API client
 
-Regenerate the client whenever backend changes affect the OpenAPI schema.
-
-## Using a Remote API
-
-By default, the built frontend uses the same origin as the FastAPI app. If you want to use a remote API while running the Vite development server, you can set the environment variable `VITE_API_URL` to the URL of the remote API. For example, you can set it in the `frontend/.env` file:
-
-```env
-VITE_API_URL=https://my-domain.example.com
-```
-
-Then, when you run the frontend, it will use that URL as the base URL for the API.
-
-## Code Structure
-
-The frontend code is structured as follows:
-
-* `frontend/src` - The main frontend code.
-* `frontend/public` - Static assets.
-* `frontend/src/client` - The generated OpenAPI client.
-* `frontend/src/components` - The components of the frontend, including the shadcn/ui components in `frontend/src/components/ui`.
-* `frontend/src/hooks` - Custom hooks.
-* `frontend/src/lib` - Shared frontend utilities.
-* `frontend/src/routes` - The frontend routes and pages.
-
-## End-to-End Testing with Playwright
-
-The frontend includes initial end-to-end tests using Playwright. To run the tests, you need to have the Docker Compose stack running. Start the stack with the following command:
+`openapi.json` and `src/client/` are generated artifacts. After a backend schema
+change, run from the repository root:
 
 ```bash
-docker compose run --rm prestart
-docker compose up -d --wait backend
+BUN_BIN="$(command -v bun)" ./scripts/generate-client.sh
+git diff --exit-code -- frontend/openapi.json frontend/src/client
 ```
 
-Then, you can run the tests with the following command:
+CI performs the same regeneration and rejects drift. Application code should
+use the generated types where practical, but patient screens must still call
+only patient-safe endpoints and DTOs. Playwright recursively inspects those
+network responses for internal comments, raw AI, and scoring fields.
 
-```bash
-bunx playwright test
-```
+## Structure
 
-You can also run your tests in UI mode to see the browser and interact with it running:
-
-```bash
-bunx playwright test --ui
-```
-
-To stop and remove the Docker Compose stack and clean the data created in tests, use the following command:
-
-```bash
-docker compose down -v
-```
-
-To update the tests, navigate to the tests directory and modify the existing test files or add new ones as needed.
-
-For more information on writing and running Playwright tests, refer to the official [Playwright documentation](https://playwright.dev/docs/intro).
+- `src/routes/`: role-aware screens and navigation
+- `src/components/`: Timeline, Glance, editor, collaboration, admin, and voice UI
+- `src/features/voice/`: encrypted chunk queue and voice API integration
+- `src/client/`: generated OpenAPI client
+- `tests/`: Scenario A-F and core Playwright acceptance tests

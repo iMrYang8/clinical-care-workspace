@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - release-notes.md
   workflow_dispatch:
 
 permissions:
@@ -13,8 +11,6 @@ permissions:
 
 jobs:
   deploy:
-    # Do not deploy the template repository, only projects created from it
-    if: github.repository != 'fastapi/full-stack-fastapi-template'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

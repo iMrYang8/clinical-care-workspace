@@ -54,7 +54,9 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ## Configure Continuous Deployment
 
-The included `.github/workflows/deploy.yml` workflow builds the frontend, prepares the database, and deploys the application whenever changes are pushed to `master`. You can also run it manually from the **Actions** tab.
+The included `.github/workflows/deploy.yml` workflow builds the frontend,
+prepares the database, and deploys the application whenever changes are pushed
+to `main`. You can also run it manually from the **Actions** tab.
 
 Log in to FastAPI Cloud and configure the [deploy token](https://fastapicloud.com/docs/advanced-features/deploy-tokens/) and application ID as GitHub repository secrets:
 
@@ -129,12 +131,9 @@ Interactive API docs: `https://your-app.fastapicloud.dev/docs`
 
 For deployment to your own server, see the [Docker Compose deployment guide](./deployment-docker-compose.md).
 
-## GitHub Repository Automation
+## Release verification
 
-Install the following GitHub Apps to enable the included repository automation:
-
-* [Latest Changes](https://github.com/apps/latest-changes) updates `release-notes.md` when a pull request is merged.
-* [PR Push](https://github.com/apps/pr-push) lets the pre-commit workflow push automated fixes to pull request branches.
-* [PR Submit](https://github.com/apps/pr-submit) lets the **Bump pre-commit hooks** and **Prepare Release** workflows create pull requests.
-
-To publish code coverage with [Smokeshow](https://github.com/samuelcolvin/smokeshow), add `SMOKESHOW_AUTH_KEY` as a repository secret.
+Run `./scripts/verify-release.sh` before deployment. The repository does not
+install or depend on upstream-template release-note or project-management
+automation. Configure repository protection and deployment approvals explicitly
+for the target repository.

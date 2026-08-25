@@ -1,141 +1,92 @@
-# Nightingale - Development
+# Nightingale development
 
-## Local Development
+## Secure default stack
 
-For local development, run PostgreSQL and Mailpit with Docker Compose, and run the FastAPI and Vite development servers locally.
-
-Start the supporting services:
+The supported development path is the same-origin HTTPS Compose stack:
 
 ```bash
-docker compose up -d db mailpit
+./scripts/demo-up.sh
 ```
 
-Then, from the `backend` directory, install the dependencies and prepare the database:
+Open `https://localhost`. The generated certificate is intentionally local, so
+accept the browser warning once. HTTP on port 80 redirects to HTTPS; PostgreSQL,
+the FastAPI container port, Mailpit, Adminer, and the Traefik dashboard are not
+published by the default stack.
+
+The local override enables only synthetic demo authentication and deterministic
+fixtures. The explicit production file never seeds demo data:
 
 ```bash
-uv sync
-uv run bash scripts/prestart.sh
+DOMAIN=nightingale.invalid \
+  docker compose -f compose.yml -f compose.deploy.yml config --quiet
 ```
 
-Start the FastAPI development server:
+## Source development
+
+Install the frozen dependencies from the repository root:
 
 ```bash
-uv run fastapi dev
+uv sync --frozen --package app
+bun install --frozen-lockfile
 ```
 
-In another terminal, from the project root, install the frontend dependencies and start the Vite development server:
+For host-side backend tests or debugging, publish supporting services only via
+the opt-in development-tools file, bound to loopback:
 
 ```bash
-bun install
-bun run dev
+DEV_DB_PORT=55432 docker compose \
+  -f compose.yml -f compose.override.yml -f compose.dev-tools.yml \
+  up -d db mailpit
 ```
 
-Now you can open these URLs:
+Set `DATABASE_URL` and `MIGRATION_DATABASE_URL` to the selected loopback port,
+then run `backend/scripts/prestart.sh` and the FastAPI development server from
+`backend/`. A Vite-only host server is useful for UI iteration, but it is not
+the cookie/TLS release boundary; use the Compose application for authentication
+and browser acceptance tests.
 
-Frontend development server: <http://localhost:5173>
+## Optional development tools
 
-Backend API: <http://localhost:8000>
+The following ports exist only when `compose.dev-tools.yml` is selected:
 
-Automatic interactive API documentation with Swagger UI: <http://localhost:8000/docs>
+- PostgreSQL: `127.0.0.1:${DEV_DB_PORT:-5432}`
+- Traefik dashboard: `127.0.0.1:8090`
+- Adminer: `127.0.0.1:8080`
+- Mailpit: `127.0.0.1:8025`
 
-Mailpit: <http://localhost:8025>
+Do not add that file to production deployment commands.
 
-The frontend development server uses the backend at `http://localhost:8000`, as configured in `frontend/.env`.
-
-### Frontend Served by FastAPI
-
-Build the frontend from the `frontend` directory:
+## Verification
 
 ```bash
-bun run build
+./scripts/verify-release.sh
+./scripts/verify-release.sh --e2e --benchmark --ffmpeg
 ```
 
-The build is written to `backend/app/frontend` and served by FastAPI at <http://localhost:8000>. Rebuild the frontend after making frontend changes.
+The default gate runs backend static analysis, PostgreSQL tests with coverage,
+an Alembic downgrade/upgrade/check, frontend type/lint/unit/build, generated
+OpenAPI synchronization, and Compose rendering. See
+[`docs/DEMO_RUNBOOK.md`](./docs/DEMO_RUNBOOK.md) for focused commands and
+Scenario A-F rehearsal.
 
-## Full Stack with Docker Compose
+## Migrations and generated clients
 
-To run the backend and built frontend in Docker Compose:
+Create additive Alembic revisions from `backend/`; do not rewrite the imported
+baseline history. After any API schema change, regenerate the checked-in client:
 
 ```bash
-docker compose run --rm prestart
-docker compose watch
+BUN_BIN="$(command -v bun)" ./scripts/generate-client.sh
+git diff -- frontend/openapi.json frontend/src/client
 ```
 
-Now you can open these URLs:
+## Local reset
 
-Application, with the frontend and API served by FastAPI: <http://localhost:8000>
-
-Automatic interactive API documentation with Swagger UI: <http://localhost:8000/docs>
-
-For optional local database inspection only, start the isolated profile with
-`docker compose --profile dev-tools up -d adminer`. Adminer then binds only to
-<http://127.0.0.1:8080>; Traefik routing is disabled and the service is absent
-from production Compose.
-
-Traefik UI, to see how the routes are being handled by the proxy: <http://localhost:8090>
-
-Mailpit: <http://localhost:8025>
-
-Stop a locally running FastAPI server before starting the Compose backend because both use port `8000`.
-
-**Note**: The first time you start the stack, it might take a minute for all the services to be ready. To monitor it, use `docker compose logs`, or `docker compose logs backend` for the backend service.
-
-## Mailpit
-
-[Mailpit](https://mailpit.axllent.org) captures emails sent during local development instead of delivering them. The local backend connects to it at `localhost:1025`, and the Compose backend connects to the `mailpit` service. Captured emails are available at <http://localhost:8025>.
-
-## Docker Compose Files and Environment Variables
-
-The main `compose.yml` file contains the configuration shared by the whole stack. Docker Compose loads it automatically.
-
-The `compose.override.yml` file adds local development settings, such as mounting the source code as a volume. Docker Compose also loads it automatically and applies it on top of `compose.yml`.
-
-The `compose.deploy.yml` file contains the deployment-specific settings, including HTTPS and automatic certificate handling. It is explicitly combined with `compose.yml` when deploying the application.
-
-The backend reads local settings from the `.env` file. Docker Compose also uses it for variable interpolation and passes the settings each container needs.
-
-After changing variables, make sure you restart the stack:
+Use the project-scoped reset helper when deterministic fixtures must be
+recreated:
 
 ```bash
-docker compose watch
+./scripts/reset-demo.sh
 ```
 
-## The `.env` File
-
-The tracked `.env` file contains local development defaults, passwords, and other configuration. Its hostnames use `localhost` for processes running on your machine. Docker Compose overrides hostnames such as the database and SMTP server with their Compose service names.
-
-Do not store deployment secrets in `.env`. Configure them as described in the [FastAPI Cloud deployment guide](./deployment.md) or the [Docker Compose deployment guide](./deployment-docker-compose.md).
-
-## Pre-commit Hooks and Code Linting
-
-The project uses [prek](https://prek.j178.dev/), a modern alternative to [pre-commit](https://pre-commit.com/), for code linting and formatting.
-
-You can find a file `.pre-commit-config.yaml` with configurations at the root of the project.
-
-### Install `prek` to Run Automatically
-
-`prek` is already part of the dependencies of the project.
-
-From the project root, install the Git hook so that `prek` runs automatically before each commit:
-
-```bash
-uv run prek install -f
-```
-
-The `-f` flag forces the installation, in case there was already a `pre-commit` hook previously installed.
-
-Now whenever you try to commit, for example with:
-
-```bash
-git commit
-```
-
-`prek` will check and format the code you are about to commit. If it modifies any files, add those files to Git again before committing.
-
-### Run `prek` Manually
-
-You can also run `prek` manually on all files from the project root:
-
-```bash
-uv run prek run --all-files
-```
+It asks for the Compose project name before removing only that project's
+containers and named volumes. It does not perform host filesystem cleanup.
