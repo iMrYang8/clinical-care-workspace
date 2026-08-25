@@ -96,6 +96,90 @@ async function patientAndTimeline(page: Page) {
   return { patient: patient as Patient, timeline: timeline.body.data }
 }
 
+async function uploadOrdinaryWav(
+  page: Page,
+  sessionId: string,
+  patientId: string,
+) {
+  const joined = await api<{ id: string }>(
+    page,
+    `/api/v1/voice/sessions/${sessionId}/devices`,
+    {
+      body: {
+        capture_role: "patient",
+        client_device_id: `scenario-e-${Date.now()}`,
+        expected_capture_kind: "patient",
+        expected_patient_id: patientId,
+      },
+      method: "POST",
+    },
+  )
+  expect(joined.status).toBe(201)
+  const upload = await page.evaluate(
+    async ({ deviceId, session }) => {
+      const sampleRate = 16_000
+      const sampleCount = sampleRate * 2
+      const wav = new Uint8Array(44 + sampleCount * 2)
+      const view = new DataView(wav.buffer)
+      const write = (offset: number, value: string) => {
+        for (const [index, character] of [...value].entries()) {
+          view.setUint8(offset + index, character.charCodeAt(0))
+        }
+      }
+      write(0, "RIFF")
+      view.setUint32(4, wav.length - 8, true)
+      write(8, "WAVEfmt ")
+      view.setUint32(16, 16, true)
+      view.setUint16(20, 1, true)
+      view.setUint16(22, 1, true)
+      view.setUint32(24, sampleRate, true)
+      view.setUint32(28, sampleRate * 2, true)
+      view.setUint16(32, 2, true)
+      view.setUint16(34, 16, true)
+      write(36, "data")
+      view.setUint32(40, sampleCount * 2, true)
+      for (let index = 0; index < sampleCount; index += 1) {
+        const sample = Math.round(
+          Math.sin((2 * Math.PI * 220 * index) / sampleRate) * 1200,
+        )
+        view.setInt16(44 + index * 2, sample, true)
+      }
+      const digest = Array.from(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", wav)),
+      )
+        .map((value) => value.toString(16).padStart(2, "0"))
+        .join("")
+      const response = await fetch(
+        `/api/v1/voice/sessions/${session}/devices/${deviceId}/chunks/0`,
+        {
+          body: wav,
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "audio/wav",
+            "X-Chunk-End-Ms": "2000",
+            "X-Chunk-SHA256": digest,
+            "X-Chunk-Start-Ms": "0",
+          },
+          method: "PUT",
+        },
+      )
+      return { body: await response.json(), status: response.status }
+    },
+    { deviceId: joined.body.id, session: sessionId },
+  )
+  expect(upload).toMatchObject({
+    body: { acknowledged: true, chunk_index: 0 },
+    status: 200,
+  })
+  const sealed = await api(
+    page,
+    `/api/v1/voice/sessions/${sessionId}/devices/${joined.body.id}/seal`,
+    { body: { last_chunk_index: 0 }, method: "POST" },
+  )
+  expect(sealed.status).toBe(200)
+  return joined.body.id
+}
+
 function collectKeys(value: unknown, keys = new Set<string>()): Set<string> {
   if (Array.isArray(value)) {
     for (const item of value) collectKeys(item, keys)
@@ -143,18 +227,25 @@ test("[Scenario A] Glance opens the exact immutable timeline span", async ({
 
 test("[Scenario B] collaboration, immutable diff/revert, audit and learning are demonstrable", async ({
   page,
-}) => {
+}, testInfo) => {
   await login(page, "Care staff")
   await openAlex(page)
 
-  const clinicianEntry = page.getByRole("article", {
-    name: "Manual Clinician: Current care review",
-  })
-  await clinicianEntry.getByRole("button", { name: "Comments" }).click()
-  await expect(
-    page.getByText("@clinician Please review this synthetic fall-risk item."),
-  ).toBeVisible()
-  await expect(page.getByText(/^Assigned /)).toBeVisible()
+  const initialData = await patientAndTimeline(page)
+  const clinicianTimelineEntry = initialData.timeline.find(
+    (entry) => entry.entry_type === "manual_clinician_note",
+  )
+  expect(clinicianTimelineEntry).toBeDefined()
+  const seededComments = await api<
+    Array<{
+      assigned_membership_id: string | null
+      mentioned_user_ids: string[]
+    }>
+  >(page, `/api/v1/entries/${clinicianTimelineEntry?.id}/comments`)
+  const clinicianUserId = seededComments.body[0]?.mentioned_user_ids[0]
+  const clinicianMembershipId = seededComments.body[0]?.assigned_membership_id
+  expect(clinicianUserId).toBeTruthy()
+  expect(clinicianMembershipId).toBeTruthy()
 
   const staffEntry = page
     .locator('article[aria-label="Manual Staff: Medication reconciliation"]')
@@ -175,12 +266,216 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
   await expect(drawer).toBeHidden()
   await expect(staffEntry).toContainText("Medication list reviewed during")
 
+  const refreshedData = await patientAndTimeline(page)
+  const revertedStaffEntry = refreshedData.timeline.find(
+    (entry) =>
+      entry.entry_type === "manual_staff_note" &&
+      entry.title === "Medication reconciliation",
+  )
+  expect(revertedStaffEntry).toBeDefined()
+
+  // Exercise the real Tiptap selection -> canonical anchor -> comment API path.
+  const commentBody = `Scenario B anchored review ${testInfo.repeatEachIndex}-${Date.now()}`
+  const exactQuote = "Medication list reviewed"
+  await staffEntry.getByRole("button", { name: "Edit" }).click()
+  const editor = staffEntry.getByLabel("Care note content")
+  await editor.evaluate((root, quote) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node) {
+      const start = node.textContent?.indexOf(quote) ?? -1
+      if (start >= 0) {
+        const range = document.createRange()
+        range.setStart(node, start)
+        range.setEnd(node, start + quote.length)
+        const selection = window.getSelection()
+        selection?.removeAllRanges()
+        selection?.addRange(range)
+        root.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))
+        document.dispatchEvent(new Event("selectionchange", { bubbles: true }))
+        return
+      }
+      node = walker.nextNode()
+    }
+    throw new Error(`Could not select ${quote}`)
+  }, exactQuote)
+  await staffEntry.getByRole("button", { name: "Comment on selection" }).click()
+  await expect(staffEntry.getByText(`“${exactQuote}”`)).toBeVisible()
+  await staffEntry.getByLabel("Comment", { exact: true }).fill(commentBody)
+  await staffEntry
+    .getByLabel("Mention user ID (optional)")
+    .fill(clinicianUserId as string)
+  await staffEntry
+    .getByLabel("Assign membership ID (optional)")
+    .fill(clinicianMembershipId as string)
+  await staffEntry
+    .getByRole("button", { name: "Save anchored comment" })
+    .click()
+  await staffEntry.getByRole("button", { name: "Cancel", exact: true }).click()
+
+  await staffEntry.getByRole("button", { name: "Comments" }).click()
+  const comment = page.getByRole("article").filter({ hasText: commentBody })
+  await expect(comment).toBeVisible()
+  await expect(comment.getByText(/^Assigned /)).toHaveText(
+    `Assigned ${(clinicianMembershipId as string).slice(0, 8)}`,
+  )
+  const commentsAfterCreate = await api<
+    Array<{
+      assigned_membership_id: string | null
+      body: string
+      id: string
+      mentioned_user_ids: string[]
+      resolved_at: string | null
+    }>
+  >(page, `/api/v1/entries/${revertedStaffEntry?.id}/comments`)
+  const createdComment = commentsAfterCreate.body.find(
+    (item) => item.body === commentBody,
+  )
+  expect(createdComment).toMatchObject({
+    assigned_membership_id: clinicianMembershipId,
+    mentioned_user_ids: [clinicianUserId],
+    resolved_at: null,
+  })
+
+  const me = await api<{ membership_id: string }>(page, "/api/v1/auth/me")
+  await comment.getByRole("button", { name: "Assign to me" }).click()
+  await expect(comment.getByText(/^Assigned /)).toHaveText(
+    `Assigned ${me.body.membership_id.slice(0, 8)}`,
+  )
+  await comment.getByRole("button", { name: "Resolve" }).click()
+  await expect(comment.getByRole("button", { name: "Resolve" })).toHaveCount(0)
+  await expect
+    .poll(async () => {
+      const comments = await api<
+        Array<{
+          assigned_membership_id: string | null
+          id: string
+          resolved_at: string | null
+        }>
+      >(page, `/api/v1/entries/${revertedStaffEntry?.id}/comments`)
+      return comments.body.find((item) => item.id === createdComment?.id)
+    })
+    .toMatchObject({
+      assigned_membership_id: me.body.membership_id,
+      resolved_at: expect.any(String),
+    })
+
+  // Two independently persisted highlights share a bounded feature. Pinning
+  // one through the visible Glance control must lift the learned score of the
+  // other, proving clinic-scoped feedback generalization rather than a preset.
+  const featureKey = `entry_type:scenario_b_${testInfo.repeatEachIndex}_${Date.now()}`
+  const sourceLabel = `Scenario B learning source ${testInfo.repeatEachIndex}-${Date.now()}`
+  const peerLabel = `Scenario B similar peer ${testInfo.repeatEachIndex}-${Date.now()}`
+  const sourceContent = revertedStaffEntry?.content ?? ""
+  const startOffset = sourceContent.indexOf(exactQuote)
+  expect(startOffset).toBeGreaterThanOrEqual(0)
+  const anchor = {
+    end_offset: startOffset + exactQuote.length,
+    exact_quote: exactQuote,
+    prefix: sourceContent.slice(Math.max(0, startOffset - 16), startOffset),
+    start_offset: startOffset,
+    suffix: sourceContent.slice(
+      startOffset + exactQuote.length,
+      startOffset + exactQuote.length + 16,
+    ),
+  }
+  const makeHighlight = async (label: string) => {
+    const created = await api<{ id: string }>(
+      page,
+      `/api/v1/entries/${revertedStaffEntry?.id}/highlights`,
+      {
+        body: {
+          ...anchor,
+          clinician_confirmed: false,
+          critical: false,
+          feature_keys: [featureKey],
+          label,
+          patient_facing: false,
+          entry_version_id: revertedStaffEntry?.version_id,
+          unresolved: false,
+        },
+        method: "POST",
+      },
+    )
+    expect(created.status).toBe(201)
+    const accepted = await api(
+      page,
+      `/api/v1/highlights/${created.body.id}/accept`,
+      {
+        headers: { "Idempotency-Key": `scenario-b-accept-${created.body.id}` },
+        method: "POST",
+      },
+    )
+    expect(accepted.status).toBe(200)
+    return created.body.id
+  }
+  const sourceHighlightId = await makeHighlight(sourceLabel)
+  const peerHighlightId = await makeHighlight(peerLabel)
+
+  await page.reload()
   await expect(
-    page
-      .getByRole("listitem")
-      .filter({ hasText: "Medication reconciliation completed" })
-      .getByText("Clinician accepted"),
+    page.getByRole("heading", { name: "Alex Synthetic" }),
   ).toBeVisible()
+  const beforeGlance = await api<{
+    cards: Array<{
+      highlight_id: string
+      label: string
+      score_components: { final: number; learned: number }
+    }>
+  }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
+  const peerBefore = beforeGlance.body.cards.find(
+    (card) => card.highlight_id === peerHighlightId,
+  )
+  expect(peerBefore).toBeDefined()
+  await page.getByRole("button", { name: `Pin ${sourceLabel}` }).click()
+
+  await expect
+    .poll(async () => {
+      const glance = await api<{
+        cards: Array<{
+          highlight_id: string
+          score_components: { final: number; learned: number }
+        }>
+      }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
+      return (
+        glance.body.cards.find((card) => card.highlight_id === peerHighlightId)
+          ?.score_components.learned ?? Number.NEGATIVE_INFINITY
+      )
+    })
+    .toBeGreaterThan(
+      peerBefore?.score_components.learned ?? Number.POSITIVE_INFINITY,
+    )
+  const afterGlance = await api<{
+    cards: Array<{
+      highlight_id: string
+      score_components: { final: number; learned: number }
+    }>
+  }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
+  const peerAfter = afterGlance.body.cards.find(
+    (card) => card.highlight_id === peerHighlightId,
+  )
+  expect(peerAfter?.score_components.learned).toBeGreaterThan(
+    peerBefore?.score_components.learned ?? Number.POSITIVE_INFINITY,
+  )
+  expect(peerAfter?.score_components.final).toBeGreaterThan(
+    peerBefore?.score_components.final ?? Number.POSITIVE_INFINITY,
+  )
+  expect(
+    afterGlance.body.cards.findIndex(
+      (card) => card.highlight_id === peerHighlightId,
+    ),
+  ).toBeLessThan(5)
+
+  for (const highlightId of [sourceHighlightId, peerHighlightId]) {
+    expect(
+      (
+        await api(page, `/api/v1/highlights/${highlightId}/reject`, {
+          headers: { "Idempotency-Key": `scenario-b-cleanup-${highlightId}` },
+          method: "POST",
+        })
+      ).status,
+    ).toBe(200)
+  }
 
   await page.getByTestId("user-menu").click()
   await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
@@ -348,6 +643,7 @@ test("[Scenario D] stale ETag conflicts while independent entries and tenant bou
 })
 
 test("[Scenario E] patient network is narrow, cookie-only, and provider-off is explicit", async ({
+  browser,
   page,
 }) => {
   const payloads: unknown[] = []
@@ -396,6 +692,89 @@ test("[Scenario E] patient network is narrow, cookie-only, and provider-off is e
     },
     status: 200,
   })
+
+  const deviceId = await uploadOrdinaryWav(
+    page,
+    created.body.id,
+    patientData.patient.id,
+  )
+  const finalized = await api<{ state: string }>(
+    page,
+    `/api/v1/voice/sessions/${created.body.id}/finalize`,
+    {
+      body: { devices: [{ device_id: deviceId, last_chunk_index: 0 }] },
+      headers: { "Idempotency-Key": `scenario-e-${created.body.id}` },
+      method: "POST",
+    },
+  )
+  expect(finalized).toMatchObject({
+    body: { state: "finalizing" },
+    status: 202,
+  })
+
+  // The patient-safe status exposes the honest terminal state but not the
+  // internal provider error. A clinician context independently verifies the
+  // provider-disabled reason and pending-review warning.
+  await expect
+    .poll(
+      async () =>
+        (
+          await api<{ state: string }>(
+            page,
+            `/api/v1/voice/sessions/${created.body.id}`,
+          )
+        ).body.state,
+      { timeout: 30_000 },
+    )
+    .toBe("needs_review")
+  const clinicianContext = await browser.newContext({ ignoreHTTPSErrors: true })
+  const clinician = await clinicianContext.newPage()
+  await login(clinician, "Clinician")
+  const internalStatus = await api<{
+    error_code: string | null
+    state: string
+    warning_codes: string[]
+  }>(clinician, `/api/v1/voice/sessions/${created.body.id}`)
+  expect(internalStatus).toMatchObject({
+    body: {
+      error_code: "ASR_PROVIDER_DISABLED",
+      state: "needs_review",
+      warning_codes: ["TRANSCRIPT_PENDING"],
+    },
+    status: 200,
+  })
+  const retainedAudio = await clinician.evaluate(async (sessionId) => {
+    const response = await fetch(`/api/v1/voice/sessions/${sessionId}/audio`, {
+      credentials: "same-origin",
+    })
+    const payload = await response.arrayBuffer()
+    return {
+      byteLength: payload.byteLength,
+      contentType: response.headers.get("content-type"),
+      status: response.status,
+    }
+  }, created.body.id)
+  expect(retainedAudio.status).toBe(200)
+  expect(retainedAudio.contentType).toContain("audio/wav")
+  expect(retainedAudio.byteLength).toBeGreaterThan(44)
+  await clinicianContext.close()
+
+  const chunkStatus = await api<{ uploaded_chunks: number }>(
+    page,
+    `/api/v1/voice/sessions/${created.body.id}/chunks/status`,
+  )
+  expect(chunkStatus).toMatchObject({
+    body: { uploaded_chunks: 1 },
+    status: 200,
+  })
+  const patientAudioStatus = await page.evaluate(async (sessionId) => {
+    const response = await fetch(`/api/v1/voice/sessions/${sessionId}/audio`, {
+      credentials: "same-origin",
+    })
+    return response.status
+  }, created.body.id)
+  expect(patientAudioStatus).toBe(403)
+
   await Promise.all(pending)
 
   const keys = collectKeys(payloads)
