@@ -540,9 +540,9 @@ class _JobClaimLost(Exception):
 
 
 def _active_worker(
-    session: Session, context: RequestContext
+    session: Session, context: RequestContext, *, lock: bool = False
 ) -> tuple[ClinicMembership, User] | None:
-    membership = session.exec(
+    membership_statement = (
         select(ClinicMembership)
         .where(
             ClinicMembership.id == context.membership.id,
@@ -552,14 +552,20 @@ def _active_worker(
             col(ClinicMembership.is_active).is_(True),
         )
         .execution_options(populate_existing=True)
-    ).first()
+    )
+    if lock:
+        membership_statement = membership_statement.with_for_update(read=True)
+    membership = session.exec(membership_statement).first()
     if membership is None:
         return None
-    user = session.exec(
+    user_statement = (
         select(User)
         .where(User.id == membership.user_id, col(User.is_active).is_(True))
         .execution_options(populate_existing=True)
-    ).first()
+    )
+    if lock:
+        user_statement = user_statement.with_for_update(read=True)
+    user = session.exec(user_statement).first()
     return (membership, user) if user is not None else None
 
 
@@ -579,7 +585,7 @@ def claim_job(
     ):
         raise HTTPException(status_code=403, detail="Worker job binding required")
     set_rls_clinic(session, context.clinic_id)
-    if _active_worker(session, context) is None:
+    if _active_worker(session, context, lock=True) is None:
         raise HTTPException(status_code=403, detail="Active worker required")
     now = get_datetime_utc()
     claimable = (
@@ -659,7 +665,7 @@ def _lock_current_claim(
         or job.locked_until <= now
         or attempt.status != "started"
         or attempt.worker_membership_id != context.membership.id
-        or _active_worker(session, context) is None
+        or _active_worker(session, context, lock=True) is None
     ):
         raise _JobClaimLost
     return job, attempt
