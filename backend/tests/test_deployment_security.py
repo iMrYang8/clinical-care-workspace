@@ -93,8 +93,8 @@ def test_each_traefik_provider_is_scoped_to_its_compose_project() -> None:
     """Parallel checkouts must not route identical Host rules across projects."""
 
     constraint = (
-        '--providers.docker.constraints=Label(`com.docker.compose.project`,'
-        '`${COMPOSE_PROJECT_NAME}`)'
+        "--providers.docker.constraints=Label(`com.docker.compose.project`,"
+        "`${COMPOSE_PROJECT_NAME}`)"
     )
     base = (REPOSITORY_ROOT / "compose.yml").read_text()
     deploy = (REPOSITORY_ROOT / "compose.deploy.yml").read_text()

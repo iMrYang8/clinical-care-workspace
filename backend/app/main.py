@@ -128,9 +128,7 @@ class CookieCsrfMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(
-        self, scope: Scope, receive: Receive, send: Send
-    ) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -191,9 +189,7 @@ class PrivateResponseCacheMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(
-        self, scope: Scope, receive: Receive, send: Send
-    ) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -216,9 +212,7 @@ class PrivateResponseCacheMiddleware:
                 elif path.startswith("/assets/"):
                     # Vite filenames are content hashed; these files contain
                     # executable code and styles, never patient payloads.
-                    headers["Cache-Control"] = (
-                        "public, max-age=31536000, immutable"
-                    )
+                    headers["Cache-Control"] = "public, max-age=31536000, immutable"
             await send(message)
 
         await self.app(scope, receive, send_with_private_cache)
