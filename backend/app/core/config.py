@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     OPENAI_TRANSCRIBE_MODEL: str | None = None
     VOICE_MAX_CHUNK_BYTES: int = 8 * 1024 * 1024
     VOICE_MAX_SESSION_BYTES: int = 512 * 1024 * 1024
+    VOICE_CHUNK_READ_TIMEOUT_SECONDS: float = 30.0
+    # Declaration bounds protect API work; decoded PCM has a tighter processing
+    # bound so a compressed upload cannot expand until disk or memory is full.
+    VOICE_MAX_DECODED_DURATION_MS: int = 60 * 60 * 1_000
+    VOICE_MAX_NORMALIZED_BYTES: int = 128 * 1024 * 1024
     VOICE_FFMPEG_BIN: str = "ffmpeg"
     VOICE_FFMPEG_TIMEOUT_SECONDS: int = 120
     VOICE_ASR_TIMEOUT_SECONDS: int = 600

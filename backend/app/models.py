@@ -1588,6 +1588,8 @@ class VoiceSessionPublic(SQLModel):
 class VoiceDeviceJoin(SQLModel):
     client_device_id: str = Field(min_length=1, max_length=120)
     capture_role: VoiceCaptureRole
+    expected_patient_id: uuid.UUID
+    expected_capture_kind: VoiceCaptureKind
 
 
 class VoiceDevicePublic(SQLModel):
@@ -1596,6 +1598,11 @@ class VoiceDevicePublic(SQLModel):
     client_device_id: str
     capture_role: str
     created_at: datetime
+
+
+class VoiceDeviceAbandonPublic(SQLModel):
+    device_id: uuid.UUID
+    abandoned: Literal[True] = True
 
 
 class VoiceDeviceSeal(SQLModel):
@@ -1697,13 +1704,22 @@ class TranscriptRevisionPublic(SQLModel):
 
 
 class TranscriptCorrection(SQLModel):
+    expected_revision_id: uuid.UUID
     text: str = Field(min_length=1, max_length=500_000)
+
+
+class VoiceReanalyzeRequest(SQLModel):
+    expected_revision_id: uuid.UUID
 
 
 class VoiceReanalyzePublic(SQLModel):
     session_id: uuid.UUID
     job_id: uuid.UUID
     state: str
+
+
+class VoicePublishRequest(SQLModel):
+    expected_revision_id: uuid.UUID
 
 
 class VoicePublishPublic(SQLModel):

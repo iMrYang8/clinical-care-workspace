@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import array
 import hashlib
 import math
 import os
 import stat
-import struct
 import subprocess
+import sys
 import tempfile
 import wave
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ class DeviceAudio:
     device_id: str
     media_type: str
     chunks: list[tuple[int, bytes, str]]
+    source_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,18 @@ class PreprocessedAudio:
     sample_rate_hz: int
     channels: int
     signals: dict[str, object]
+
+
+_PCM_ANALYSIS_FRAMES = 65_536
+_DEFAULT_MAX_DURATION_MS = 60 * 60 * 1_000
+_DEFAULT_MAX_OUTPUT_BYTES = 128 * 1024 * 1024
+_OUTPUT_LIMIT_MARGIN_BYTES = 64 * 1024
+_INPUT_DEMUXERS = {
+    "audio/webm": "matroska,webm",
+    "audio/mp4": "mov,mp4,m4a,3gp,3g2,mj2",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+}
 
 
 def write_private_file(path: Path, payload: bytes) -> None:
@@ -56,6 +70,24 @@ def _suffix(media_type: str) -> str:
     }.get(normalized, ".audio")
 
 
+def _input_args(media_type: str, path: Path) -> list[str]:
+    normalized = media_type.split(";", 1)[0].strip().lower()
+    demuxer = _INPUT_DEMUXERS.get(normalized)
+    if demuxer is None:
+        raise AudioPreprocessingError("AUDIO_MEDIA_TYPE_INVALID")
+    # Fixed demuxer + file-only nested protocols prevents a disguised HLS,
+    # concat, or other playlist from turning authenticated audio into SSRF or
+    # local-file reads. FFmpeg still validates the bytes against the demuxer.
+    return [
+        "-protocol_whitelist",
+        "file",
+        "-f",
+        demuxer,
+        "-i",
+        str(path),
+    ]
+
+
 def _ordered_device_payload(device: DeviceAudio) -> bytes:
     ordered = sorted(device.chunks, key=lambda item: item[0])
     expected = list(range(len(ordered)))
@@ -69,21 +101,42 @@ def _ordered_device_payload(device: DeviceAudio) -> bytes:
     return b"".join(payloads)
 
 
-def _pcm_signals(path: Path, *, multi_device: bool) -> tuple[int, dict[str, object]]:
+def _pcm_signals(
+    path: Path,
+    *,
+    multi_device: bool,
+    max_duration_ms: int = _DEFAULT_MAX_DURATION_MS,
+) -> tuple[int, dict[str, object]]:
     with wave.open(str(path), "rb") as stream:
-        frames = stream.readframes(stream.getnframes())
         sample_rate = stream.getframerate()
         channels = stream.getnchannels()
         sample_width = stream.getsampwidth()
         frame_count = stream.getnframes()
-    if sample_width != 2 or channels != 1 or sample_rate != 16_000:
-        raise AudioPreprocessingError("FFMPEG_OUTPUT_FORMAT_INVALID")
-    duration_ms = int(round(frame_count * 1_000 / sample_rate)) if sample_rate else 0
-    samples = struct.unpack(f"<{len(frames) // 2}h", frames) if frames else ()
-    count = max(1, len(samples))
-    silence_ratio = sum(abs(value) < 500 for value in samples) / count
-    clipping_ratio = sum(abs(value) >= 32_700 for value in samples) / count
-    rms = math.sqrt(sum(value * value for value in samples) / count)
+        if sample_width != 2 or channels != 1 or sample_rate != 16_000:
+            raise AudioPreprocessingError("FFMPEG_OUTPUT_FORMAT_INVALID")
+        max_frames = max(1, max_duration_ms) * sample_rate // 1_000
+        if frame_count > max_frames:
+            raise AudioPreprocessingError("AUDIO_DECODE_LIMIT_EXCEEDED")
+        sample_count = 0
+        silence_count = 0
+        clipping_count = 0
+        square_sum = 0
+        while payload := stream.readframes(_PCM_ANALYSIS_FRAMES):
+            samples = array.array("h")
+            samples.frombytes(payload)
+            if sys.byteorder != "little":
+                samples.byteswap()
+            sample_count += len(samples)
+            for value in samples:
+                magnitude = abs(value)
+                silence_count += magnitude < 500
+                clipping_count += magnitude >= 32_700
+                square_sum += value * value
+    duration_ms = int(round(frame_count * 1_000 / sample_rate))
+    count = max(1, sample_count)
+    silence_ratio = silence_count / count
+    clipping_ratio = clipping_count / count
+    rms = math.sqrt(square_sum / count)
     signals: dict[str, object] = {
         "silence_ratio": round(silence_ratio, 6),
         "clipping_ratio": round(clipping_ratio, 6),
@@ -99,12 +152,28 @@ def _pcm_signals(path: Path, *, multi_device: bool) -> tuple[int, dict[str, obje
     return duration_ms, signals
 
 
-def _run_ffmpeg(command: list[str], output: Path, *, timeout_seconds: int) -> None:
+def _run_ffmpeg(
+    command: list[str],
+    output: Path,
+    *,
+    timeout_seconds: int,
+    max_output_bytes: int = _DEFAULT_MAX_OUTPUT_BYTES,
+) -> None:
+    # ``-fs`` is placed immediately before the sole output path. It limits fast
+    # decompression bombs even when the process finishes before the wall timeout.
+    bounded_command = [
+        *command[:-1],
+        "-fs",
+        str(max(1, max_output_bytes)),
+        command[-1],
+    ]
     try:
         completed = subprocess.run(
-            command,
+            bounded_command,
             check=False,
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             timeout=max(1, timeout_seconds),
             umask=0o077,
         )
@@ -117,6 +186,14 @@ def _run_ffmpeg(command: list[str], output: Path, *, timeout_seconds: int) -> No
         raise AudioPreprocessingError(code) from exc
     if completed.returncode != 0 or not output.is_file():
         raise AudioPreprocessingError("FFMPEG_PREPROCESSING_FAILED")
+    # FFmpeg may return zero after ``-fs`` truncates a container a few muxing
+    # bytes below the requested cap. Reject the safety margin as well; evidence
+    # is never accepted merely because a truncated WAV is syntactically valid.
+    truncation_threshold = max(
+        1, max_output_bytes - min(_OUTPUT_LIMIT_MARGIN_BYTES, max_output_bytes // 8)
+    )
+    if output.stat().st_size >= truncation_threshold:
+        raise AudioPreprocessingError("AUDIO_DECODE_LIMIT_EXCEEDED")
     os.chmod(output, stat.S_IRUSR | stat.S_IWUSR)
 
 
@@ -132,25 +209,35 @@ def preprocess_audio(
     *,
     ffmpeg_bin: str,
     timeout_seconds: int,
+    max_duration_ms: int = _DEFAULT_MAX_DURATION_MS,
+    max_output_bytes: int = _DEFAULT_MAX_OUTPUT_BYTES,
 ) -> PreprocessedAudio:
     """Validate, assemble, and normalize device tracks to 16 kHz mono PCM."""
 
     if not devices:
         raise AudioPreprocessingError("NO_AUDIO_CHUNKS")
+    max_pcm_payload = max(1, max_duration_ms) * 16_000 * 2 // 1_000
+    if max_output_bytes <= max_pcm_payload + _OUTPUT_LIMIT_MARGIN_BYTES:
+        raise AudioPreprocessingError("AUDIO_LIMIT_CONFIGURATION_INVALID")
     with tempfile.TemporaryDirectory(prefix="nightingale-voice-") as temp_name:
         temp_dir = Path(temp_name)
         os.chmod(temp_dir, stat.S_IRWXU)
         inputs: list[Path] = []
         for index, device in enumerate(devices):
-            path = temp_dir / f"device-{index}{_suffix(device.media_type)}"
-            write_private_file(path, _ordered_device_payload(device))
+            if device.source_path is not None:
+                path = device.source_path
+                if not path.is_file():
+                    raise AudioPreprocessingError("AUDIO_SOURCE_FILE_MISSING")
+            else:
+                path = temp_dir / f"device-{index}{_suffix(device.media_type)}"
+                write_private_file(path, _ordered_device_payload(device))
             inputs.append(path)
 
         # Measure each decoded track before highpass/loudnorm.  Otherwise
         # normalization can conceal source clipping or amplify low-level noise.
         raw_signals: list[dict[str, object]] = []
         raw_filter = "aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono"
-        for index, path in enumerate(inputs):
+        for index, (device, path) in enumerate(zip(devices, inputs, strict=True)):
             analysis_output = temp_dir / f"analysis-{index}.wav"
             analysis_command = [
                 ffmpeg_bin,
@@ -159,8 +246,7 @@ def preprocess_audio(
                 "error",
                 "-nostdin",
                 "-y",
-                "-i",
-                str(path),
+                *_input_args(device.media_type, path),
                 "-af",
                 raw_filter,
                 "-ar",
@@ -175,16 +261,19 @@ def preprocess_audio(
                 analysis_command,
                 analysis_output,
                 timeout_seconds=timeout_seconds,
+                max_output_bytes=max_output_bytes,
             )
             _duration, device_signals = _pcm_signals(
-                analysis_output, multi_device=len(inputs) > 1
+                analysis_output,
+                multi_device=len(inputs) > 1,
+                max_duration_ms=max_duration_ms,
             )
             raw_signals.append(device_signals)
 
         output = temp_dir / "normalized.wav"
         command = [ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
-        for path in inputs:
-            command.extend(["-i", str(path)])
+        for device, path in zip(devices, inputs, strict=True):
+            command.extend(_input_args(device.media_type, path))
         base_filter = (
             "aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono,highpass=f=80"
         )
@@ -210,10 +299,17 @@ def preprocess_audio(
                 ]
             )
         command.extend(["-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(output)])
-        _run_ffmpeg(command, output, timeout_seconds=timeout_seconds)
+        _run_ffmpeg(
+            command,
+            output,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+        )
         payload = output.read_bytes()
         duration_ms, normalized_signals = _pcm_signals(
-            output, multi_device=len(inputs) > 1
+            output,
+            multi_device=len(inputs) > 1,
+            max_duration_ms=max_duration_ms,
         )
         signals: dict[str, object] = {
             "silence_ratio": max(

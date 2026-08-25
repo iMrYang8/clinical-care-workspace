@@ -86,10 +86,12 @@ function TranscriptPanel({
   transcript,
   lowConfidenceOnly,
   onSeek,
+  layout,
 }: {
   transcript: TranscriptRevisionPublic
   lowConfidenceOnly: boolean
   onSeek: (startMs: number) => void
+  layout: "desktop" | "mobile"
 }) {
   const segments = transcript.segments.filter(
     (segment) =>
@@ -99,10 +101,14 @@ function TranscriptPanel({
       Boolean(segment.overlap_group_id),
   )
   return (
-    <div className="space-y-3" data-testid="transcript-panel">
+    <div
+      className="space-y-3"
+      data-testid={`transcript-panel-${layout}`}
+      data-voice-layout={layout}
+    >
       {segments.map((segment) => (
         <article
-          id={`voice-segment-${segment.id}`}
+          id={`voice-segment-${layout}-${segment.id}`}
           key={segment.id}
           className="scroll-mt-24 rounded-lg border bg-white p-3 focus-within:ring-2 focus-within:ring-teal-500"
         >
@@ -130,6 +136,11 @@ function TranscriptPanel({
                 }
               >
                 {Math.round(segment.confidence * 100)}%
+              </Badge>
+            )}
+            {segment.confidence === null && (
+              <Badge className="bg-amber-100 text-amber-900">
+                confidence unavailable
               </Badge>
             )}
             {segment.overlap_group_id && (
@@ -306,13 +317,18 @@ export function VoiceReviewMode({
     ])
   }
   const correctMutation = useMutation({
-    mutationFn: async () =>
-      (
+    mutationFn: async () => {
+      if (!transcript) throw new Error("Transcript is not loaded")
+      return (
         await VoiceService.correct({
           path: { session_id: sessionId },
-          body: { text: correction },
+          body: {
+            expected_revision_id: transcript.id,
+            text: correction,
+          },
         })
-      ).data,
+      ).data
+    },
     onSuccess: async () => {
       setEditing(false)
       setMessage(
@@ -323,15 +339,18 @@ export function VoiceReviewMode({
     onError: (error) => setMessage(apiErrorMessage(error)),
   })
   const reanalyzeMutation = useMutation({
-    mutationFn: async () =>
-      (
+    mutationFn: async () => {
+      if (!transcript) throw new Error("Transcript is not loaded")
+      return (
         await VoiceService.reanalyze({
           path: { session_id: sessionId },
           headers: {
             "Idempotency-Key": `voice-reanalyze-${crypto.randomUUID()}`,
           },
+          body: { expected_revision_id: transcript.id },
         })
-      ).data,
+      ).data
+    },
     onSuccess: async () => {
       setMessage(
         "Reanalysis queued. Publication remains disabled until it completes.",
@@ -341,8 +360,15 @@ export function VoiceReviewMode({
     onError: (error) => setMessage(apiErrorMessage(error)),
   })
   const publishMutation = useMutation({
-    mutationFn: async () =>
-      (await VoiceService.publish({ path: { session_id: sessionId } })).data,
+    mutationFn: async () => {
+      if (!transcript) throw new Error("Transcript is not loaded")
+      return (
+        await VoiceService.publish({
+          path: { session_id: sessionId },
+          body: { expected_revision_id: transcript.id },
+        })
+      ).data
+    },
     onSuccess: async () => {
       setMessage(
         "Clinician-reviewed result published as an immutable derived entry.",
@@ -355,11 +381,19 @@ export function VoiceReviewMode({
   const jumpToFact = (fact: ClinicalFactPublic) => {
     if (!transcript) return
     const segment = segmentForFact(fact, transcript.segments)
+    // Evidence jumps take precedence over a presentation filter. The target
+    // must be rendered before scrolling, including on the mobile tab layout.
+    setLowConfidenceOnly(false)
     setMobileTab("transcript")
+    const layout = window.matchMedia?.("(min-width: 1024px)").matches
+      ? "desktop"
+      : "mobile"
     requestAnimationFrame(() => {
-      document
-        .getElementById(`voice-segment-${segment?.id}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" })
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`voice-segment-${layout}-${segment?.id}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" })
+      })
     })
     seekAudio(fact.audio_start_ms)
   }
@@ -459,6 +493,7 @@ export function VoiceReviewMode({
                   transcript={transcript}
                   lowConfidenceOnly={lowConfidenceOnly}
                   onSeek={seekAudio}
+                  layout="desktop"
                 />
               </CardContent>
             </Card>
@@ -499,6 +534,7 @@ export function VoiceReviewMode({
                 transcript={transcript}
                 lowConfidenceOnly={lowConfidenceOnly}
                 onSeek={seekAudio}
+                layout="mobile"
               />
             </TabsContent>
             <TabsContent value="summary">

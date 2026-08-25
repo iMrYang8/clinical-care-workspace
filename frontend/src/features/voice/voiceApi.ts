@@ -10,7 +10,8 @@ import {
   completeLocalCapture,
   decryptQueuedChunk,
   localCapture,
-  pendingChunks,
+  nextPendingChunk,
+  pendingChunkCount,
 } from "./offlineQueue"
 
 function token(): string {
@@ -30,7 +31,13 @@ export async function uploadPendingChunks(captureId: string): Promise<{
   const capture = await localCapture(captureId)
   if (!capture) throw new Error("Local voice capture is missing")
   let uploaded = 0
-  for (const chunk of await pendingChunks(captureId)) {
+  // Snapshot the current tail so a slower network does not chase chunks from
+  // an active MediaRecorder forever. Each loop reads/decrypts exactly one
+  // IndexedDB row, keeping reload recovery memory O(one chunk).
+  const maxChunkIndex = capture.nextChunkIndex - 1
+  while (true) {
+    const chunk = await nextPendingChunk(captureId, maxChunkIndex)
+    if (!chunk) break
     const plaintext = await decryptQueuedChunk(chunk)
     const response = await fetch(
       apiUrl(
@@ -64,7 +71,25 @@ export async function uploadPendingChunks(captureId: string): Promise<{
     await acknowledgeChunk(chunk.id)
     uploaded += 1
   }
-  return { uploaded, remaining: (await pendingChunks(captureId)).length }
+  return { uploaded, remaining: await pendingChunkCount(captureId) }
+}
+
+export async function abandonEmptyCapture(captureId: string): Promise<void> {
+  const capture = await localCapture(captureId)
+  if (!capture) throw new Error("Local voice capture is missing")
+  if (
+    capture.nextChunkIndex !== 0 ||
+    (await pendingChunkCount(captureId)) !== 0
+  ) {
+    throw new Error("A device with captured audio cannot be abandoned")
+  }
+  await VoiceService.abandonDevice({
+    path: {
+      session_id: capture.serverSessionId,
+      device_id: capture.serverDeviceId,
+    },
+  })
+  await completeLocalCapture(captureId)
 }
 
 export async function finalizeCapture(

@@ -33,25 +33,41 @@ interface VoiceCaptureDatabase extends DBSchema {
   chunks: {
     key: string
     value: EncryptedVoiceChunk
-    indexes: { "by-capture": string }
+    indexes: {
+      "by-capture": string
+      "by-capture-index": [string, number]
+    }
   }
 }
 
 let databasePromise: Promise<IDBPDatabase<VoiceCaptureDatabase>> | undefined
 
 function database(): Promise<IDBPDatabase<VoiceCaptureDatabase>> {
-  databasePromise ??= openDB<VoiceCaptureDatabase>("nightingale-voice-v1", 1, {
-    upgrade(db) {
-      db.createObjectStore("captures", { keyPath: "id" })
-      const chunks = db.createObjectStore("chunks", { keyPath: "id" })
-      chunks.createIndex("by-capture", "captureId")
+  databasePromise ??= openDB<VoiceCaptureDatabase>("nightingale-voice-v1", 2, {
+    upgrade(db, oldVersion, _newVersion, transaction) {
+      if (oldVersion < 1) {
+        db.createObjectStore("captures", { keyPath: "id" })
+        const chunks = db.createObjectStore("chunks", { keyPath: "id" })
+        chunks.createIndex("by-capture", "captureId")
+        chunks.createIndex("by-capture-index", ["captureId", "chunkIndex"])
+        return
+      }
+      if (oldVersion < 2) {
+        // Numeric compound ordering avoids lexicographic 10-before-2 uploads
+        // while allowing one encrypted record to be read at a time.
+        transaction
+          .objectStore("chunks")
+          .createIndex("by-capture-index", ["captureId", "chunkIndex"])
+      }
     },
   })
   return databasePromise
 }
 
-export function resetVoiceDatabaseForTests(): void {
+export async function resetVoiceDatabaseForTests(): Promise<void> {
+  const existing = databasePromise
   databasePromise = undefined
+  if (existing) (await existing).close()
 }
 
 function hex(buffer: ArrayBuffer): string {
@@ -152,12 +168,25 @@ export async function decryptQueuedChunk(
   )
 }
 
-export async function pendingChunks(
+export async function nextPendingChunk(
   captureId: string,
-): Promise<EncryptedVoiceChunk[]> {
+  maxChunkIndex = Number.MAX_SAFE_INTEGER,
+): Promise<EncryptedVoiceChunk | undefined> {
+  if (maxChunkIndex < 0) return undefined
   const db = await database()
-  const rows = await db.getAllFromIndex("chunks", "by-capture", captureId)
-  return rows.sort((left, right) => left.chunkIndex - right.chunkIndex)
+  return db.getFromIndex(
+    "chunks",
+    "by-capture-index",
+    IDBKeyRange.bound(
+      [captureId, 0],
+      [captureId, Math.min(maxChunkIndex, Number.MAX_SAFE_INTEGER)],
+    ),
+  )
+}
+
+export async function pendingChunkCount(captureId: string): Promise<number> {
+  const db = await database()
+  return db.countFromIndex("chunks", "by-capture", captureId)
 }
 
 export async function acknowledgeChunk(chunkId: string): Promise<void> {
@@ -174,22 +203,24 @@ export async function localCapture(
 export async function recoverableCaptures(): Promise<LocalCapture[]> {
   const db = await database()
   const captures = await db.getAll("captures")
-  // Keep a stopped/uploaded capture recoverable until finalization itself is
-  // acknowledged. A network failure can happen after the final chunk ACK.
-  return captures
-    .filter((capture) => capture.nextChunkIndex > 0)
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+  // Zero-chunk captures remain visible so a crash between server join and the
+  // first MediaRecorder event can explicitly abandon that empty server device.
+  // Non-empty captures remain until finalization itself is acknowledged.
+  return captures.sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  )
 }
 
 export async function completeLocalCapture(captureId: string): Promise<void> {
   const db = await database()
   const transaction = db.transaction(["captures", "chunks"], "readwrite")
-  const chunks = await transaction
+  let cursor = await transaction
     .objectStore("chunks")
     .index("by-capture")
-    .getAll(captureId)
-  for (const chunk of chunks) {
-    await transaction.objectStore("chunks").delete(chunk.id)
+    .openCursor(captureId)
+  while (cursor) {
+    await cursor.delete()
+    cursor = await cursor.continue()
   }
   await transaction.objectStore("captures").delete(captureId)
   await transaction.done

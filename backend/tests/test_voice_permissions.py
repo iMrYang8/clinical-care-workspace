@@ -53,7 +53,9 @@ def test_capture_roles_and_patient_safe_session_dto(
     assert own_audio.status_code == 403
 
     publish = client.post(
-        f"/api/v1/voice/sessions/{body['id']}/publish", headers=patient_headers
+        f"/api/v1/voice/sessions/{body['id']}/publish",
+        headers=patient_headers,
+        json={"expected_revision_id": "00000000-0000-0000-0000-000000000000"},
     )
     assert publish.status_code == 403
 

@@ -27,7 +27,11 @@ import {
   preferredRecorderMimeType,
   VOICE_CHUNK_INTERVAL_MS,
 } from "@/features/voice/recorder"
-import { finalizeCapture, uploadPendingChunks } from "@/features/voice/voiceApi"
+import {
+  abandonEmptyCapture,
+  finalizeCapture,
+  uploadPendingChunks,
+} from "@/features/voice/voiceApi"
 
 type CaptureKind = "patient" | "clinical"
 
@@ -70,7 +74,9 @@ export function VoiceCapture({
   const [offline, setOffline] = useState(!navigator.onLine)
   const [capturedChunks, setCapturedChunks] = useState(0)
   const [uploadedChunks, setUploadedChunks] = useState(0)
-  const [recoverable, setRecoverable] = useState<string[]>([])
+  const [recoverable, setRecoverable] = useState<
+    Array<{ id: string; empty: boolean }>
+  >([])
   const [message, setMessage] = useState<string>()
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -78,16 +84,27 @@ export function VoiceCapture({
   const analyzerFrameRef = useRef<number | null>(null)
   const chunkStartedAtRef = useRef(0)
   const writeChainRef = useRef(Promise.resolve())
+  const writeErrorRef = useRef<Error | null>(null)
   const uploadChainRef = useRef<Promise<void>>(Promise.resolve())
 
-  const refreshRecovery = useCallback(async () => {
-    const captures = await recoverableCaptures()
-    setRecoverable(
-      captures
-        .filter((capture) => capture.patientId === patientId)
-        .map((capture) => capture.id),
-    )
-  }, [patientId])
+  const refreshRecovery = useCallback(
+    async (excludeCaptureId?: string) => {
+      const captures = await recoverableCaptures()
+      setRecoverable(
+        captures
+          .filter(
+            (capture) =>
+              capture.patientId === patientId &&
+              capture.id !== excludeCaptureId,
+          )
+          .map((capture) => ({
+            id: capture.id,
+            empty: capture.nextChunkIndex === 0,
+          })),
+      )
+    },
+    [patientId],
+  )
 
   const flush = useCallback(
     async (localId: string) => {
@@ -103,7 +120,10 @@ export function VoiceCapture({
         setUploadedChunks((count) => count + result.uploaded)
         if (result.remaining === 0)
           setMessage("All encrypted queue items acknowledged.")
-        await refreshRecovery()
+        // A periodically acknowledged chunk is not a stopped capture. Keep the
+        // active recorder out of the recovery/finalization path until Stop has
+        // fired and every dataavailable callback is durably persisted.
+        await refreshRecovery(activelyRecording ? localId : undefined)
         return result.remaining === 0
       } catch (error) {
         if (!activelyRecording) setState("queued")
@@ -124,6 +144,46 @@ export function VoiceCapture({
       return scheduled
     },
     [flush],
+  )
+
+  const releaseCaptureHardware = useCallback(async () => {
+    streamRef.current?.getTracks().forEach((track) => {
+      track.stop()
+    })
+    streamRef.current = null
+    if (analyzerFrameRef.current) {
+      cancelAnimationFrame(analyzerFrameRef.current)
+      analyzerFrameRef.current = null
+    }
+    const context = audioContextRef.current
+    audioContextRef.current = null
+    if (context) await context.close().catch(() => undefined)
+  }, [])
+
+  const failLocalWrite = useCallback(
+    (error: unknown) => {
+      if (writeErrorRef.current) return
+      const failure =
+        error instanceof Error
+          ? error
+          : new Error("Encrypted local storage rejected an audio chunk")
+      writeErrorRef.current = failure
+      const recorder = recorderRef.current
+      if (recorder?.state === "recording") {
+        try {
+          recorder.stop()
+        } catch {
+          // Hardware cleanup and the durable-error UI below remain authoritative.
+        }
+      }
+      void releaseCaptureHardware()
+      setState("queued")
+      setMessage(
+        `Local encrypted storage failed; recording stopped. Previously persisted chunks remain recoverable. ${failure.message}`,
+      )
+      void refreshRecovery()
+    },
+    [refreshRecovery, releaseCaptureHardware],
   )
 
   useEffect(() => {
@@ -174,24 +234,43 @@ export function VoiceCapture({
   const start = async () => {
     setState("requesting")
     setMessage(undefined)
+    let joinedSessionId: string | undefined
+    let joinedDeviceId: string | undefined
+    let localCapturePersisted = false
     try {
+      const requestedSessionId = existingSessionId.trim()
+      let serverSessionId: string | undefined
+      if (requestedSessionId) {
+        const existing = (
+          await VoiceService.sessionStatus({
+            path: { session_id: requestedSessionId },
+          })
+        ).data
+        if (
+          existing.patient_id !== patientId ||
+          existing.capture_kind !== captureKind
+        ) {
+          throw new Error(
+            "The joined session belongs to a different patient or capture context.",
+          )
+        }
+        serverSessionId = existing.id
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
       setPermission("granted")
       const track = stream.getAudioTracks()[0]
       setInputLabel(track?.label || "Microphone permission granted")
-      const serverSessionId = existingSessionId.trim()
-        ? existingSessionId.trim()
-        : (
-            await VoiceService.createSession({
-              body: {
-                patient_id: patientId,
-                capture_kind: captureKind,
-                synthetic_fixture: syntheticFixture,
-                fixture_id: syntheticFixture ? "code-switch-overlap-v1" : null,
-              },
-            })
-          ).data.id
+      serverSessionId ??= (
+        await VoiceService.createSession({
+          body: {
+            patient_id: patientId,
+            capture_kind: captureKind,
+            synthetic_fixture: syntheticFixture,
+            fixture_id: syntheticFixture ? "code-switch-overlap-v1" : null,
+          },
+        })
+      ).data.id
       const joined = (
         await VoiceService.joinDevice({
           path: { session_id: serverSessionId },
@@ -201,9 +280,13 @@ export function VoiceCapture({
               role === "patient" || role === "staff" || role === "clinician"
                 ? role
                 : "staff",
+            expected_patient_id: patientId,
+            expected_capture_kind: captureKind,
           },
         })
       ).data
+      joinedSessionId = serverSessionId
+      joinedDeviceId = joined.id
       const mediaType = preferredRecorderMimeType()
       const recorder = mediaType
         ? new MediaRecorder(stream, { mimeType: mediaType })
@@ -215,29 +298,48 @@ export function VoiceCapture({
         patientId,
         mediaType: recorder.mimeType || mediaType || "audio/webm",
       })
+      localCapturePersisted = true
       setActiveSessionId(serverSessionId)
       setCaptureId(local.id)
       chunkStartedAtRef.current = 0
+      writeErrorRef.current = null
       writeChainRef.current = Promise.resolve()
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size === 0) return
         const startMs = chunkStartedAtRef.current
         const endMs = startMs + VOICE_CHUNK_INTERVAL_MS
         chunkStartedAtRef.current = endMs
-        writeChainRef.current = writeChainRef.current.then(async () => {
-          await enqueueEncryptedChunk(local.id, event.data, startMs, endMs)
-          setCapturedChunks((count) => count + 1)
-          if (navigator.onLine) void scheduleFlush(local.id)
-        })
+        writeChainRef.current = writeChainRef.current
+          .then(async () => {
+            if (writeErrorRef.current) return
+            await enqueueEncryptedChunk(local.id, event.data, startMs, endMs)
+            setCapturedChunks((count) => count + 1)
+            if (navigator.onLine) void scheduleFlush(local.id)
+          })
+          .catch(failLocalWrite)
       })
       recorder.start(VOICE_CHUNK_INTERVAL_MS)
       startLevelMeter(stream)
       setState("recording")
     } catch (error) {
-      streamRef.current?.getTracks().forEach((track) => {
-        track.stop()
-      })
-      streamRef.current = null
+      // Release the microphone synchronously before any compensating network
+      // request. Cleanup may be slow or offline, but capture hardware must not
+      // remain live while it is attempted.
+      await releaseCaptureHardware()
+      recorderRef.current = null
+      // Joining creates a server-side track that participates in the
+      // multi-device seal barrier. If recorder construction or the first
+      // durable IndexedDB write fails, compensate immediately: without a
+      // local recovery row the user would otherwise have no device id with
+      // which to remove that empty track after a reload.
+      if (joinedSessionId && joinedDeviceId && !localCapturePersisted) {
+        await VoiceService.abandonDevice({
+          path: {
+            session_id: joinedSessionId,
+            device_id: joinedDeviceId,
+          },
+        }).catch(() => undefined)
+      }
       if (error instanceof DOMException && error.name === "NotAllowedError") {
         setPermission("denied")
       }
@@ -245,44 +347,62 @@ export function VoiceCapture({
       setMessage(
         error instanceof Error ? error.message : "Recording could not start",
       )
+      await refreshRecovery()
     }
   }
 
   const stop = async () => {
     const recorder = recorderRef.current
     if (!recorder || !captureId) return
-    await new Promise<void>((resolve) => {
-      recorder.addEventListener("stop", () => resolve(), { once: true })
-      recorder.stop()
-    })
-    streamRef.current?.getTracks().forEach((track) => {
-      track.stop()
-    })
-    if (analyzerFrameRef.current) cancelAnimationFrame(analyzerFrameRef.current)
-    await audioContextRef.current?.close()
-    await writeChainRef.current
-    const uploaded = await scheduleFlush(captureId)
-    if (!uploaded) return
     setState("finalizing")
     try {
+      if (recorder.state === "recording") {
+        await new Promise<void>((resolve) => {
+          recorder.addEventListener("stop", () => resolve(), { once: true })
+          recorder.stop()
+        })
+      }
+      await releaseCaptureHardware()
+      await writeChainRef.current
+      if (writeErrorRef.current) throw writeErrorRef.current
+      const uploaded = await scheduleFlush(captureId)
+      if (!uploaded) return
       const result = await finalizeCapture(captureId)
+      setCaptureId(undefined)
       setState("idle")
       setMessage(
         `Recording accepted. Processing is ${result.state}; live captions are unavailable in this build.`,
       )
+      await refreshRecovery()
       onFinalized?.(result.session_id)
     } catch (error) {
       setState("queued")
-      setMessage(error instanceof Error ? error.message : "Finalization paused")
+      const storageFailure = writeErrorRef.current
+      setMessage(
+        storageFailure
+          ? `Local encrypted storage failed; recording stopped. Previously persisted chunks remain recoverable. ${storageFailure.message}`
+          : error instanceof Error
+            ? error.message
+            : "Finalization paused",
+      )
+      await refreshRecovery()
+    } finally {
+      await releaseCaptureHardware()
+      recorderRef.current = null
     }
   }
 
   const resume = async (localId: string) => {
+    if (recorderRef.current?.state === "recording") {
+      setMessage("Stop the active recording before recovering another upload.")
+      return
+    }
     try {
       setCaptureId(localId)
       const complete = await scheduleFlush(localId)
       if (complete) {
         const result = await finalizeCapture(localId)
+        setCaptureId(undefined)
         onFinalized?.(result.session_id)
         setMessage("Recovered queue uploaded and finalized.")
         setState("idle")
@@ -291,6 +411,25 @@ export function VoiceCapture({
     } catch (error) {
       setState("queued")
       setMessage(error instanceof Error ? error.message : "Recovery paused")
+    }
+  }
+
+  const abandon = async (localId: string) => {
+    if (recorderRef.current?.state === "recording") {
+      setMessage("Stop the active recording before abandoning another device.")
+      return
+    }
+    setState("uploading")
+    try {
+      await abandonEmptyCapture(localId)
+      setState("idle")
+      setMessage("Empty device removed; other joined tracks can now finalize.")
+      await refreshRecovery()
+    } catch (error) {
+      setState("queued")
+      setMessage(
+        error instanceof Error ? error.message : "Empty device removal paused",
+      )
     }
   }
 
@@ -351,7 +490,8 @@ export function VoiceCapture({
               </Label>
               <p className="text-xs text-slate-500">
                 Ordinary audio never receives a fixture transcript when ASR is
-                unavailable.
+                unavailable. Record at least 11 seconds so every fixed fixture
+                timestamp and evidence range fits the assembled audio.
               </p>
             </div>
           </div>
@@ -424,7 +564,7 @@ export function VoiceCapture({
         </CardContent>
       </Card>
 
-      {recoverable.length > 0 && (
+      {recoverable.length > 0 && state !== "recording" && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
@@ -432,18 +572,27 @@ export function VoiceCapture({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {recoverable.map((localId) => (
+            {recoverable.map((capture) => (
               <div
                 className="flex flex-wrap items-center justify-between gap-2 rounded border p-3"
-                key={localId}
+                key={capture.id}
               >
-                <span className="break-all text-sm">{localId}</span>
+                <span className="break-all text-sm">
+                  {capture.id}
+                  {capture.empty && (
+                    <span className="ml-2 text-amber-800">no audio stored</span>
+                  )}
+                </span>
                 <Button
                   variant="outline"
                   className="min-h-11"
-                  onClick={() => void resume(localId)}
+                  onClick={() =>
+                    void (capture.empty
+                      ? abandon(capture.id)
+                      : resume(capture.id))
+                  }
                 >
-                  Resume upload
+                  {capture.empty ? "Abandon empty device" : "Resume upload"}
                 </Button>
               </div>
             ))}

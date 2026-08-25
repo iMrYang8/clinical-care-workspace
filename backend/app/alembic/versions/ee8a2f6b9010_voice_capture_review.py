@@ -267,6 +267,21 @@ def upgrade() -> None:
         CREATE INDEX ix_clinical_fact_revision_status
           ON clinical_facts(clinic_id,revision_id,status);
 
+        -- The pre-voice schema allowed optional audio identifiers without an
+        -- owning asset table/FK. They are necessarily orphaned at this point;
+        -- normalize the whole legacy triple before installing the constraint.
+        ALTER TABLE provenance_pointers
+          DISABLE TRIGGER trg_provenance_append_only;
+        UPDATE provenance_pointers
+          SET audio_asset_id = NULL,
+              audio_start_ms = NULL,
+              audio_end_ms = NULL
+          WHERE audio_asset_id IS NOT NULL
+             OR audio_start_ms IS NOT NULL
+             OR audio_end_ms IS NOT NULL;
+        ALTER TABLE provenance_pointers
+          ENABLE TRIGGER trg_provenance_append_only;
+
         ALTER TABLE provenance_pointers
           ADD COLUMN clinical_fact_id UUID;
         ALTER TABLE provenance_pointers ADD CONSTRAINT
@@ -367,6 +382,21 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS nightingale_voice_append_only()")
     op.execute(
         """
+        -- Downgrade removes the asset rows, so preserve each provenance pointer
+        -- while explicitly clearing only the reference triple that would become
+        -- dangling. This also makes a downgrade/upgrade round-trip data-safe.
+        ALTER TABLE provenance_pointers
+          DISABLE TRIGGER trg_provenance_append_only;
+        UPDATE provenance_pointers
+          SET audio_asset_id = NULL,
+              audio_start_ms = NULL,
+              audio_end_ms = NULL
+          WHERE audio_asset_id IS NOT NULL
+             OR audio_start_ms IS NOT NULL
+             OR audio_end_ms IS NOT NULL;
+        ALTER TABLE provenance_pointers
+          ENABLE TRIGGER trg_provenance_append_only;
+
         ALTER TABLE provenance_pointers
           DROP CONSTRAINT IF EXISTS fk_provenance_clinical_fact_tenant;
         ALTER TABLE provenance_pointers

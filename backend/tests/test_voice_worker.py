@@ -5,7 +5,10 @@ import math
 import struct
 import uuid
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Event
+from time import sleep
 
 import pytest
 from fastapi import HTTPException
@@ -13,17 +16,24 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import DBAPIError
 from sqlmodel import Session, select
 
+from app.api.routes import ai as ai_routes
 from app.core.config import settings
 from app.core.db import engine
 from app.core.field_crypto import field_codec
+from app.core.security import create_access_token
 from app.models import (
     AudioAsset,
     ClinicalFact,
+    ClinicMembership,
     Job,
+    JobAttempt,
     ProvenancePointer,
     TranscriptRevision,
+    User,
     VoiceSession,
+    get_datetime_utc,
 )
+from app.seed import demo_id
 from app.services.ai_jobs import worker_context_for_job
 from app.services.voice import worker as voice_worker
 from app.services.voice.providers.base import (
@@ -178,7 +188,12 @@ def _create_recording(
     joined = client.post(
         f"/api/v1/voice/sessions/{voice_session_id}/devices",
         headers=headers,
-        json={"client_device_id": "worker-fixture", "capture_role": "patient"},
+        json={
+            "client_device_id": "worker-fixture",
+            "capture_role": "patient",
+            "expected_patient_id": patient_id,
+            "expected_capture_kind": "clinical",
+        },
     )
     assert joined.status_code == 201, joined.text
     # capture_role is derived from the trusted membership, never the body.
@@ -244,6 +259,11 @@ def test_synthetic_worker_persists_normalized_review_and_is_idempotent(
     assert {item["detected_language"] for item in body["segments"]} == {"en", "zh"}
     assert body["segments"][1]["overlap_group_id"] == "overlap-1"
     assert body["facts"][0]["exact_quote"] == "penicillin allergy"
+    audio = client.get(f"/api/v1/voice/sessions/{session_id}/audio", headers=headers)
+    assert audio.status_code == 200
+    assert audio.headers["content-type"].startswith("audio/wav")
+    assert audio.headers["cache-control"] == "private, no-store"
+    assert audio.content.startswith(b"RIFF")
 
     with Session(engine) as db:
         assets = db.exec(select(AudioAsset)).all()
@@ -265,6 +285,34 @@ def test_synthetic_worker_persists_normalized_review_and_is_idempotent(
     with Session(engine) as db:
         assert len(db.exec(select(AudioAsset)).all()) == 1
         assert len(db.exec(select(TranscriptRevision)).all()) == 1
+
+
+def test_published_voice_session_cannot_retry_original_review_job(
+    client: TestClient, auth_headers
+) -> None:
+    clinician = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, clinician, synthetic_fixture=True
+    )
+    _run_job(job_id)
+    transcript = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert transcript.status_code == 200
+    published = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=clinician,
+        json={"expected_revision_id": transcript.json()["id"]},
+    )
+    assert published.status_code == 200, published.text
+
+    retried = client.post(f"/api/v1/jobs/{job_id}/retry", headers=clinician)
+    assert retried.status_code == 409
+    assert retried.json()["detail"]["code"] == "VOICE_ALREADY_PUBLISHED"
+    status = client.get(f"/api/v1/voice/sessions/{session_id}", headers=clinician)
+    assert status.status_code == 200
+    assert status.json()["state"] == "published"
+    assert status.json()["published_entry_id"] == published.json()["entry_id"]
 
 
 def test_provider_disabled_retains_encrypted_audio_without_fake_transcript(
@@ -311,6 +359,125 @@ def test_provider_disabled_retains_encrypted_audio_without_fake_transcript(
     with Session(engine) as db:
         assert len(db.exec(select(AudioAsset)).all()) == 1
         assert len(db.exec(select(TranscriptRevision)).all()) == 1
+
+
+def test_worker_revocation_during_asr_fences_all_derived_writes(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_session: Session,
+) -> None:
+    headers = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, headers, synthetic_fixture=True
+    )
+    job_uuid = uuid.UUID(job_id)
+    session_uuid = uuid.UUID(session_id)
+    provider_entered = asyncio.Event()
+    release_provider = asyncio.Event()
+
+    async def delayed_provider(
+        *_args: object, **_kwargs: object
+    ) -> tuple[TranscriptResult, None]:
+        provider_entered.set()
+        await release_provider.wait()
+        return (
+            SyntheticFixtureProvider().transcribe_fixture("code-switch-overlap-v1"),
+            None,
+        )
+
+    monkeypatch.setattr(voice_worker, "_transcribe", delayed_provider)
+
+    async def revoke_while_provider_is_in_flight() -> None:
+        with Session(engine) as worker_db:
+            job = worker_db.get(Job, job_uuid)
+            assert job is not None
+            context = worker_context_for_job(worker_db, job)
+            assert context is not None
+            processing = asyncio.create_task(
+                process_voice_job(worker_db, context, job_uuid)
+            )
+            await asyncio.wait_for(provider_entered.wait(), timeout=10)
+            membership = owner_session.get(
+                ClinicMembership, demo_id("membership-worker")
+            )
+            assert membership is not None
+            membership.is_active = False
+            owner_session.add(membership)
+            owner_session.commit()
+            release_provider.set()
+            with pytest.raises(HTTPException) as exc_info:
+                await asyncio.wait_for(processing, timeout=10)
+            assert exc_info.value.status_code == 409
+            assert exc_info.value.detail == {"code": "JOB_CLAIM_LOST"}
+
+    asyncio.run(revoke_while_provider_is_in_flight())
+
+    with Session(engine) as db:
+        job = db.get(Job, job_uuid)
+        voice_session = db.get(VoiceSession, session_uuid)
+        attempts = db.exec(
+            select(JobAttempt).where(JobAttempt.job_id == job_uuid)
+        ).all()
+        assert job is not None and voice_session is not None
+        assert job.state == "running"
+        assert voice_session.state == "transcribing"
+        assert len(attempts) == 1
+        assert attempts[0].status == "started"
+        assert db.exec(select(TranscriptRevision)).all() == []
+        assert db.exec(select(ClinicalFact)).all() == []
+
+
+def test_worker_revocation_during_preprocessing_rolls_back_audio_asset(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_session: Session,
+) -> None:
+    headers = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, headers, synthetic_fixture=True
+    )
+    job_uuid = uuid.UUID(job_id)
+    session_uuid = uuid.UUID(session_id)
+    preprocessing_entered = Event()
+    release_preprocessing = Event()
+    original_store_asset = voice_worker._store_asset
+
+    def blocked_store_asset(*args: object, **kwargs: object) -> AudioAsset:
+        preprocessing_entered.set()
+        if not release_preprocessing.wait(timeout=10):
+            raise TimeoutError("test did not release preprocessing")
+        return original_store_asset(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(voice_worker, "_store_asset", blocked_store_asset)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        processing = pool.submit(_run_job, job_id)
+        assert preprocessing_entered.wait(timeout=10)
+        membership = owner_session.get(ClinicMembership, demo_id("membership-worker"))
+        assert membership is not None
+        membership.is_active = False
+        owner_session.add(membership)
+        owner_session.commit()
+        release_preprocessing.set()
+        with pytest.raises(HTTPException) as exc_info:
+            processing.result(timeout=15)
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == {"code": "JOB_CLAIM_LOST"}
+
+    with Session(engine) as db:
+        job = db.get(Job, job_uuid)
+        voice_session = db.get(VoiceSession, session_uuid)
+        attempts = db.exec(
+            select(JobAttempt).where(JobAttempt.job_id == job_uuid)
+        ).all()
+        assert job is not None and voice_session is not None
+        assert job.state == "running"
+        assert voice_session.state == "preprocessing"
+        assert len(attempts) == 1
+        assert attempts[0].status == "started"
+        assert db.exec(select(AudioAsset)).all() == []
 
 
 def test_out_of_bounds_provider_time_never_becomes_fact_provenance(
@@ -374,7 +541,9 @@ def test_out_of_bounds_provider_time_never_becomes_fact_provenance(
     assert transcript.json()["facts"] == []
     assert transcript.json()["segments"][0]["end_ms"] == 500
     publish = client.post(
-        f"/api/v1/voice/sessions/{session_id}/publish", headers=headers
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=headers,
+        json={"expected_revision_id": transcript.json()["id"]},
     )
     assert publish.status_code == 409
     assert publish.json()["detail"]["code"] == "FACT_EVIDENCE_REQUIRED"
@@ -421,48 +590,215 @@ def test_expired_worker_resumes_from_persisted_transcribing_state(
         assert len(db.exec(select(TranscriptRevision)).all()) == 1
 
 
+def test_exhausted_voice_lease_moves_session_to_review_without_provider_reentry(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_session: Session,
+) -> None:
+    import app.ai_worker as ai_worker
+
+    headers = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, headers, synthetic_fixture=True
+    )
+    job_uuid = uuid.UUID(job_id)
+    session_uuid = uuid.UUID(session_id)
+    token = uuid.uuid4()
+    job = owner_session.get(Job, job_uuid)
+    voice_session = owner_session.get(VoiceSession, session_uuid)
+    assert job is not None and voice_session is not None
+    job.state = "running"
+    job.attempt_count = job.max_attempts
+    job.locked_by = str(token)
+    job.locked_until = get_datetime_utc() - timedelta(seconds=1)
+    voice_session.state = "transcribing"
+    owner_session.add(job)
+    owner_session.add(voice_session)
+    owner_session.add(
+        JobAttempt(
+            id=token,
+            clinic_id=job.clinic_id,
+            job_id=job.id,
+            worker_membership_id=demo_id("membership-worker"),
+            attempt_no=job.max_attempts,
+        )
+    )
+    owner_session.commit()
+
+    async def provider_must_not_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("exhausted voice job must not re-enter processing")
+
+    monkeypatch.setattr(ai_worker, "process_voice_job", provider_must_not_run)
+    assert asyncio.run(ai_worker.run_once()) == 0
+
+    with Session(engine) as db:
+        terminal_job = db.get(Job, job_uuid)
+        terminal_session = db.get(VoiceSession, session_uuid)
+        assert terminal_job is not None and terminal_session is not None
+        assert terminal_job.state == "failed"
+        assert terminal_job.error_code == "JOB_ATTEMPTS_EXHAUSTED"
+        assert terminal_session.state == "needs_review"
+        assert terminal_session.error_code == "VOICE_WORKER_ATTEMPTS_EXHAUSTED"
+        assert "VOICE_WORKER_ATTEMPTS_EXHAUSTED" in (
+            terminal_session.warning_codes_json
+        )
+
+
+def test_invalid_encrypted_voice_payload_still_terminalizes_attempt(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    clinician = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, clinician, synthetic_fixture=True
+    )
+    job_uuid = uuid.UUID(job_id)
+    session_uuid = uuid.UUID(session_id)
+    job = owner_session.get(Job, job_uuid)
+    assert job is not None
+    job.payload_ciphertext = b"invalid-encrypted-payload"
+    owner_session.add(job)
+    owner_session.commit()
+
+    _run_job(job_id)
+
+    with Session(engine) as db:
+        retryable_job = db.get(Job, job_uuid)
+        retryable_session = db.get(VoiceSession, session_uuid)
+        assert retryable_job is not None and retryable_session is not None
+        assert retryable_job.state == "failed"
+        assert retryable_job.attempt_count == 1
+        assert retryable_session.state == "finalizing"
+
+    _run_job(job_id)
+    _run_job(job_id)
+
+    with Session(engine) as db:
+        terminal_job = db.get(Job, job_uuid)
+        terminal_session = db.get(VoiceSession, session_uuid)
+        assert terminal_job is not None and terminal_session is not None
+        assert terminal_job.state == "failed"
+        assert terminal_job.error_code == "VOICE_JOB_FAILED"
+        assert terminal_job.attempt_count == terminal_job.max_attempts == 3
+        assert terminal_session.state == "needs_review"
+        assert terminal_session.error_code == "VOICE_JOB_FAILED"
+        assert "VOICE_WORKER_ATTEMPTS_EXHAUSTED" in (
+            terminal_session.warning_codes_json
+        )
+
+
 def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
-    client: TestClient, auth_headers
+    client: TestClient, auth_headers, owner_session: Session
 ) -> None:
     clinician = auth_headers("clinician")
     _patient_id, session_id, job_id = _create_recording(
         client, clinician, synthetic_fixture=True
     )
     _run_job(job_id)
+    initial_transcript = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert initial_transcript.status_code == 200
+    initial_revision_id = initial_transcript.json()["id"]
+
+    reviewer_user = User(
+        email="second-clinician@nightingale.synthetic",
+        full_name="Second Synthetic Clinician",
+        hashed_password="not-used-for-token-test",
+    )
+    owner_session.add(reviewer_user)
+    owner_session.flush()
+    reviewer_membership = ClinicMembership(
+        clinic_id=demo_id("clinic-primary"),
+        user_id=reviewer_user.id,
+        role="clinician",
+    )
+    owner_session.add(reviewer_membership)
+    owner_session.commit()
+    reviewer = {
+        "Authorization": "Bearer "
+        + create_access_token(
+            reviewer_user.id,
+            timedelta(minutes=10),
+            membership_id=reviewer_membership.id,
+            clinic_id=reviewer_membership.clinic_id,
+        )
+    }
+    empty = client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript/correct",
+        headers=reviewer,
+        json={
+            "expected_revision_id": initial_revision_id,
+            "text": " \n\t ",
+        },
+    )
+    assert empty.status_code == 422
+    assert empty.json()["detail"]["code"] == "TRANSCRIPT_CORRECTION_EMPTY"
+    with Session(engine) as db:
+        assert len(db.exec(select(TranscriptRevision)).all()) == 1
     corrected = client.post(
         f"/api/v1/voice/sessions/{session_id}/transcript/correct",
-        headers=clinician,
-        json={"text": "Patient confirms a penicillin allergy during review."},
+        headers=reviewer,
+        json={
+            "expected_revision_id": initial_revision_id,
+            "text": "Patient confirms a penicillin allergy during review.",
+        },
     )
     assert corrected.status_code == 201, corrected.text
     assert corrected.json()["stale"] is True
     assert "DOWNSTREAM_RESULTS_STALE" in corrected.json()["warning_codes"]
+    stale_correction = client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript/correct",
+        headers=clinician,
+        json={
+            "expected_revision_id": initial_revision_id,
+            "text": "A stale editor must not replace the second clinician's work.",
+        },
+    )
+    assert stale_correction.status_code == 409
+    assert stale_correction.json()["detail"]["code"] == ("TRANSCRIPT_REVISION_CONFLICT")
+    with Session(engine) as db:
+        assert len(db.exec(select(TranscriptRevision)).all()) == 2
+        voice_session = db.get(VoiceSession, uuid.UUID(session_id))
+        assert voice_session is not None
+        assert voice_session.current_transcript_revision_id == uuid.UUID(
+            corrected.json()["id"]
+        )
     blocked = client.post(
-        f"/api/v1/voice/sessions/{session_id}/publish", headers=clinician
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=reviewer,
+        json={"expected_revision_id": corrected.json()["id"]},
     )
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["code"] == "DOWNSTREAM_RESULTS_STALE"
 
     reanalyze = client.post(
         f"/api/v1/voice/sessions/{session_id}/reanalyze",
-        headers=clinician | {"Idempotency-Key": "corrected-reanalysis-v1"},
+        headers=reviewer | {"Idempotency-Key": "corrected-reanalysis-v1"},
+        json={"expected_revision_id": corrected.json()["id"]},
     )
     assert reanalyze.status_code == 202, reanalyze.text
     replay = client.post(
         f"/api/v1/voice/sessions/{session_id}/reanalyze",
-        headers=clinician | {"Idempotency-Key": "corrected-reanalysis-v1"},
+        headers=reviewer | {"Idempotency-Key": "corrected-reanalysis-v1"},
+        json={"expected_revision_id": corrected.json()["id"]},
     )
     assert replay.status_code == 202
     assert replay.json()["job_id"] == reanalyze.json()["job_id"]
     correction_race = client.post(
         f"/api/v1/voice/sessions/{session_id}/transcript/correct",
-        headers=clinician,
-        json={"text": "A racing correction must be rejected."},
+        headers=reviewer,
+        json={
+            "expected_revision_id": corrected.json()["id"],
+            "text": "A racing correction must be rejected.",
+        },
     )
     assert correction_race.status_code == 409
     assert correction_race.json()["detail"]["code"] == "VOICE_REVIEW_STATE_CONFLICT"
     publish_race = client.post(
-        f"/api/v1/voice/sessions/{session_id}/publish", headers=clinician
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=clinician,
+        json={"expected_revision_id": corrected.json()["id"]},
     )
     assert publish_race.status_code == 409
     assert publish_race.json()["detail"]["code"] == "VOICE_NOT_PUBLISHABLE"
@@ -475,25 +811,69 @@ def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
     assert reviewed.json()["previous_revision_id"] == corrected.json()["id"]
     assert reviewed.json()["facts"]
 
+    completed_replay = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=reviewer | {"Idempotency-Key": "corrected-reanalysis-v1"},
+        json={"expected_revision_id": corrected.json()["id"]},
+    )
+    assert completed_replay.status_code == 202
+    assert completed_replay.json()["job_id"] == reanalyze.json()["job_id"]
+    stale_new_reanalysis = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "stale-new-reanalysis"},
+        json={"expected_revision_id": corrected.json()["id"]},
+    )
+    assert stale_new_reanalysis.status_code == 409
+    assert stale_new_reanalysis.json()["detail"]["code"] == (
+        "TRANSCRIPT_REVISION_CONFLICT"
+    )
+
+    stale_page_publish = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=clinician,
+        json={"expected_revision_id": initial_revision_id},
+    )
+    assert stale_page_publish.status_code == 409
+    assert stale_page_publish.json()["detail"]["code"] == (
+        "TRANSCRIPT_REVISION_CONFLICT"
+    )
+
     published = client.post(
-        f"/api/v1/voice/sessions/{session_id}/publish", headers=clinician
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=reviewer,
+        json={"expected_revision_id": reviewed.json()["id"]},
     )
     assert published.status_code == 200, published.text
     assert published.json()["state"] == "published"
     replayed_publication = client.post(
-        f"/api/v1/voice/sessions/{session_id}/publish", headers=clinician
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=reviewer,
+        json={"expected_revision_id": reviewed.json()["id"]},
     )
     assert replayed_publication.status_code == 200
     assert replayed_publication.json()["entry_id"] == published.json()["entry_id"]
+    stale_published_replay = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=clinician,
+        json={"expected_revision_id": initial_revision_id},
+    )
+    assert stale_published_replay.status_code == 409
+    assert stale_published_replay.json()["detail"]["code"] == (
+        "TRANSCRIPT_REVISION_CONFLICT"
+    )
     published_correction = client.post(
         f"/api/v1/voice/sessions/{session_id}/transcript/correct",
-        headers=clinician,
-        json={"text": "Published transcripts are immutable through this API."},
+        headers=reviewer,
+        json={
+            "expected_revision_id": reviewed.json()["id"],
+            "text": "Published transcripts are immutable through this API.",
+        },
     )
     assert published_correction.status_code == 409
     published_reanalysis = client.post(
         f"/api/v1/voice/sessions/{session_id}/reanalyze",
-        headers=clinician | {"Idempotency-Key": "after-publish"},
+        headers=reviewer | {"Idempotency-Key": "after-publish"},
+        json={"expected_revision_id": reviewed.json()["id"]},
     )
     assert published_reanalysis.status_code == 409
     with Session(engine) as db:
@@ -538,9 +918,14 @@ def test_reanalysis_job_is_bound_to_payload_revision(
         client, clinician, synthetic_fixture=True
     )
     _run_job(job_id)
+    transcript = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert transcript.status_code == 200
     reanalysis = client.post(
         f"/api/v1/voice/sessions/{session_id}/reanalyze",
         headers=clinician | {"Idempotency-Key": "tampered-revision-binding"},
+        json={"expected_revision_id": transcript.json()["id"]},
     )
     assert reanalysis.status_code == 202
     tampered_job_id = uuid.UUID(reanalysis.json()["job_id"])
@@ -562,4 +947,196 @@ def test_reanalysis_job_is_bound_to_payload_revision(
         assert job is not None and voice_session is not None
         assert job.state == "failed"
         assert job.error_code == "REANALYSIS_REVISION_NOT_FOUND"
-        assert voice_session.state == "needs_review"
+        assert voice_session.state == "extracting"
+        # Simulate a legacy/pre-fix retryable failure row. Manual retry must
+        # restore the CAS barrier in the same transaction as Job=pending.
+        voice_session.state = "needs_review"
+        db.add(voice_session)
+        db.commit()
+
+    retried = client.post(f"/api/v1/jobs/{tampered_job_id}/retry", headers=clinician)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["state"] == "pending"
+    status = client.get(f"/api/v1/voice/sessions/{session_id}", headers=clinician)
+    assert status.status_code == 200
+    assert status.json()["state"] == "extracting"
+    blocked_publish = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=clinician,
+        json={"expected_revision_id": transcript.json()["id"]},
+    )
+    assert blocked_publish.status_code == 409
+    assert blocked_publish.json()["detail"]["code"] == "VOICE_NOT_PUBLISHABLE"
+
+
+def test_retryable_reanalysis_failure_keeps_cas_barrier_until_auto_retry(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clinician = auth_headers("clinician")
+    _patient_id, session_id, initial_job_id = _create_recording(
+        client, clinician, synthetic_fixture=True
+    )
+    _run_job(initial_job_id)
+    initial = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert initial.status_code == 200
+    initial_revision_id = initial.json()["id"]
+    queued = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "transient-reanalysis"},
+        json={"expected_revision_id": initial_revision_id},
+    )
+    assert queued.status_code == 202, queued.text
+    reanalysis_job_id = queued.json()["job_id"]
+
+    original_create_revision = voice_worker._create_revision
+    failed_once = False
+
+    def flaky_create_revision(*args, **kwargs):
+        nonlocal failed_once
+        if kwargs.get("reanalyzed") and not failed_once:
+            failed_once = True
+            raise RuntimeError("synthetic transient extraction failure")
+        return original_create_revision(*args, **kwargs)
+
+    monkeypatch.setattr(voice_worker, "_create_revision", flaky_create_revision)
+    _run_job(reanalysis_job_id)
+
+    with Session(engine) as db:
+        failed_job = db.get(Job, uuid.UUID(reanalysis_job_id))
+        voice_session = db.get(VoiceSession, uuid.UUID(session_id))
+        revisions = db.exec(
+            select(TranscriptRevision).where(
+                TranscriptRevision.session_id == uuid.UUID(session_id)
+            )
+        ).all()
+        assert failed_job is not None and voice_session is not None
+        assert failed_job.state == "failed"
+        assert failed_job.attempt_count == 1
+        assert voice_session.state == "extracting"
+        assert voice_session.current_transcript_revision_id == uuid.UUID(
+            initial_revision_id
+        )
+        assert len(revisions) == 1
+
+    blocked_publish = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=clinician,
+        json={"expected_revision_id": initial_revision_id},
+    )
+    assert blocked_publish.status_code == 409
+    assert blocked_publish.json()["detail"]["code"] == "VOICE_NOT_PUBLISHABLE"
+    blocked_correction = client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript/correct",
+        headers=clinician,
+        json={
+            "expected_revision_id": initial_revision_id,
+            "text": "This edit must wait for the durable retry.",
+        },
+    )
+    assert blocked_correction.status_code == 409
+    assert blocked_correction.json()["detail"]["code"] == (
+        "VOICE_REVIEW_STATE_CONFLICT"
+    )
+    competing = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "competing-reanalysis"},
+        json={"expected_revision_id": initial_revision_id},
+    )
+    assert competing.status_code == 409
+    assert competing.json()["detail"]["code"] == "VOICE_REANALYSIS_IN_PROGRESS"
+
+    # The normal worker poller claims failed jobs below max_attempts. The next
+    # attempt succeeds without exposing the old revision between attempts.
+    _run_job(reanalysis_job_id)
+    reviewed = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["id"] != initial_revision_id
+    with Session(engine) as db:
+        completed_job = db.get(Job, uuid.UUID(reanalysis_job_id))
+        voice_session = db.get(VoiceSession, uuid.UUID(session_id))
+        attempts = db.exec(
+            select(JobAttempt)
+            .where(JobAttempt.job_id == uuid.UUID(reanalysis_job_id))
+            .order_by(JobAttempt.attempt_no)
+        ).all()
+        assert completed_job is not None and voice_session is not None
+        assert completed_job.state in {"completed", "needs_review"}
+        assert completed_job.attempt_count == 2
+        assert voice_session.state in {"ready", "needs_review"}
+        assert [attempt.status for attempt in attempts] == ["failed", "completed"]
+
+
+def test_manual_reanalysis_retry_and_publish_share_session_cas(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_session: Session,
+) -> None:
+    clinician = auth_headers("clinician")
+    _patient_id, session_id, initial_job_id = _create_recording(
+        client, clinician, synthetic_fixture=True
+    )
+    _run_job(initial_job_id)
+    transcript = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert transcript.status_code == 200
+    revision_id = transcript.json()["id"]
+    queued = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "manual-retry-publish-cas"},
+        json={"expected_revision_id": revision_id},
+    )
+    assert queued.status_code == 202
+    job_id = uuid.UUID(queued.json()["job_id"])
+    job = owner_session.get(Job, job_id)
+    voice_session = owner_session.get(VoiceSession, uuid.UUID(session_id))
+    assert job is not None and voice_session is not None
+    job.state = "failed"
+    job.error_code = "SYNTHETIC_TRANSIENT_FAILURE"
+    job.attempt_count = 1
+    voice_session.state = "needs_review"
+    owner_session.add(job)
+    owner_session.add(voice_session)
+    owner_session.commit()
+
+    retry_holds_session = Event()
+    release_retry = Event()
+    original_worker_context = ai_routes.worker_context_for_job
+
+    def blocked_worker_context(*args, **kwargs):
+        retry_holds_session.set()
+        if not release_retry.wait(timeout=10):
+            raise TimeoutError("test did not release retry transaction")
+        return original_worker_context(*args, **kwargs)
+
+    monkeypatch.setattr(ai_routes, "worker_context_for_job", blocked_worker_context)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        retry_future = pool.submit(
+            client.post, f"/api/v1/jobs/{job_id}/retry", headers=clinician
+        )
+        assert retry_holds_session.wait(timeout=10)
+        publish_future = pool.submit(
+            client.post,
+            f"/api/v1/voice/sessions/{session_id}/publish",
+            headers=clinician,
+            json={"expected_revision_id": revision_id},
+        )
+        sleep(0.15)
+        assert publish_future.done() is False
+        release_retry.set()
+        retried = retry_future.result(timeout=10)
+        publish = publish_future.result(timeout=10)
+
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["state"] == "pending"
+    assert publish.status_code == 409, publish.text
+    assert publish.json()["detail"]["code"] == "VOICE_NOT_PUBLISHABLE"
+    status = client.get(f"/api/v1/voice/sessions/{session_id}", headers=clinician)
+    assert status.json()["state"] == "extracting"

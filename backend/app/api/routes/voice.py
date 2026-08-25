@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from typing import Annotated
 
@@ -11,6 +12,7 @@ from app.models import (
     TranscriptCorrection,
     TranscriptRevisionPublic,
     VoiceChunkStatus,
+    VoiceDeviceAbandonPublic,
     VoiceDeviceJoin,
     VoiceDevicePublic,
     VoiceDeviceSeal,
@@ -18,11 +20,14 @@ from app.models import (
     VoiceFinalizePublic,
     VoiceFinalizeRequest,
     VoicePublishPublic,
+    VoicePublishRequest,
     VoiceReanalyzePublic,
+    VoiceReanalyzeRequest,
     VoiceSessionCreate,
     VoiceSessionPublic,
 )
 from app.services.voice.service import (
+    abandon_empty_voice_device,
     authorized_audio_asset,
     chunk_status,
     correct_transcript,
@@ -55,13 +60,22 @@ async def _bounded_chunk_body(request: Request) -> bytes:
             pass
     parts: list[bytes] = []
     total = 0
-    async for part in request.stream():
-        total += len(part)
-        if total > settings.VOICE_MAX_CHUNK_BYTES:
-            raise HTTPException(
-                status_code=413, detail={"code": "AUDIO_CHUNK_SIZE_INVALID"}
-            )
-        parts.append(part)
+    try:
+        async with asyncio.timeout(
+            max(0.01, settings.VOICE_CHUNK_READ_TIMEOUT_SECONDS)
+        ):
+            async for part in request.stream():
+                total += len(part)
+                if total > settings.VOICE_MAX_CHUNK_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail={"code": "AUDIO_CHUNK_SIZE_INVALID"},
+                    )
+                parts.append(part)
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=408, detail={"code": "AUDIO_CHUNK_READ_TIMEOUT"}
+        ) from exc
     return b"".join(parts)
 
 
@@ -103,6 +117,24 @@ def join_device(
     return voice_device_public(device)
 
 
+@router.delete(
+    "/sessions/{session_id}/devices/{device_id}",
+    response_model=VoiceDeviceAbandonPublic,
+)
+def abandon_device(
+    session_id: uuid.UUID,
+    device_id: uuid.UUID,
+    session: SessionDep,
+    context: CurrentContext,
+) -> VoiceDeviceAbandonPublic:
+    voice_session = get_voice_session(session, context, session_id, lock=True)
+    result = abandon_empty_voice_device(
+        session, context, voice_session, device_id=device_id
+    )
+    session.commit()
+    return result
+
+
 @router.put(
     "/sessions/{session_id}/devices/{device_id}/chunks/{chunk_index}",
     response_model=AudioChunkAck,
@@ -131,8 +163,11 @@ async def put_chunk(
         default=None, alias="X-Chunk-End-Ms", ge=0, le=43_200_000
     ),
 ) -> AudioChunkAck:
-    voice_session = get_voice_session(session, context, session_id, lock=True)
+    # Consume and bound the untrusted network stream before taking the session
+    # row lock. Slow mobile uploads must not serialize join/seal/finalize for
+    # every device; the fresh locked read below is the state/CAS boundary.
     payload = await _bounded_chunk_body(request)
+    voice_session = get_voice_session(session, context, session_id, lock=True)
     result = upload_audio_chunk(
         session,
         context,
@@ -238,6 +273,7 @@ def correct(
 )
 def reanalyze(
     session_id: uuid.UUID,
+    body: VoiceReanalyzeRequest,
     session: SessionDep,
     context: CurrentContext,
     idempotency_key: str = Header(
@@ -246,7 +282,11 @@ def reanalyze(
 ) -> VoiceReanalyzePublic:
     voice_session = get_voice_session(session, context, session_id, lock=True)
     result = enqueue_reanalysis(
-        session, context, voice_session, idempotency_key=idempotency_key
+        session,
+        context,
+        voice_session,
+        expected_revision_id=body.expected_revision_id,
+        idempotency_key=idempotency_key,
     )
     session.commit()
     return result
@@ -254,10 +294,18 @@ def reanalyze(
 
 @router.post("/sessions/{session_id}/publish", response_model=VoicePublishPublic)
 def publish(
-    session_id: uuid.UUID, session: SessionDep, context: CurrentContext
+    session_id: uuid.UUID,
+    body: VoicePublishRequest,
+    session: SessionDep,
+    context: CurrentContext,
 ) -> VoicePublishPublic:
     voice_session = get_voice_session(session, context, session_id, lock=True)
-    result = publish_voice_result(session, context, voice_session)
+    result = publish_voice_result(
+        session,
+        context,
+        voice_session,
+        expected_revision_id=body.expected_revision_id,
+    )
     session.commit()
     return result
 

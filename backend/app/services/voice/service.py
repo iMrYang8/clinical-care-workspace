@@ -29,6 +29,7 @@ from app.models import (
     TranscriptSegmentPublic,
     VoiceChunkStatus,
     VoiceDevice,
+    VoiceDeviceAbandonPublic,
     VoiceDeviceChunkStatus,
     VoiceDeviceJoin,
     VoiceDevicePublic,
@@ -139,6 +140,24 @@ def _authorize_session_write(
         )
 
 
+def _require_current_revision(
+    voice_session: VoiceSession, expected_revision_id: uuid.UUID
+) -> uuid.UUID:
+    current_revision_id = voice_session.current_transcript_revision_id
+    if current_revision_id is None:
+        raise HTTPException(status_code=409, detail={"code": "TRANSCRIPT_NOT_READY"})
+    if current_revision_id != expected_revision_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "TRANSCRIPT_REVISION_CONFLICT",
+                "expected_revision_id": str(expected_revision_id),
+                "current_revision_id": str(current_revision_id),
+            },
+        )
+    return current_revision_id
+
+
 def create_voice_session(
     db: Session, context: RequestContext, body: VoiceSessionCreate
 ) -> VoiceSession:
@@ -184,6 +203,13 @@ def join_voice_device(
     voice_session: VoiceSession,
     body: VoiceDeviceJoin,
 ) -> VoiceDevice:
+    if (
+        voice_session.patient_id != body.expected_patient_id
+        or voice_session.capture_kind != body.expected_capture_kind
+    ):
+        raise HTTPException(
+            status_code=409, detail={"code": "VOICE_SESSION_CONTEXT_MISMATCH"}
+        )
     _authorize_session_write(context, voice_session)
     if voice_session.state not in _CAPTURE_STATES:
         raise HTTPException(
@@ -252,6 +278,44 @@ def voice_device_public(device: VoiceDevice) -> VoiceDevicePublic:
     )
 
 
+def abandon_empty_voice_device(
+    db: Session,
+    context: RequestContext,
+    voice_session: VoiceSession,
+    *,
+    device_id: uuid.UUID,
+) -> VoiceDeviceAbandonPublic:
+    _authorize_session_write(context, voice_session)
+    if voice_session.state not in _CAPTURE_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "VOICE_SESSION_NOT_RECORDING",
+                "state": voice_session.state,
+            },
+        )
+    device = _get_device(db, context, voice_session.id, device_id)
+    chunk_count = db.exec(
+        select(func.count(col(AudioChunk.id))).where(
+            AudioChunk.clinic_id == context.clinic_id,
+            AudioChunk.session_id == voice_session.id,
+            AudioChunk.device_id == device.id,
+        )
+    ).one()
+    if int(chunk_count) != 0 or device.last_declared_chunk_index is not None:
+        raise HTTPException(status_code=409, detail={"code": "VOICE_DEVICE_HAS_AUDIO"})
+    db.delete(device)
+    emit_change(
+        db,
+        context,
+        action="voice.device_abandoned",
+        resource_type="voice_device",
+        resource_id=device.id,
+        metadata={"session_id": str(voice_session.id)},
+    )
+    return VoiceDeviceAbandonPublic(device_id=device.id)
+
+
 def _get_device(
     db: Session,
     context: RequestContext,
@@ -286,13 +350,7 @@ def upload_audio_chunk(
     end_ms: int | None,
 ) -> AudioChunkAck:
     _authorize_session_write(context, voice_session)
-    if voice_session.state not in _CAPTURE_STATES:
-        raise HTTPException(
-            status_code=409, detail={"code": "VOICE_SESSION_NOT_RECORDING"}
-        )
     device = _get_device(db, context, voice_session.id, device_id)
-    if device.last_declared_chunk_index is not None:
-        raise HTTPException(status_code=409, detail={"code": "VOICE_DEVICE_SEALED"})
     if not payload or len(payload) > settings.VOICE_MAX_CHUNK_BYTES:
         raise HTTPException(
             status_code=413, detail={"code": "AUDIO_CHUNK_SIZE_INVALID"}
@@ -337,6 +395,17 @@ def upload_audio_chunk(
                 status_code=409, detail={"code": "AUDIO_CHUNK_METADATA_CONFLICT"}
             )
         return AudioChunkAck(chunk_index=chunk_index, duplicate=True)
+
+    # A successfully acknowledged PUT remains idempotent even after the
+    # device seals or the session advances. Only a new index is constrained by
+    # capture state; otherwise a lost response retried after finalize would be
+    # reported as a false failure.
+    if voice_session.state not in _CAPTURE_STATES:
+        raise HTTPException(
+            status_code=409, detail={"code": "VOICE_SESSION_NOT_RECORDING"}
+        )
+    if device.last_declared_chunk_index is not None:
+        raise HTTPException(status_code=409, detail={"code": "VOICE_DEVICE_SEALED"})
 
     session_bytes = db.exec(
         select(func.coalesce(func.sum(AudioChunk.byte_length), 0)).where(
@@ -759,9 +828,10 @@ def correct_transcript(
         )
     if voice_session.published_entry_id is not None:
         raise HTTPException(status_code=409, detail={"code": "VOICE_ALREADY_PUBLISHED"})
-    if voice_session.current_transcript_revision_id is None:
-        raise HTTPException(status_code=409, detail={"code": "TRANSCRIPT_NOT_READY"})
-    current = db.get(TranscriptRevision, voice_session.current_transcript_revision_id)
+    current_revision_id = _require_current_revision(
+        voice_session, body.expected_revision_id
+    )
+    current = db.get(TranscriptRevision, current_revision_id)
     asset = db.exec(
         select(AudioAsset).where(
             AudioAsset.clinic_id == context.clinic_id,
@@ -771,6 +841,10 @@ def correct_transcript(
     if current is None or asset is None:
         raise HTTPException(status_code=409, detail={"code": "TRANSCRIPT_NOT_READY"})
     normalized = body.text.strip()
+    if not normalized:
+        raise HTTPException(
+            status_code=422, detail={"code": "TRANSCRIPT_CORRECTION_EMPTY"}
+        )
     revision_id = uuid.uuid4()
     revision = TranscriptRevision(
         id=revision_id,
@@ -839,12 +913,34 @@ def enqueue_reanalysis(
     context: RequestContext,
     voice_session: VoiceSession,
     *,
+    expected_revision_id: uuid.UUID,
     idempotency_key: str,
 ) -> VoiceReanalyzePublic:
     if context.role != "clinician":
         raise HTTPException(status_code=403, detail="Clinician review required")
-    if voice_session.current_transcript_revision_id is None:
-        raise HTTPException(status_code=409, detail={"code": "TRANSCRIPT_NOT_READY"})
+    job, replayed = create_or_replay_job(
+        db,
+        context,
+        patient_id=voice_session.patient_id,
+        kind="voice_reanalyze",
+        idempotency_key=idempotency_key,
+        payload={
+            "session_id": str(voice_session.id),
+            "revision_id": str(expected_revision_id),
+        },
+    )
+    # An idempotency replay returns the original durable operation even after
+    # its output became the current revision. This covers a lost 202 response
+    # without binding a second job to the newly derived revision.
+    if replayed:
+        if job.state == "failed":
+            raise HTTPException(
+                status_code=409, detail={"code": "VOICE_REANALYSIS_RETRY_REQUIRED"}
+            )
+        return VoiceReanalyzePublic(
+            session_id=voice_session.id, job_id=job.id, state=voice_session.state
+        )
+    _require_current_revision(voice_session, expected_revision_id)
     if voice_session.state not in {"ready", "needs_review", "extracting"}:
         raise HTTPException(
             status_code=409,
@@ -855,29 +951,13 @@ def enqueue_reanalysis(
         )
     if voice_session.published_entry_id is not None:
         raise HTTPException(status_code=409, detail={"code": "VOICE_ALREADY_PUBLISHED"})
-    input_revision_id = voice_session.current_transcript_revision_id
-    job, replayed = create_or_replay_job(
-        db,
-        context,
-        patient_id=voice_session.patient_id,
-        kind="voice_reanalyze",
-        idempotency_key=idempotency_key,
-        payload={
-            "session_id": str(voice_session.id),
-            "revision_id": str(input_revision_id),
-        },
-    )
     if voice_session.state == "extracting":
-        if not replayed or voice_session.processing_job_id != job.id:
+        if voice_session.processing_job_id != job.id:
             raise HTTPException(
                 status_code=409, detail={"code": "VOICE_REANALYSIS_IN_PROGRESS"}
             )
         return VoiceReanalyzePublic(
             session_id=voice_session.id, job_id=job.id, state=voice_session.state
-        )
-    if replayed and job.state == "failed":
-        raise HTTPException(
-            status_code=409, detail={"code": "VOICE_REANALYSIS_RETRY_REQUIRED"}
         )
     voice_session.processing_job_id = job.id
     voice_session.state = "extracting"
@@ -923,10 +1003,15 @@ def _fact_evidence_is_current(
 
 
 def publish_voice_result(
-    db: Session, context: RequestContext, voice_session: VoiceSession
+    db: Session,
+    context: RequestContext,
+    voice_session: VoiceSession,
+    *,
+    expected_revision_id: uuid.UUID,
 ) -> VoicePublishPublic:
     if context.role != "clinician":
         raise HTTPException(status_code=403, detail="Clinician publication required")
+    current_revision_id = _require_current_revision(voice_session, expected_revision_id)
     if voice_session.state == "published":
         if voice_session.published_entry_id is None:
             raise HTTPException(status_code=409, detail={"code": "PUBLICATION_INVALID"})
@@ -945,9 +1030,7 @@ def publish_voice_result(
             status_code=409,
             detail={"code": "VOICE_NOT_PUBLISHABLE", "state": voice_session.state},
         )
-    if voice_session.current_transcript_revision_id is None:
-        raise HTTPException(status_code=409, detail={"code": "TRANSCRIPT_NOT_READY"})
-    revision = db.get(TranscriptRevision, voice_session.current_transcript_revision_id)
+    revision = db.get(TranscriptRevision, current_revision_id)
     if revision is None or revision.stale:
         raise HTTPException(
             status_code=409, detail={"code": "DOWNSTREAM_RESULTS_STALE"}

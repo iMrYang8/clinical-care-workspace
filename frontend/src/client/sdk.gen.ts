@@ -2,7 +2,7 @@
 
 import { type Client, type Options as Options2, type TDataShape, urlSearchParamsBodySerializer } from './client';
 import { client } from './client.gen';
-import type { aiGetJobData, aiGetJobErrors, aiGetJobResponses, aiIngestData, aiIngestErrors, aiIngestResponses, aiReanalyzeData, aiReanalyzeErrors, aiReanalyzeResponses, aiRetryJobData, aiRetryJobErrors, aiRetryJobResponses, authDemoLoginData, authDemoLoginErrors, authDemoLoginResponses, authLogoutData, authLogoutResponses, authMeData, authMeResponses, authPasswordLoginData, authPasswordLoginErrors, authPasswordLoginResponses, collaborationAssignData, collaborationAssignErrors, collaborationAssignResponses, collaborationCreateCommentData, collaborationCreateCommentErrors, collaborationCreateCommentResponses, collaborationListCommentsData, collaborationListCommentsErrors, collaborationListCommentsResponses, collaborationReplyData, collaborationReplyErrors, collaborationReplyResponses, collaborationResolveData, collaborationResolveErrors, collaborationResolveResponses, decayArchiveData, decayArchiveErrors, decayArchiveResponses, decayPreviewData, decayPreviewResponses, decayRehydrateData, decayRehydrateErrors, decayRehydrateResponses, entriesCreateData, entriesCreateErrors, entriesCreateResponses, entriesDiffData, entriesDiffErrors, entriesDiffResponses, entriesPatchData, entriesPatchErrors, entriesPatchResponses, entriesReadData, entriesReadErrors, entriesReadResponses, entriesRevertData, entriesRevertErrors, entriesRevertResponses, entriesVersionsData, entriesVersionsErrors, entriesVersionsResponses, eventsEventStreamData, eventsEventStreamErrors, eventsEventStreamResponses, patientsPatientGlanceData, patientsPatientGlanceErrors, patientsPatientGlanceResponses, patientsPatientsData, patientsPatientsResponses, patientsPatientTimelineData, patientsPatientTimelineErrors, patientsPatientTimelineResponses, trustAcceptData, trustAcceptErrors, trustAcceptResponses, trustCreateHighlightData, trustCreateHighlightErrors, trustCreateHighlightResponses, trustFeedbackData, trustFeedbackErrors, trustFeedbackResponses, trustPinData, trustPinErrors, trustPinResponses, trustProvenanceResolveData, trustProvenanceResolveErrors, trustProvenanceResolveResponses, trustRejectData, trustRejectErrors, trustRejectResponses, utilsHealthCheckData, utilsHealthCheckResponses, voiceAudioData, voiceAudioErrors, voiceAudioResponses, voiceCorrectData, voiceCorrectErrors, voiceCorrectResponses, voiceCreateSessionData, voiceCreateSessionErrors, voiceCreateSessionResponses, voiceFinalizeData, voiceFinalizeErrors, voiceFinalizeResponses, voiceGetChunkStatusData, voiceGetChunkStatusErrors, voiceGetChunkStatusResponses, voiceJoinDeviceData, voiceJoinDeviceErrors, voiceJoinDeviceResponses, voiceLiveStatusData, voiceLiveStatusErrors, voiceLiveStatusResponses, voicePublishData, voicePublishErrors, voicePublishResponses, voicePutChunkData, voicePutChunkErrors, voicePutChunkResponses, voiceReanalyzeData, voiceReanalyzeErrors, voiceReanalyzeResponses, voiceSealDeviceData, voiceSealDeviceErrors, voiceSealDeviceResponses, voiceSessionStatusData, voiceSessionStatusErrors, voiceSessionStatusResponses, voiceTranscriptData, voiceTranscriptErrors, voiceTranscriptResponses } from './types.gen';
+import type { aiGetJobData, aiGetJobErrors, aiGetJobResponses, aiIngestData, aiIngestErrors, aiIngestResponses, aiReanalyzeData, aiReanalyzeErrors, aiReanalyzeResponses, aiRetryJobData, aiRetryJobErrors, aiRetryJobResponses, authDemoLoginData, authDemoLoginErrors, authDemoLoginResponses, authLogoutData, authLogoutResponses, authMeData, authMeResponses, authPasswordLoginData, authPasswordLoginErrors, authPasswordLoginResponses, collaborationAssignData, collaborationAssignErrors, collaborationAssignResponses, collaborationCreateCommentData, collaborationCreateCommentErrors, collaborationCreateCommentResponses, collaborationListCommentsData, collaborationListCommentsErrors, collaborationListCommentsResponses, collaborationReplyData, collaborationReplyErrors, collaborationReplyResponses, collaborationResolveData, collaborationResolveErrors, collaborationResolveResponses, decayArchiveData, decayArchiveErrors, decayArchiveResponses, decayPreviewData, decayPreviewResponses, decayRehydrateData, decayRehydrateErrors, decayRehydrateResponses, entriesCreateData, entriesCreateErrors, entriesCreateResponses, entriesDiffData, entriesDiffErrors, entriesDiffResponses, entriesPatchData, entriesPatchErrors, entriesPatchResponses, entriesReadData, entriesReadErrors, entriesReadResponses, entriesRevertData, entriesRevertErrors, entriesRevertResponses, entriesVersionsData, entriesVersionsErrors, entriesVersionsResponses, eventsEventStreamData, eventsEventStreamErrors, eventsEventStreamResponses, patientsPatientGlanceData, patientsPatientGlanceErrors, patientsPatientGlanceResponses, patientsPatientsData, patientsPatientsResponses, patientsPatientTimelineData, patientsPatientTimelineErrors, patientsPatientTimelineResponses, trustAcceptData, trustAcceptErrors, trustAcceptResponses, trustCreateHighlightData, trustCreateHighlightErrors, trustCreateHighlightResponses, trustFeedbackData, trustFeedbackErrors, trustFeedbackResponses, trustPinData, trustPinErrors, trustPinResponses, trustProvenanceResolveData, trustProvenanceResolveErrors, trustProvenanceResolveResponses, trustRejectData, trustRejectErrors, trustRejectResponses, utilsHealthCheckData, utilsHealthCheckResponses, voiceAbandonDeviceData, voiceAbandonDeviceErrors, voiceAbandonDeviceResponses, voiceAudioData, voiceAudioErrors, voiceAudioResponses, voiceCorrectData, voiceCorrectErrors, voiceCorrectResponses, voiceCreateSessionData, voiceCreateSessionErrors, voiceCreateSessionResponses, voiceFinalizeData, voiceFinalizeErrors, voiceFinalizeResponses, voiceGetChunkStatusData, voiceGetChunkStatusErrors, voiceGetChunkStatusResponses, voiceJoinDeviceData, voiceJoinDeviceErrors, voiceJoinDeviceResponses, voiceLiveStatusData, voiceLiveStatusErrors, voiceLiveStatusResponses, voicePublishData, voicePublishErrors, voicePublishResponses, voicePutChunkData, voicePutChunkErrors, voicePutChunkResponses, voiceReanalyzeData, voiceReanalyzeErrors, voiceReanalyzeResponses, voiceSealDeviceData, voiceSealDeviceErrors, voiceSealDeviceResponses, voiceSessionStatusData, voiceSessionStatusErrors, voiceSessionStatusResponses, voiceTranscriptData, voiceTranscriptErrors, voiceTranscriptResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -526,6 +526,18 @@ export class VoiceService {
     }
 
     /**
+     * Abandon Device
+     */
+    public static abandonDevice<ThrowOnError extends boolean = true>(options: Options<voiceAbandonDeviceData, ThrowOnError>) {
+        return (options.client ?? client).delete<voiceAbandonDeviceResponses, voiceAbandonDeviceErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/devices/{device_id}',
+            ...options
+        });
+    }
+
+    /**
      * Put Chunk
      */
     public static putChunk<ThrowOnError extends boolean = true>(options: Options<voicePutChunkData, ThrowOnError>) {
@@ -622,7 +634,11 @@ export class VoiceService {
             responseType: 'json',
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/voice/sessions/{session_id}/reanalyze',
-            ...options
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
         });
     }
 
@@ -634,7 +650,11 @@ export class VoiceService {
             responseType: 'json',
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/voice/sessions/{session_id}/publish',
-            ...options
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
         });
     }
 

@@ -1120,6 +1120,10 @@ export type Token = {
  */
 export type TranscriptCorrection = {
     /**
+     * Expected Revision Id
+     */
+    expected_revision_id: string;
+    /**
      * Text
      */
     text: string;
@@ -1308,6 +1312,20 @@ export type VoiceChunkStatus = {
 };
 
 /**
+ * VoiceDeviceAbandonPublic
+ */
+export type VoiceDeviceAbandonPublic = {
+    /**
+     * Device Id
+     */
+    device_id: string;
+    /**
+     * Abandoned
+     */
+    abandoned?: true;
+};
+
+/**
  * VoiceDeviceChunkStatus
  */
 export type VoiceDeviceChunkStatus = {
@@ -1341,6 +1359,14 @@ export type VoiceDeviceJoin = {
      * Capture Role
      */
     capture_role: 'patient' | 'staff' | 'clinician';
+    /**
+     * Expected Patient Id
+     */
+    expected_patient_id: string;
+    /**
+     * Expected Capture Kind
+     */
+    expected_capture_kind: 'patient' | 'clinical';
 };
 
 /**
@@ -1462,6 +1488,16 @@ export type VoicePublishPublic = {
 };
 
 /**
+ * VoicePublishRequest
+ */
+export type VoicePublishRequest = {
+    /**
+     * Expected Revision Id
+     */
+    expected_revision_id: string;
+};
+
+/**
  * VoiceReanalyzePublic
  */
 export type VoiceReanalyzePublic = {
@@ -1477,6 +1513,16 @@ export type VoiceReanalyzePublic = {
      * State
      */
     state: string;
+};
+
+/**
+ * VoiceReanalyzeRequest
+ */
+export type VoiceReanalyzeRequest = {
+    /**
+     * Expected Revision Id
+     */
+    expected_revision_id: string;
 };
 
 /**
@@ -2621,6 +2667,40 @@ export type voiceJoinDeviceResponses = {
 
 export type voiceJoinDeviceResponse = voiceJoinDeviceResponses[keyof voiceJoinDeviceResponses];
 
+export type voiceAbandonDeviceData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+        /**
+         * Device Id
+         */
+        device_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/devices/{device_id}';
+};
+
+export type voiceAbandonDeviceErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceAbandonDeviceError = voiceAbandonDeviceErrors[keyof voiceAbandonDeviceErrors];
+
+export type voiceAbandonDeviceResponses = {
+    /**
+     * Successful Response
+     */
+    200: VoiceDeviceAbandonPublic;
+};
+
+export type voiceAbandonDeviceResponse = voiceAbandonDeviceResponses[keyof voiceAbandonDeviceResponses];
+
 export type voicePutChunkData = {
     body: Blob | File;
     headers: {
@@ -2834,7 +2914,7 @@ export type voiceCorrectResponses = {
 export type voiceCorrectResponse = voiceCorrectResponses[keyof voiceCorrectResponses];
 
 export type voiceReanalyzeData = {
-    body?: never;
+    body: VoiceReanalyzeRequest;
     headers: {
         /**
          * Idempotency-Key
@@ -2870,7 +2950,7 @@ export type voiceReanalyzeResponses = {
 export type voiceReanalyzeResponse = voiceReanalyzeResponses[keyof voiceReanalyzeResponses];
 
 export type voicePublishData = {
-    body?: never;
+    body: VoicePublishRequest;
     path: {
         /**
          * Session Id

@@ -32,6 +32,10 @@ inside an API request. One session has at
 most one assembled `AudioAsset`; transcript corrections create a new immutable
 `TranscriptRevision`; reanalysis creates another immutable revision. A retry
 therefore cannot duplicate an asset, transcript revision, or published entry.
+Worker membership and user activation are reread from PostgreSQL at every
+write fence. FFmpeg output is fenced before its asset commit and ASR output is
+fenced after the provider returns, so an in-flight revocation, lease expiry, or
+reclaim cannot persist derived clinical data under a stale claim.
 
 The following rows use PostgreSQL RLS and clinic-composite foreign keys:
 
@@ -54,6 +58,8 @@ The browser selects MediaRecorder formats in this order:
 
 Approximately every two seconds, the plaintext browser chunk is hashed, then
 encrypted with a non-extractable WebCrypto AES-GCM key and stored in IndexedDB.
+Reload recovery reads, decrypts, and uploads one compound-indexed chunk at a
+time; it does not materialize the 512 MiB session queue in JavaScript memory.
 It is decrypted only for authenticated upload. The server independently checks
 the hash and encrypts the accepted bytes. A repeated `(device, chunk_index)`
 with the same hash and identical media/time metadata is acknowledged; changed
@@ -62,6 +68,14 @@ the session-wide barrier can finalize. Finalization requires declarations for
 every joined device and returns `MISSING_AUDIO_CHUNKS` with exact indices when a
 gap exists. The API caps a session at eight devices, 21,601 two-second chunks
 per device, 12 hours of declared time, 8 MiB per chunk, and 512 MiB total.
+The 12-hour declaration ceiling bounds missing-index validation; it is not a
+processing promise. FFmpeg decoding is independently capped at one hour per
+track and 128 MiB per PCM output, and exceeding either limit moves the durable
+job/session to an explicit review/error state rather than truncating evidence.
+Chunk request bodies have a bounded read deadline and are fully consumed before
+the API takes the VoiceSession row lock. Joining a second device binds both the
+expected patient and capture kind; a pasted session from another care context
+fails before recording starts and again at the locked server boundary.
 
 The browser key and ciphertext share the authenticated application origin.
 This prevents plaintext chunks from being written to IndexedDB, but it is not
@@ -69,12 +83,29 @@ an XSS or compromised-origin boundary. A capture remains locally recoverable
 until both the final chunk uploads and finalization are acknowledged; successful
 finalization deletes its local key and queue rows.
 
+A joined device with no audio is still a participant in the multi-device seal
+barrier. Its joining member can explicitly abandon that unsealed, zero-chunk
+track with the recovery UI or the device `DELETE` endpoint. If MediaRecorder
+construction or the initial IndexedDB capture write fails after joining, the
+browser makes the same best-effort compensating `DELETE`; the locked server
+check rejects abandonment as soon as the track has any audio. A caught startup
+failure is therefore compensated, and a reload after the local row commits is
+recoverable without allowing an audio-bearing track to disappear. A hard tab
+or browser-process crash in the narrow interval between the join response and
+that first durable local row cannot run the compensation and is not claimed as
+automatically recoverable.
+
 FFmpeg is invoked with an argument array, `-nostdin`, a timeout, and `0600`
 temporary files inside a `0700` directory. It produces 16 kHz mono PCM with a
 high-pass filter and loudness normalization. Silence, clipping, and low-level
 noise are measured on each decoded track before normalization; multi-device
 overlap remains a conservative track-level review signal. All are persisted as
-review warnings and can force `needs_review`. The container writes
+review warnings and can force `needs_review`. PCM statistics are accumulated in
+bounded streaming blocks rather than materializing Python samples for the full
+recording. Every input is pinned to the demuxer implied by its accepted media
+type with a `file`-only protocol whitelist; FFmpeg stdout/stderr are discarded
+rather than buffered, so disguised playlists cannot create network/local-file
+reads or unbounded diagnostic memory. The container writes
 its exact `ffmpeg -version` output at build time:
 
 ```bash
@@ -89,7 +120,7 @@ docker compose run --rm backend \
 | Disabled (default) | `VOICE_TRANSCRIPTION_PROVIDER=disabled` | No ASR; encrypted audio is retained with an explicit pending/review state. |
 | Synthetic fixture | Development demo plus explicit fixture checkbox | Fixed speaker/timestamp/code-switch/overlap fixture only; never selected for ordinary audio. |
 | OpenAI final transcription | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, `OPENAI_API_KEY`, `OPENAI_TRANSCRIBE_MODEL` | Sends the normalized audio only when every gate is true. `STRICT_NO_AUDIO_EGRESS=true` overrides all remote settings. Model IDs come from the environment. Calls have a bounded ASR timeout. |
-| faster-whisper | `compose.local-asr.yml`, a pre-cached `LOCAL_ASR_MODEL_DIR` | CPU/int8 and `local_files_only=True`; no runtime model download. No diarization is claimed. |
+| faster-whisper | `compose.local-asr.yml`, a pre-cached `LOCAL_ASR_MODEL_DIR` | CPU/int8 and `local_files_only=True`; no runtime model download. Inference runs in a dedicated child process that is killed on timeout/cancellation, so retries cannot stack orphaned CTranslate2 threads. No diarization is claimed. |
 | pyannote experimental | `compose.diarization.yml`, accepted model terms, cached `PYANNOTE_MODEL_DIR` | Default off. Current code exposes a local readiness gate; it does not silently fetch or apply a gated model. |
 
 Local no-egress overlay:
@@ -127,6 +158,16 @@ persisted only when all of the following validate:
 - the fact maps to a segment in that revision;
 - the audio interval is inside the segment and assembled asset duration.
 
+Correction, reanalysis, and publication each require the immutable revision id
+that the clinician actually reviewed. The server compares that id while holding
+the VoiceSession row lock and returns `TRANSCRIPT_REVISION_CONFLICT` instead of
+silently applying a stale editor or attributing review of a newer transcript to
+an older page. Reanalysis includes that revision id in its idempotency payload,
+so the same key still returns the original job after its output becomes current.
+Retryable worker failures keep the session in its last durable processing state;
+publish, correction, and competing reanalysis remain behind that CAS barrier
+until a later attempt completes or the attempt budget is exhausted.
+
 Publication is clinician-only and only runs from a stable `ready` or
 `needs_review` session. It explicitly accepts the evidence-validated facts and
 records the actor/time before creating an immutable encrypted transcript
@@ -145,6 +186,7 @@ Patient role. Raw normalized audio is restricted to Staff and Clinician review.
 ```text
 POST /api/v1/voice/sessions
 POST /api/v1/voice/sessions/{id}/devices
+DELETE /api/v1/voice/sessions/{id}/devices/{device_id}
 PUT  /api/v1/voice/sessions/{id}/devices/{device_id}/chunks/{index}
 POST /api/v1/voice/sessions/{id}/devices/{device_id}/seal
 GET  /api/v1/voice/sessions/{id}/chunks/status

@@ -1,9 +1,15 @@
+import asyncio
 import hashlib
+import uuid
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app.api.routes import voice as voice_routes
 from app.core.config import settings
+from app.models import AudioChunkAck
 
 
 def _patient_id(client: TestClient, headers: dict[str, str]) -> str:
@@ -30,10 +36,17 @@ def _session(client: TestClient, headers: dict[str, str], patient_id: str) -> st
 def _join(
     client: TestClient, headers: dict[str, str], session_id: str, client_id: str
 ) -> str:
+    session_status = client.get(f"/api/v1/voice/sessions/{session_id}", headers=headers)
+    assert session_status.status_code == 200
     response = client.post(
         f"/api/v1/voice/sessions/{session_id}/devices",
         headers=headers,
-        json={"client_device_id": client_id, "capture_role": "clinician"},
+        json={
+            "client_device_id": client_id,
+            "capture_role": "clinician",
+            "expected_patient_id": session_status.json()["patient_id"],
+            "expected_capture_kind": session_status.json()["capture_kind"],
+        },
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
@@ -108,9 +121,47 @@ def test_chunk_upload_is_idempotent_and_tamper_evident(
     assert tamper.status_code == 409
     assert tamper.json()["detail"]["code"] == "AUDIO_CHUNK_HASH_CONFLICT"
     assert _seal(client, headers, session_id, device_id, 0).status_code == 200
+
+    replay_after_seal = _put(
+        client, headers, session_id, device_id, 0, b"synthetic-audio-0"
+    )
+    assert replay_after_seal.status_code == 200
+    assert replay_after_seal.json()["duplicate"] is True
+    metadata_tamper_after_seal = client.put(
+        f"/api/v1/voice/sessions/{session_id}/devices/{device_id}/chunks/0",
+        headers=headers
+        | {
+            "Content-Type": "audio/webm",
+            "X-Chunk-SHA256": hashlib.sha256(b"synthetic-audio-0").hexdigest(),
+            "X-Chunk-Start-Ms": "1",
+            "X-Chunk-End-Ms": "2001",
+        },
+        content=b"synthetic-audio-0",
+    )
+    assert metadata_tamper_after_seal.status_code == 409
+    assert metadata_tamper_after_seal.json()["detail"]["code"] == (
+        "AUDIO_CHUNK_METADATA_CONFLICT"
+    )
+    tamper_after_seal = _put(
+        client, headers, session_id, device_id, 0, b"changed-after-seal"
+    )
+    assert tamper_after_seal.status_code == 409
+    assert tamper_after_seal.json()["detail"]["code"] == ("AUDIO_CHUNK_HASH_CONFLICT")
     after_seal = _put(client, headers, session_id, device_id, 1, b"too-late")
     assert after_seal.status_code == 409
     assert after_seal.json()["detail"]["code"] == "VOICE_DEVICE_SEALED"
+
+    finalized = client.post(
+        f"/api/v1/voice/sessions/{session_id}/finalize",
+        headers=headers | {"Idempotency-Key": "replay-after-finalize"},
+        json={"devices": [{"device_id": device_id, "last_chunk_index": 0}]},
+    )
+    assert finalized.status_code == 202, finalized.text
+    replay_after_finalize = _put(
+        client, headers, session_id, device_id, 0, b"synthetic-audio-0"
+    )
+    assert replay_after_finalize.status_code == 200
+    assert replay_after_finalize.json()["duplicate"] is True
 
 
 def test_chunk_and_session_size_limits_are_enforced_before_storage(
@@ -213,22 +264,193 @@ def test_finalize_reports_per_device_missing_chunks_and_accepts_out_of_order(
     assert status.json()["devices"][0]["received_indices"] == [0, 1, 2]
 
 
+def test_empty_crashed_device_can_be_abandoned_before_other_track_finalizes(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    patient_id = _patient_id(client, headers)
+    session_id = _session(client, headers, patient_id)
+    complete_device = _join(client, headers, session_id, "complete-device")
+    crashed_device = _join(client, headers, session_id, "crashed-before-chunk")
+
+    assert (
+        _put(client, headers, session_id, complete_device, 0, b"complete").status_code
+        == 200
+    )
+    assert _seal(client, headers, session_id, complete_device, 0).status_code == 200
+    blocked = client.post(
+        f"/api/v1/voice/sessions/{session_id}/finalize",
+        headers=headers | {"Idempotency-Key": "empty-device-blocks"},
+        json={
+            "devices": [
+                {"device_id": complete_device, "last_chunk_index": 0},
+            ]
+        },
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == ("VOICE_DEVICE_DECLARATIONS_INCOMPLETE")
+
+    other_member = client.delete(
+        f"/api/v1/voice/sessions/{session_id}/devices/{crashed_device}",
+        headers=auth_headers("staff"),
+    )
+    assert other_member.status_code == 403
+    assert other_member.json()["detail"] == "Device belongs to another member"
+
+    cannot_abandon_audio = client.delete(
+        f"/api/v1/voice/sessions/{session_id}/devices/{complete_device}",
+        headers=headers,
+    )
+    assert cannot_abandon_audio.status_code == 409
+    assert cannot_abandon_audio.json()["detail"]["code"] == ("VOICE_DEVICE_HAS_AUDIO")
+    abandoned = client.delete(
+        f"/api/v1/voice/sessions/{session_id}/devices/{crashed_device}",
+        headers=headers,
+    )
+    assert abandoned.status_code == 200
+    assert abandoned.json() == {
+        "device_id": crashed_device,
+        "abandoned": True,
+    }
+
+    finalized = client.post(
+        f"/api/v1/voice/sessions/{session_id}/finalize",
+        headers=headers | {"Idempotency-Key": "after-empty-device-abandon"},
+        json={
+            "devices": [
+                {"device_id": complete_device, "last_chunk_index": 0},
+            ]
+        },
+    )
+    assert finalized.status_code == 202, finalized.text
+
+
 def test_session_rejects_more_devices_than_finalize_can_declare(
     client: TestClient, auth_headers
 ) -> None:
     headers = auth_headers("clinician")
-    session_id = _session(client, headers, _patient_id(client, headers))
+    patient_id = _patient_id(client, headers)
+    session_id = _session(client, headers, patient_id)
     for index in range(8):
         joined = client.post(
             f"/api/v1/voice/sessions/{session_id}/devices",
             headers=headers,
-            json={"client_device_id": f"device-{index}", "capture_role": "patient"},
+            json={
+                "client_device_id": f"device-{index}",
+                "capture_role": "patient",
+                "expected_patient_id": patient_id,
+                "expected_capture_kind": "clinical",
+            },
         )
         assert joined.status_code == 201
     rejected = client.post(
         f"/api/v1/voice/sessions/{session_id}/devices",
         headers=headers,
-        json={"client_device_id": "device-8", "capture_role": "patient"},
+        json={
+            "client_device_id": "device-8",
+            "capture_role": "patient",
+            "expected_patient_id": patient_id,
+            "expected_capture_kind": "clinical",
+        },
     )
     assert rejected.status_code == 409
     assert rejected.json()["detail"]["code"] == "VOICE_DEVICE_LIMIT_REACHED"
+
+
+def test_join_rejects_wrong_patient_or_capture_context(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    patient_id = _patient_id(client, headers)
+    session_id = _session(client, headers, patient_id)
+    wrong_patient = client.post(
+        f"/api/v1/voice/sessions/{session_id}/devices",
+        headers=headers,
+        json={
+            "client_device_id": "wrong-patient-device",
+            "capture_role": "clinician",
+            "expected_patient_id": str(uuid.uuid4()),
+            "expected_capture_kind": "clinical",
+        },
+    )
+    assert wrong_patient.status_code == 409
+    assert wrong_patient.json()["detail"]["code"] == ("VOICE_SESSION_CONTEXT_MISMATCH")
+    wrong_kind = client.post(
+        f"/api/v1/voice/sessions/{session_id}/devices",
+        headers=headers,
+        json={
+            "client_device_id": "wrong-kind-device",
+            "capture_role": "clinician",
+            "expected_patient_id": patient_id,
+            "expected_capture_kind": "patient",
+        },
+    )
+    assert wrong_kind.status_code == 409
+    assert wrong_kind.json()["detail"]["code"] == ("VOICE_SESSION_CONTEXT_MISMATCH")
+
+
+@pytest.mark.unit
+def test_chunk_body_is_consumed_before_session_row_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+
+    async def read_body(_request: object) -> bytes:
+        order.append("body-start")
+        await asyncio.sleep(0)
+        order.append("body-complete")
+        return b"audio"
+
+    def lock_session(*_args: object, **kwargs: object) -> object:
+        assert kwargs["lock"] is True
+        order.append("session-lock")
+        return object()
+
+    def store_chunk(*_args: object, **_kwargs: object) -> AudioChunkAck:
+        order.append("chunk-store")
+        return AudioChunkAck(chunk_index=0)
+
+    monkeypatch.setattr(voice_routes, "_bounded_chunk_body", read_body)
+    monkeypatch.setattr(voice_routes, "get_voice_session", lock_session)
+    monkeypatch.setattr(voice_routes, "upload_audio_chunk", store_chunk)
+    request = SimpleNamespace(headers={"content-type": "audio/webm"})
+    session = SimpleNamespace(commit=lambda: order.append("commit"))
+    result = asyncio.run(
+        voice_routes.put_chunk(
+            uuid.uuid4(),
+            uuid.uuid4(),
+            0,
+            request,  # type: ignore[arg-type]
+            session,  # type: ignore[arg-type]
+            object(),  # type: ignore[arg-type]
+            "0" * 64,
+            0,
+            2_000,
+        )
+    )
+    assert result.acknowledged is True
+    assert order == [
+        "body-start",
+        "body-complete",
+        "session-lock",
+        "chunk-store",
+        "commit",
+    ]
+
+
+@pytest.mark.unit
+def test_chunk_body_read_has_a_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SlowRequest:
+        headers: dict[str, str] = {}
+
+        async def stream(self):
+            await asyncio.sleep(0.1)
+            yield b"late"
+
+    monkeypatch.setattr(settings, "VOICE_CHUNK_READ_TIMEOUT_SECONDS", 0.01)
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            voice_routes._bounded_chunk_body(SlowRequest())  # type: ignore[arg-type]
+        )
+    assert exc_info.value.status_code == 408
+    assert exc_info.value.detail == {"code": "AUDIO_CHUNK_READ_TIMEOUT"}

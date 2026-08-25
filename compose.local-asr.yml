@@ -1,6 +1,13 @@
 # Optional no-audio-egress overlay. The model directory must already contain a
 # compatible faster-whisper/CTranslate2 model; the application never downloads it.
 services:
+  # prestart/backend/worker intentionally share one image tag; keep build args
+  # identical so Compose cannot overwrite the runtime tag with a lean variant.
+  prestart:
+    build:
+      args:
+        INSTALL_LOCAL_ASR: "true"
+
   backend:
     build:
       args:

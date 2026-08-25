@@ -1,7 +1,10 @@
 import asyncio
 import importlib
+import json
+import shutil
 import struct
 import subprocess
+import sys
 import wave
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,10 +17,13 @@ from app.services.voice import diarization
 from app.services.voice.ffmpeg import (
     AudioPreprocessingError,
     DeviceAudio,
+    _input_args,
     _ordered_device_payload,
     _pcm_signals,
     preprocess_audio,
 )
+from app.services.voice.providers import local_whisper_worker
+from app.services.voice.providers.deterministic import SyntheticFixtureProvider
 from app.services.voice.providers.local_whisper import LocalFasterWhisperProvider
 from app.services.voice.providers.openai_audio import OpenAIAudioTranscriptionProvider
 
@@ -189,6 +195,108 @@ def test_local_asr_requires_cached_model_and_optional_dependency(
 
 
 @pytest.mark.unit
+def test_local_asr_timeout_terminates_inference_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_dir = tmp_path / "cached-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}")
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"RIFF")
+
+    class HangingProcess:
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.killed = False
+            self.released = asyncio.Event()
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            await self.released.wait()
+            return b"", b""
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+            self.released.set()
+
+        async def wait(self) -> int:
+            await self.released.wait()
+            return self.returncode or 0
+
+    process = HangingProcess()
+
+    async def create_process(*_args: object, **_kwargs: object) -> HangingProcess:
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    provider = LocalFasterWhisperProvider(str(model_dir), timeout_seconds=0.01)
+    with pytest.raises(TimeoutError):
+        asyncio.run(provider.transcribe(audio))
+    assert process.killed is True
+
+
+@pytest.mark.unit
+def test_local_asr_child_writes_only_normalized_private_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"RIFF")
+    result_path = tmp_path / "result.json"
+    result = SyntheticFixtureProvider().transcribe_fixture("code-switch-overlap-v1")
+    monkeypatch.setattr(
+        local_whisper_worker, "transcribe_local_sync", lambda *_args: result
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local-whisper-worker",
+            "--model-dir",
+            str(model_dir),
+            "--audio-path",
+            str(audio),
+            "--result-path",
+            str(result_path),
+        ],
+    )
+
+    assert local_whisper_worker.main() == 0
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    assert payload["provider"] == "deterministic-synthetic-fixture"
+    assert payload["segments"][1]["overlap_group_id"] == "overlap-1"
+    assert result_path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.unit
+def test_local_asr_child_suppresses_internal_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail(*_args: object) -> None:
+        raise RuntimeError("sensitive model failure")
+
+    result_path = tmp_path / "result.json"
+    monkeypatch.setattr(local_whisper_worker, "transcribe_local_sync", fail)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local-whisper-worker",
+            "--model-dir",
+            str(tmp_path),
+            "--audio-path",
+            str(tmp_path / "audio.wav"),
+            "--result-path",
+            str(result_path),
+        ],
+    )
+
+    assert local_whisper_worker.main() == 2
+    assert result_path.exists() is False
+
+
+@pytest.mark.unit
 def test_pyannote_readiness_is_gated_and_local_only(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -243,6 +351,14 @@ def test_ffmpeg_input_validation_and_pcm_review_signals(tmp_path: Path) -> None:
     digest = __import__("hashlib").sha256(payload).hexdigest()
     device = DeviceAudio("device", "audio/webm;codecs=opus", [(0, payload, digest)])
     assert _ordered_device_payload(device) == payload
+    assert _input_args("audio/webm;codecs=opus", tmp_path / "input") == [
+        "-protocol_whitelist",
+        "file",
+        "-f",
+        "matroska,webm",
+        "-i",
+        str(tmp_path / "input"),
+    ]
 
     with pytest.raises(AudioPreprocessingError, match="AUDIO_CHUNK_SEQUENCE_INVALID"):
         _ordered_device_payload(
@@ -266,6 +382,26 @@ def test_ffmpeg_input_validation_and_pcm_review_signals(tmp_path: Path) -> None:
     with pytest.raises(AudioPreprocessingError, match="FFMPEG_OUTPUT_FORMAT_INVALID"):
         _pcm_signals(invalid, multi_device=False)
 
+    over_limit = tmp_path / "over-limit.wav"
+    _write_wav(over_limit, [0] * 32_001)
+    with pytest.raises(AudioPreprocessingError, match="AUDIO_DECODE_LIMIT_EXCEEDED"):
+        _pcm_signals(over_limit, multi_device=False, max_duration_ms=2_000)
+
+
+@pytest.mark.unit
+def test_ffmpeg_rejects_disguised_network_playlist() -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("ffmpeg binary is not installed")
+    playlist = b"#EXTM3U\n#EXT-X-TARGETDURATION:10\nhttp://127.0.0.1:9/private\n"
+    device = DeviceAudio(
+        "device",
+        "audio/webm",
+        [(0, playlist, __import__("hashlib").sha256(playlist).hexdigest())],
+    )
+    with pytest.raises(AudioPreprocessingError, match="FFMPEG_PREPROCESSING_FAILED"):
+        preprocess_audio([device], ffmpeg_bin=ffmpeg, timeout_seconds=2)
+
 
 @pytest.mark.unit
 def test_ffmpeg_failure_modes_are_explicit(
@@ -276,7 +412,22 @@ def test_ffmpeg_failure_modes_are_explicit(
 
     payload = b"not-real-audio"
     digest = __import__("hashlib").sha256(payload).hexdigest()
-    device = DeviceAudio("device", "audio/unknown", [(0, payload, digest)])
+    unknown_device = DeviceAudio("device", "audio/unknown", [(0, payload, digest)])
+
+    with pytest.raises(
+        AudioPreprocessingError, match="AUDIO_LIMIT_CONFIGURATION_INVALID"
+    ):
+        preprocess_audio(
+            [unknown_device],
+            ffmpeg_bin="FFMPEG",
+            timeout_seconds=1,
+            max_duration_ms=2_000,
+            max_output_bytes=64_000,
+        )
+    with pytest.raises(AudioPreprocessingError, match="AUDIO_MEDIA_TYPE_INVALID"):
+        preprocess_audio([unknown_device], ffmpeg_bin="FFMPEG", timeout_seconds=1)
+
+    device = DeviceAudio("device", "audio/webm", [(0, payload, digest)])
 
     def timeout(*_args: Any, **_kwargs: Any) -> Any:
         raise subprocess.TimeoutExpired("FFMPEG", 1)
@@ -292,10 +443,18 @@ def test_ffmpeg_failure_modes_are_explicit(
     with pytest.raises(AudioPreprocessingError, match="FFMPEG_UNAVAILABLE"):
         preprocess_audio([device], ffmpeg_bin="FFMPEG", timeout_seconds=1)
 
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=1),
-    )
+    observed_run: dict[str, Any] = {}
+
+    def failed_run(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        observed_run.update({"args": args, **kwargs})
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(subprocess, "run", failed_run)
     with pytest.raises(AudioPreprocessingError, match="FFMPEG_PREPROCESSING_FAILED"):
         preprocess_audio([device], ffmpeg_bin="FFMPEG", timeout_seconds=1)
+    assert observed_run["stdout"] is subprocess.DEVNULL
+    assert observed_run["stderr"] is subprocess.DEVNULL
+    assert "capture_output" not in observed_run
+    command = observed_run["args"][0]
+    assert command[command.index("-protocol_whitelist") + 1] == "file"
+    assert command[command.index("-f") + 1] == "matroska,webm"

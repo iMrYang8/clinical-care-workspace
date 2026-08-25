@@ -4,12 +4,26 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { voiceSession } from "@/features/voice/voiceApi"
 
+const ACTIVE_VOICE_STATES = new Set([
+  "created",
+  "recording",
+  "finalizing",
+  "assembling",
+  "preprocessing",
+  "transcribing",
+  "redacting",
+  "extracting",
+])
+
 export function PatientVoiceStatus({ sessionId }: { sessionId: string }) {
   const query = useQuery({
     queryKey: ["patient-voice-status", sessionId],
     queryFn: () => voiceSession(sessionId),
+    // Review states can remain terminal for days. Poll only while the durable
+    // worker state machine is actively advancing; SSE/navigation or a reload
+    // will refresh ready/needs_review/published later.
     refetchInterval: (current) =>
-      current.state.data?.state === "published" ? false : 3_000,
+      ACTIVE_VOICE_STATES.has(current.state.data?.state ?? "") ? 3_000 : false,
   })
   if (query.isLoading) {
     return (

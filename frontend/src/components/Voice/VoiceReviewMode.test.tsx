@@ -46,7 +46,7 @@ const transcript: TranscriptRevisionPublic = {
       end_ms: 5_000,
       speaker_id: "SPEAKER_00",
       detected_language: "en",
-      confidence: 0.62,
+      confidence: 0.96,
       confidence_source: "provider",
       overlap_group_id: null,
       provider: "fixture",
@@ -83,6 +83,7 @@ describe("VoiceReviewMode", () => {
     Element.prototype.scrollIntoView = vi.fn()
     HTMLMediaElement.prototype.play = vi.fn(async () => undefined)
     URL.revokeObjectURL = vi.fn()
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false })
   })
 
   it("jumps from a fact to transcript/audio and blocks stale publication", async () => {
@@ -106,10 +107,47 @@ describe("VoiceReviewMode", () => {
     const audio = document.querySelector("audio")
     expect(audio?.currentTime).toBe(2)
 
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Low confidence \/ overlap only/i }),
+    )
+    expect(document.getElementById("voice-segment-mobile-segment-1")).toBeNull()
+
     fireEvent.click(screen.getAllByRole("button", { name: /allergy/i })[0])
-    await waitFor(() =>
-      expect(Element.prototype.scrollIntoView).toHaveBeenCalled(),
+    await waitFor(() => {
+      expect(
+        document.getElementById("voice-segment-mobile-segment-1"),
+      ).not.toBeNull()
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+    })
+    const scrollMock = vi.mocked(Element.prototype.scrollIntoView)
+    const scrollTarget =
+      scrollMock.mock.contexts[scrollMock.mock.contexts.length - 1]
+    expect(scrollTarget).toBe(
+      document.getElementById("voice-segment-mobile-segment-1"),
+    )
+    expect(scrollTarget).not.toBe(
+      document.getElementById("voice-segment-desktop-segment-1"),
     )
     expect(audio?.currentTime).toBe(2.1)
+  })
+
+  it("labels unavailable segment confidence instead of implying certainty", async () => {
+    const priorConfidence = transcript.segments[0].confidence
+    transcript.segments[0].confidence = null
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <VoiceReviewMode sessionId="session-1" membershipRole="clinician" />
+        </QueryClientProvider>,
+      )
+      expect(await screen.findAllByText("confidence unavailable")).toHaveLength(
+        2,
+      )
+    } finally {
+      transcript.segments[0].confidence = priorConfidence
+    }
   })
 })

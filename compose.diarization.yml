@@ -1,6 +1,13 @@
 # Experimental readiness overlay. It only enables a cached-model readiness
 # gate; no gated Hugging Face model or terms are accepted automatically.
 services:
+  # prestart/backend/worker intentionally share one image tag; keep build args
+  # identical so Compose cannot overwrite the runtime tag with a lean variant.
+  prestart:
+    build:
+      args:
+        INSTALL_DIARIZATION: "true"
+
   backend:
     build:
       args:

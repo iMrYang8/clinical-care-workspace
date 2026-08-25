@@ -29,7 +29,7 @@ from app.models import (
     VoiceSession,
     get_datetime_utc,
 )
-from app.services.ai_jobs import claim_job
+from app.services.ai_jobs import active_worker_for_context, claim_job
 from app.services.nightingale import emit_change
 from app.services.voice.ffmpeg import (
     AudioPreprocessingError,
@@ -53,6 +53,16 @@ class VoiceJobError(Exception):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+_VOICE_PROCESSING_STATES = {
+    "finalizing",
+    "assembling",
+    "preprocessing",
+    "transcribing",
+    "redacting",
+    "extracting",
+}
 
 
 def _payload(context: RequestContext, job: Job) -> dict[str, Any]:
@@ -141,8 +151,8 @@ def _claim_is_current(
         or job.locked_until is None
         or job.locked_until <= now
         or attempt.status != "started"
-        or not context.membership.is_active
-        or not context.user.is_active
+        or context.job_id != job_id
+        or active_worker_for_context(db, context, lock=True) is None
     ):
         raise VoiceJobError("JOB_CLAIM_LOST")
     return job, attempt
@@ -158,7 +168,12 @@ def _renew_claim(
     job.updated_at = get_datetime_utc()
     db.add(job)
     db.commit()
-    return _claim_is_current(db, context, job_id, token)
+    # Do not immediately reacquire row locks after committing the renewed
+    # lease.  The following ASR call may run for minutes; holding a shared lock
+    # on the worker membership for that whole interval would prevent an admin
+    # revocation from committing.  The caller fences every derived write with
+    # a fresh `_claim_is_current` check after the external provider returns.
+    return job, attempt
 
 
 def _transition_state(
@@ -190,7 +205,10 @@ def _transition_state(
 
 
 def _device_audio(
-    db: Session, context: RequestContext, voice_session: VoiceSession
+    db: Session,
+    context: RequestContext,
+    voice_session: VoiceSession,
+    temp_dir: Path,
 ) -> list[DeviceAudio]:
     devices = db.exec(
         select(VoiceDevice)
@@ -202,7 +220,8 @@ def _device_audio(
         .order_by(col(VoiceDevice.created_at), col(VoiceDevice.id))
     ).all()
     output: list[DeviceAudio] = []
-    for device in devices:
+    session_bytes = 0
+    for device_index, device in enumerate(devices):
         chunks = db.exec(
             select(AudioChunk)
             .where(
@@ -211,25 +230,51 @@ def _device_audio(
                 AudioChunk.device_id == device.id,
             )
             .order_by(col(AudioChunk.chunk_index))
-        ).all()
-        if device.last_declared_chunk_index is None or len(chunks) != (
-            device.last_declared_chunk_index + 1
+            .execution_options(yield_per=1)
+        )
+        path = temp_dir / f"device-{device_index}.audio"
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            stat.S_IRUSR | stat.S_IWUSR,
+        )
+        expected_index = 0
+        media_type: str | None = None
+        with os.fdopen(descriptor, "wb") as assembled:
+            for chunk in chunks:
+                if chunk.chunk_index != expected_index:
+                    raise VoiceJobError("AUDIO_CHUNK_SEQUENCE_INVALID")
+                if media_type is None:
+                    media_type = chunk.media_type
+                elif chunk.media_type != media_type:
+                    raise VoiceJobError("AUDIO_CHUNK_MEDIA_TYPE_MISMATCH")
+                payload = field_codec.decrypt(
+                    chunk.clinic_id,
+                    "audio_chunk.payload",
+                    chunk.id,
+                    chunk.payload_ciphertext,
+                )
+                if hashlib.sha256(payload).hexdigest() != chunk.plaintext_sha256:
+                    raise VoiceJobError("AUDIO_CHUNK_HASH_INVALID")
+                session_bytes += len(payload)
+                if session_bytes > settings.VOICE_MAX_SESSION_BYTES:
+                    raise VoiceJobError("VOICE_SESSION_SIZE_LIMIT_REACHED")
+                assembled.write(payload)
+                expected_index += 1
+                db.expunge(chunk)
+        if (
+            device.last_declared_chunk_index is None
+            or expected_index != device.last_declared_chunk_index + 1
         ):
             raise VoiceJobError("MISSING_AUDIO_CHUNKS")
-        decoded: list[tuple[int, bytes, str]] = []
-        for chunk in chunks:
-            payload = field_codec.decrypt(
-                chunk.clinic_id,
-                "audio_chunk.payload",
-                chunk.id,
-                chunk.payload_ciphertext,
-            )
-            decoded.append((chunk.chunk_index, payload, chunk.plaintext_sha256))
+        if media_type is None:
+            raise VoiceJobError("NO_AUDIO_CHUNKS")
         output.append(
             DeviceAudio(
                 device_id=str(device.id),
-                media_type=chunks[0].media_type,
-                chunks=decoded,
+                media_type=media_type,
+                chunks=[],
+                source_path=path,
             )
         )
     if not output:
@@ -250,11 +295,18 @@ def _store_asset(
     ).first()
     if existing is not None:
         return existing
-    processed = preprocess_audio(
-        _device_audio(db, context, voice_session),
-        ffmpeg_bin=settings.VOICE_FFMPEG_BIN,
-        timeout_seconds=settings.VOICE_FFMPEG_TIMEOUT_SECONDS,
-    )
+    with tempfile.TemporaryDirectory(
+        prefix="nightingale-assembled-audio-"
+    ) as temp_name:
+        temp_dir = Path(temp_name)
+        os.chmod(temp_dir, stat.S_IRWXU)
+        processed = preprocess_audio(
+            _device_audio(db, context, voice_session, temp_dir),
+            ffmpeg_bin=settings.VOICE_FFMPEG_BIN,
+            timeout_seconds=settings.VOICE_FFMPEG_TIMEOUT_SECONDS,
+            max_duration_ms=settings.VOICE_MAX_DECODED_DURATION_MS,
+            max_output_bytes=settings.VOICE_MAX_NORMALIZED_BYTES,
+        )
     asset_id = uuid.uuid4()
     asset = AudioAsset(
         id=asset_id,
@@ -300,7 +352,13 @@ def _configured_provider(
         if not settings.LOCAL_ASR_MODEL_DIR:
             return None, "LOCAL_ASR_MODEL_REQUIRED"
         try:
-            return LocalFasterWhisperProvider(settings.LOCAL_ASR_MODEL_DIR), None
+            return (
+                LocalFasterWhisperProvider(
+                    settings.LOCAL_ASR_MODEL_DIR,
+                    timeout_seconds=settings.VOICE_ASR_TIMEOUT_SECONDS,
+                ),
+                None,
+            )
         except ValueError:
             return None, "LOCAL_ASR_MODEL_NOT_CACHED"
     return None, "ASR_PROVIDER_UNAVAILABLE"
@@ -672,15 +730,7 @@ async def process_voice_job(
                 db.commit()
                 job, attempt = _claim_is_current(db, context, job_id, token)
                 voice_session = _session_from_payload(db, context, job, payload)
-            resumable_states = {
-                "finalizing",
-                "assembling",
-                "preprocessing",
-                "transcribing",
-                "redacting",
-                "extracting",
-            }
-            if voice_session.state not in resumable_states:
+            if voice_session.state not in _VOICE_PROCESSING_STATES:
                 raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
             if voice_session.state == "finalizing":
                 voice_session = _transition_state(
@@ -710,6 +760,11 @@ async def process_voice_job(
                 job, attempt = _renew_claim(db, context, job_id, token)
                 voice_session = _session_from_payload(db, context, job, payload)
                 asset = _store_asset(db, context, voice_session)
+                # FFmpeg is synchronous, bounded external work. Re-fence the
+                # uncommitted immutable asset after it returns so revocation,
+                # lease expiry, or a reclaim during preprocessing rolls the
+                # asset back instead of authoring it under a stale claim.
+                job, attempt = _claim_is_current(db, context, job_id, token)
                 db.commit()
                 job, attempt = _claim_is_current(db, context, job_id, token)
                 voice_session = _session_from_payload(db, context, job, payload)
@@ -876,11 +931,46 @@ async def process_voice_job(
         job.updated_at = get_datetime_utc()
         db.add(attempt)
         db.add(job)
-        if voice_session is not None:
-            voice_session.state = "needs_review"
-            voice_session.error_code = code
-            voice_session.warning_codes_json = ["PROCESSING_FAILED"]
-            voice_session.updated_at = get_datetime_utc()
-            db.add(voice_session)
+        current_voice_session: VoiceSession | None = None
+        try:
+            # Do not decrypt the failed payload again: malformed ciphertext or
+            # JSON may be the original exception. The trusted FK written at
+            # enqueue time is sufficient to locate the active session, and the
+            # savepoint ensures even a locator failure cannot block job failure.
+            with db.begin_nested():
+                current_voice_session = db.exec(
+                    select(VoiceSession)
+                    .where(
+                        VoiceSession.clinic_id == context.clinic_id,
+                        VoiceSession.processing_job_id == job.id,
+                    )
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                ).first()
+        except Exception:
+            # A changed/broken binding is itself a fence: never mutate a
+            # different session, but still persist the terminal job/attempt.
+            current_voice_session = None
+        if (
+            current_voice_session is not None
+            and current_voice_session.state in _VOICE_PROCESSING_STATES
+            and current_voice_session.published_entry_id is None
+        ):
+            if job.attempt_count >= job.max_attempts:
+                # Only an exhausted job releases the session from its CAS
+                # processing barrier. A retryable failed attempt remains in
+                # its last durable processing state so publish, correction,
+                # and competing reanalysis cannot race the next auto-claim.
+                current_voice_session.state = "needs_review"
+                current_voice_session.error_code = code
+                current_voice_session.warning_codes_json = sorted(
+                    {
+                        *current_voice_session.warning_codes_json,
+                        "PROCESSING_FAILED",
+                        "VOICE_WORKER_ATTEMPTS_EXHAUSTED",
+                    }
+                )
+                current_voice_session.updated_at = get_datetime_utc()
+                db.add(current_voice_session)
         db.commit()
         return job
