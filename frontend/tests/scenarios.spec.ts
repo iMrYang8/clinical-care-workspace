@@ -184,6 +184,7 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
 
   await page.getByTestId("user-menu").click()
   await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
+  await expect(page).toHaveURL(/\/login$/)
   await login(page, "Clinic admin")
   await expect(
     page.getByRole("heading", { name: "Clinic administration" }),

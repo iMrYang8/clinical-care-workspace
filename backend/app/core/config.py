@@ -35,7 +35,9 @@ class Settings(BaseSettings):
     AUTH_COOKIE_NAME: str = "nightingale_session"
     AUTH_COOKIE_SECURE: bool = True
     AUTH_COOKIE_SAMESITE: Literal["lax", "strict"] = "lax"
-    FRONTEND_HOST: str = "http://localhost:5173"
+    # The supported browser path is same-origin TLS. A standalone Vite origin
+    # must be opted in explicitly for source-only development.
+    FRONTEND_HOST: str = "https://localhost"
     BROWSER_TRUSTED_ORIGINS: str = ""
     FASTAPI_ENV: Literal["development", "production"] | None = None
     ENABLE_DEMO_AUTH: bool = False
