@@ -4,13 +4,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import text
 from sqlmodel import col, select
 
 from app import crud
 from app.api.deps import CurrentContext, SessionDep
 from app.core import security
 from app.core.config import settings
+from app.core.db import set_rls_clinic
 from app.models import (
     ClinicMembership,
     DemoLoginRequest,
@@ -24,11 +24,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _set_rls_clinic(session: SessionDep, clinic_id: uuid.UUID) -> None:
-    if session.get_bind().dialect.name == "postgresql":
-        session.connection().execute(
-            text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
-            {"clinic_id": str(clinic_id)},
-        )
+    set_rls_clinic(session, clinic_id)
 
 
 def _token(membership: ClinicMembership, *, job_id: str | None = None) -> Token:

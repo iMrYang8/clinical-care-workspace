@@ -8,12 +8,11 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
-from sqlalchemy import text
 from sqlmodel import Session
 
 from app.core import security
 from app.core.config import settings
-from app.core.db import engine
+from app.core.db import engine, set_rls_clinic
 from app.models import ClinicMembership, Role, TokenPayload, User
 
 reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
@@ -65,11 +64,7 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
 
     # Bootstrap RLS from a signed server-issued claim, then verify it against the
     # live membership row. A moved/revoked membership therefore invalidates the JWT.
-    if session.get_bind().dialect.name == "postgresql":
-        session.connection().execute(
-            text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
-            {"clinic_id": str(token_clinic_id)},
-        )
+    set_rls_clinic(session, token_clinic_id)
     user = session.get(User, user_id)
     membership = session.get(ClinicMembership, membership_id)
     if (

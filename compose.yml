@@ -31,20 +31,34 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Variable not set}
       - POSTGRES_DB=app
 
-  adminer:
-    image: adminer
+  prestart:
+    image: backend:latest
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+        restart: true
     environment:
-      - ADMINER_DESIGN=pepa-linha-dark
-    labels:
-      # Enable Traefik for this service
-      - traefik.enable=true
-      # Route HTTP traffic for the Adminer subdomain
-      - traefik.http.routers.adminer-http.rule=Host(`adminer.${DOMAIN:-localhost}`)
-      - traefik.http.routers.adminer-http.entrypoints=http
-      # Define the port inside of the Docker service to use
-      - traefik.http.services.adminer.loadbalancer.server.port=8080
+      # Production is the base configuration. compose.override.yml is the only
+      # file that opts the local one-command workflow into synthetic demo data.
+      FASTAPI_ENV: "production"
+      ENABLE_DEMO_AUTH: "false"
+      PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
+      SECRET_KEY: ${SECRET_KEY:?Variable not set}
+      FIELD_ENCRYPTION_MASTER_KEY: ${FIELD_ENCRYPTION_MASTER_KEY:?Variable not set}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
+      DATABASE_URL: postgresql://nightingale_app:${POSTGRES_APP_PASSWORD:?Variable not set}@db:5432/app
+      MIGRATION_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Variable not set}@db:5432/app
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?Variable not set}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
+    command: ["bash", "scripts/prestart.sh"]
+    restart: "no"
 
   backend:
     image: backend:latest
@@ -52,16 +66,32 @@ services:
       db:
         condition: service_healthy
         restart: true
+      prestart:
+        condition: service_completed_successfully
     environment:
+      FASTAPI_ENV: "production"
+      ENABLE_DEMO_AUTH: "false"
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
-      FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
-      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
+      FIELD_ENCRYPTION_MASTER_KEY: ${FIELD_ENCRYPTION_MASTER_KEY:?Variable not set}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Variable not set}@db:5432/app
+      # The long-running API receives only the restricted, non-owner role.
+      DATABASE_URL: postgresql://nightingale_app:${POSTGRES_APP_PASSWORD:?Variable not set}@db:5432/app
+      AI_PROVIDER: ${AI_PROVIDER:-deterministic}
+      REMOTE_TEXT_EGRESS_ENABLED: ${REMOTE_TEXT_EGRESS_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EXTRACT_MODEL: ${OPENAI_EXTRACT_MODEL:-}
+      OPENAI_REVIEW_MODEL: ${OPENAI_REVIEW_MODEL:-}
+      AI_JOB_LEASE_SECONDS: ${AI_JOB_LEASE_SECONDS:-300}
+      AI_WORKER_POLL_SECONDS: ${AI_WORKER_POLL_SECONDS:-2}
+      PRESIDIO_REQUIRED: ${PRESIDIO_REQUIRED:-true}
+      PRESIDIO_NLP_MODEL: ${PRESIDIO_NLP_MODEL:-en_core_web_sm}
+      IMPORTANCE_LEARNING_ENABLED: ${IMPORTANCE_LEARNING_ENABLED:-true}
+      DATA_DECAY_ENABLED: ${DATA_DECAY_ENABLED:-true}
+      DATA_DECAY_DRY_RUN: ${DATA_DECAY_DRY_RUN:-true}
       SENTRY_DSN: ${SENTRY_DSN:-}
 
     healthcheck:
@@ -73,6 +103,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
     labels:
       # Enable Traefik for this service
       - traefik.enable=true
@@ -83,6 +115,46 @@ services:
       # Route HTTP traffic for this domain
       - traefik.http.routers.backend-http.rule=Host(`${DOMAIN:-localhost}`)
       - traefik.http.routers.backend-http.entrypoints=http
+
+  ai-worker:
+    image: backend:latest
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      prestart:
+        condition: service_completed_successfully
+    environment:
+      FASTAPI_ENV: "production"
+      ENABLE_DEMO_AUTH: "false"
+      PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
+      SECRET_KEY: ${SECRET_KEY:?Variable not set}
+      FIELD_ENCRYPTION_MASTER_KEY: ${FIELD_ENCRYPTION_MASTER_KEY:?Variable not set}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
+      DATABASE_URL: postgresql://nightingale_app:${POSTGRES_APP_PASSWORD:?Variable not set}@db:5432/app
+      AI_PROVIDER: ${AI_PROVIDER:-deterministic}
+      REMOTE_TEXT_EGRESS_ENABLED: ${REMOTE_TEXT_EGRESS_ENABLED:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EXTRACT_MODEL: ${OPENAI_EXTRACT_MODEL:-}
+      OPENAI_REVIEW_MODEL: ${OPENAI_REVIEW_MODEL:-}
+      AI_JOB_LEASE_SECONDS: ${AI_JOB_LEASE_SECONDS:-300}
+      AI_WORKER_POLL_SECONDS: ${AI_WORKER_POLL_SECONDS:-2}
+      PRESIDIO_REQUIRED: ${PRESIDIO_REQUIRED:-true}
+      PRESIDIO_NLP_MODEL: ${PRESIDIO_NLP_MODEL:-en_core_web_sm}
+      IMPORTANCE_LEARNING_ENABLED: ${IMPORTANCE_LEARNING_ENABLED:-true}
+      DATA_DECAY_ENABLED: ${DATA_DECAY_ENABLED:-true}
+      DATA_DECAY_DRY_RUN: ${DATA_DECAY_DRY_RUN:-true}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
+    command: ["python", "-m", "app.ai_worker"]
+    restart: unless-stopped
 
 volumes:
   nightingale-db-data:

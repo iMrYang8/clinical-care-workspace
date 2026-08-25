@@ -6,12 +6,11 @@ from time import monotonic
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
 from sqlmodel import Session, col, select
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import EventContext
-from app.core.db import engine
+from app.core.db import engine, set_rls_clinic
 from app.models import DomainEvent
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -24,11 +23,7 @@ def _load_events(clinic_id: uuid.UUID, after: int) -> list[DomainEvent]:
     """Load one bounded event page in its own short-lived transaction."""
 
     with Session(engine) as session:
-        if session.get_bind().dialect.name == "postgresql":
-            session.connection().execute(
-                text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
-                {"clinic_id": str(clinic_id)},
-            )
+        set_rls_clinic(session, clinic_id)
         return list(
             session.exec(
                 select(DomainEvent)

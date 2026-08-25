@@ -1,13 +1,17 @@
+import hashlib
 import uuid
 
 import jwt
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.core import security
 from app.core.config import settings
 from app.core.db import engine
-from app.models import Entry
+from app.core.field_crypto import field_codec
+from app.models import Entry, Patient
 from app.seed import demo_id
 
 
@@ -191,7 +195,7 @@ def test_patient_dto_and_query_exclude_internal_and_raw_ai(
 
 
 def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
-    client: TestClient, auth_headers
+    client: TestClient, auth_headers, owner_session: Session
 ) -> None:
     staff_headers = auth_headers("staff")
     patient_id = _patients(client, staff_headers)[0]["id"]
@@ -232,3 +236,39 @@ def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
         stored = session.get(Entry, created.json()["id"])
         assert stored is not None
         assert stored.source_job_id == demo_id("job-worker-demo")
+
+    second_patient_id = uuid.uuid4()
+    clinic_id = demo_id("clinic-primary")
+    owner_session.add(
+        Patient(
+            id=second_patient_id,
+            clinic_id=clinic_id,
+            display_name_ciphertext=field_codec.encrypt_text(
+                clinic_id,
+                "patient.display_name",
+                second_patient_id,
+                "Second Synthetic",
+            ),
+            external_ref_hash=hashlib.sha256(b"SYNTHETIC-SECOND").hexdigest(),
+        )
+    )
+    owner_session.commit()
+    cross_patient = client.post(
+        "/api/v1/entries",
+        headers=auth_headers("worker"),
+        json=system_body | {"patient_id": str(second_patient_id)},
+    )
+    assert cross_patient.status_code == 403
+
+    # The same invariant is a composite FK, not only an API check.
+    owner_session.add(
+        Entry(
+            clinic_id=clinic_id,
+            patient_id=second_patient_id,
+            section="system",
+            origin="system",
+            source_job_id=demo_id("job-worker-demo"),
+        )
+    )
+    with pytest.raises(IntegrityError):
+        owner_session.commit()

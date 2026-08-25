@@ -1,7 +1,7 @@
 import hashlib
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from sqlmodel import Session, col, select
 
 from app.api.deps import CurrentContext, RequestContext, SessionDep
@@ -12,8 +12,17 @@ from app.models import (
     Highlight,
     HighlightCreate,
     HighlightPublic,
+    ImportanceFeedbackCreate,
     ProvenancePointer,
     ProvenanceResolved,
+)
+from app.services.decay import lock_active_version_for_protection
+from app.services.importance import (
+    feedback_idempotency_replayed,
+    lock_importance_scope,
+    record_feedback,
+    refresh_highlight_score,
+    sanitize_feature_keys,
 )
 from app.services.nightingale import (
     decrypt_version,
@@ -34,14 +43,21 @@ def _require_reviewer(context: RequestContext) -> None:
 
 
 def _get_highlight(
-    session: Session, context: RequestContext, highlight_id: uuid.UUID
+    session: Session,
+    context: RequestContext,
+    highlight_id: uuid.UUID,
+    *,
+    lock: bool = False,
 ) -> Highlight:
     _require_reviewer(context)
-    highlight = session.exec(
-        select(Highlight).where(
-            Highlight.id == highlight_id, Highlight.clinic_id == context.clinic_id
+    statement = select(Highlight).where(
+        Highlight.id == highlight_id, Highlight.clinic_id == context.clinic_id
+    )
+    if lock:
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
         )
-    ).first()
+    highlight = session.exec(statement).first()
     if highlight is None:
         raise HTTPException(status_code=404, detail="Highlight not found")
     get_scoped_entry(session, context, highlight.entry_id)
@@ -76,6 +92,13 @@ def _highlight_public(
         patient_facing=highlight.patient_facing,
         anchor_state=highlight.anchor_state,
         review_required=highlight.review_required,
+        feature_keys=highlight.feature_keys_json,
+        base_score=highlight.base_score,
+        learned_score=highlight.learned_score,
+        final_score=highlight.final_score,
+        risk_reason=highlight.risk_reason,
+        unresolved=highlight.unresolved,
+        clinician_confirmed=highlight.clinician_confirmed,
         provenance_pointer_id=pointer.id,
     )
 
@@ -92,6 +115,9 @@ def create_highlight(
     _require_reviewer(context)
     entry = get_scoped_entry(session, context, entry_id)
     version = get_scoped_version(session, context, entry, body.entry_version_id)
+    # Lock the immutable source before anchor validation. Archive takes the same
+    # row lock, so a protection cannot be inserted against newly-cold content.
+    version = lock_active_version_for_protection(session, context, version.id)
     if body.patient_facing and not version.patient_facing:
         raise HTTPException(
             status_code=409,
@@ -112,6 +138,9 @@ def create_highlight(
         quote_sha256=quote_hash,
     )
     highlight_id = uuid.uuid4()
+    feature_keys = sanitize_feature_keys(body.feature_keys)
+    if body.critical and "risk:critical" not in feature_keys:
+        feature_keys.append("risk:critical")
     highlight = Highlight(
         id=highlight_id,
         clinic_id=context.clinic_id,
@@ -125,10 +154,14 @@ def create_highlight(
         patient_facing=body.patient_facing,
         anchor_state=anchor_state,
         review_required=review_required,
+        feature_keys_json=feature_keys,
+        unresolved=body.unresolved,
+        clinician_confirmed=body.clinician_confirmed and context.role == "clinician",
         created_by_id=context.user_id,
     )
     session.add(highlight)
     session.flush()
+    refresh_highlight_score(session, highlight)
     pointer_id = uuid.uuid4()
     pointer = ProvenancePointer(
         id=pointer_id,
@@ -151,6 +184,13 @@ def create_highlight(
         review_required=review_required,
     )
     session.add(pointer)
+    _, affected_patients = record_feedback(
+        session,
+        context,
+        highlight,
+        signal="manual",
+        idempotency_key=f"manual:create:{highlight.id}",
+    )
     emit_change(
         session,
         context,
@@ -159,6 +199,8 @@ def create_highlight(
         resource_id=highlight.id,
         metadata={"anchor_state": anchor_state, "entry_version_id": str(version.id)},
     )
+    for patient_id in affected_patients | {highlight.patient_id}:
+        rebuild_glance(session, context, patient_id)
     session.commit()
     session.refresh(highlight)
     return _highlight_public(session, context, highlight)
@@ -169,8 +211,41 @@ def _transition(
     context: RequestContext,
     highlight_id: uuid.UUID,
     action: str,
+    idempotency_key: str | None = None,
 ) -> HighlightPublic:
-    highlight = _get_highlight(session, context, highlight_id)
+    # Authorize before even looking up the identifier. Otherwise a patient can
+    # distinguish a real internal highlight from a random UUID by observing
+    # 403 versus 404, and can unnecessarily take clinical row locks.
+    _require_reviewer(context)
+    request_key = idempotency_key or f"{action}:{highlight_id}:{uuid.uuid4()}"
+    source_version_id = session.exec(
+        select(Highlight.source_entry_version_id).where(
+            Highlight.id == highlight_id,
+            Highlight.clinic_id == context.clinic_id,
+        )
+    ).first()
+    if source_version_id is None:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    # Version must precede clinic/entry/highlight locks for every transition
+    # that can dirty a protection column (including unpin on reject). This
+    # matches archive's Version -> Entry -> Highlight order and cannot cycle
+    # with entry edits, which take Entry -> Clinic.
+    lock_active_version_for_protection(
+        session,
+        context,
+        source_version_id,
+        require_active=action in {"accept", "pin"},
+    )
+    lock_importance_scope(session, context.clinic_id)
+    highlight = _get_highlight(session, context, highlight_id, lock=True)
+    if feedback_idempotency_replayed(
+        session,
+        context,
+        highlight,
+        signal=action,
+        idempotency_key=request_key,
+    ):
+        return _highlight_public(session, context, highlight)
     if action in {"accept", "pin"} and (
         highlight.anchor_state != "resolved" or highlight.review_required
     ):
@@ -181,14 +256,31 @@ def _transition(
                 "message": "Resolve the immutable source anchor before promotion",
             },
         )
+    changed = False
     if action == "accept":
+        changed = highlight.status != "accepted"
         highlight.status = "accepted"
     elif action == "reject":
+        changed = highlight.status != "rejected" or highlight.pinned
         highlight.status = "rejected"
         highlight.pinned = False
     elif action == "pin":
+        changed = not highlight.pinned
         highlight.pinned = True
+    if action == "accept" and context.role == "clinician":
+        changed = changed or not highlight.clinician_confirmed or highlight.unresolved
+        highlight.clinician_confirmed = True
+        highlight.unresolved = False
+    if not changed:
+        return _highlight_public(session, context, highlight)
     session.add(highlight)
+    _, affected_patients = record_feedback(
+        session,
+        context,
+        highlight,
+        signal=action,
+        idempotency_key=request_key,
+    )
     emit_change(
         session,
         context,
@@ -196,7 +288,8 @@ def _transition(
         resource_type="highlight",
         resource_id=highlight.id,
     )
-    rebuild_glance(session, context, highlight.patient_id)
+    for patient_id in affected_patients | {highlight.patient_id}:
+        rebuild_glance(session, context, patient_id)
     session.commit()
     session.refresh(highlight)
     return _highlight_public(session, context, highlight)
@@ -204,23 +297,88 @@ def _transition(
 
 @router.post("/highlights/{highlight_id}/accept", response_model=HighlightPublic)
 def accept(
-    highlight_id: uuid.UUID, session: SessionDep, context: CurrentContext
+    highlight_id: uuid.UUID,
+    session: SessionDep,
+    context: CurrentContext,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> HighlightPublic:
-    return _transition(session, context, highlight_id, "accept")
+    return _transition(session, context, highlight_id, "accept", idempotency_key)
 
 
 @router.post("/highlights/{highlight_id}/reject", response_model=HighlightPublic)
 def reject(
-    highlight_id: uuid.UUID, session: SessionDep, context: CurrentContext
+    highlight_id: uuid.UUID,
+    session: SessionDep,
+    context: CurrentContext,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> HighlightPublic:
-    return _transition(session, context, highlight_id, "reject")
+    return _transition(session, context, highlight_id, "reject", idempotency_key)
 
 
 @router.post("/highlights/{highlight_id}/pin", response_model=HighlightPublic)
 def pin(
-    highlight_id: uuid.UUID, session: SessionDep, context: CurrentContext
+    highlight_id: uuid.UUID,
+    session: SessionDep,
+    context: CurrentContext,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> HighlightPublic:
-    return _transition(session, context, highlight_id, "pin")
+    return _transition(session, context, highlight_id, "pin", idempotency_key)
+
+
+@router.post("/highlights/{highlight_id}/feedback", response_model=HighlightPublic)
+def feedback(
+    highlight_id: uuid.UUID,
+    body: ImportanceFeedbackCreate,
+    session: SessionDep,
+    context: CurrentContext,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+) -> HighlightPublic:
+    _require_reviewer(context)
+    source_version_id = session.exec(
+        select(Highlight.source_entry_version_id).where(
+            Highlight.id == highlight_id,
+            Highlight.clinic_id == context.clinic_id,
+        )
+    ).first()
+    if source_version_id is None:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    lock_active_version_for_protection(
+        session, context, source_version_id, require_active=False
+    )
+    lock_importance_scope(session, context.clinic_id)
+    highlight = _get_highlight(session, context, highlight_id, lock=True)
+    if feedback_idempotency_replayed(
+        session,
+        context,
+        highlight,
+        signal=body.signal,
+        idempotency_key=idempotency_key,
+    ):
+        return _highlight_public(session, context, highlight)
+    if highlight.status == "dismissed":
+        return _highlight_public(session, context, highlight)
+    highlight.status = "dismissed"
+    highlight.pinned = False
+    session.add(highlight)
+    _, affected_patients = record_feedback(
+        session,
+        context,
+        highlight,
+        signal=body.signal,
+        idempotency_key=idempotency_key,
+    )
+    emit_change(
+        session,
+        context,
+        action=f"highlight.feedback.{body.signal}",
+        resource_type="highlight",
+        resource_id=highlight.id,
+    )
+    for patient_id in affected_patients | {highlight.patient_id}:
+        rebuild_glance(session, context, patient_id)
+    session.commit()
+    session.refresh(highlight)
+    return _highlight_public(session, context, highlight)
 
 
 @router.get("/provenance/{pointer_id}/resolve", response_model=ProvenanceResolved)

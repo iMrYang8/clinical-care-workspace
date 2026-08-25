@@ -5,6 +5,8 @@ from sqlmodel import select
 
 from app.api.deps import CurrentContext, SessionDep
 from app.models import (
+    ClinicalGlanceCard,
+    ClinicalGlancePublic,
     GlanceCard,
     GlancePublic,
     PatientGlanceSnapshot,
@@ -38,10 +40,14 @@ def patient_timeline(
     return PatientTimeline(data=data, count=len(data))
 
 
-@router.get("/{patient_id}/glance", response_model=GlancePublic)
+@router.get(
+    "/{patient_id}/glance",
+    response_model=GlancePublic | ClinicalGlancePublic,
+    response_model_exclude_none=True,
+)
 def patient_glance(
     patient_id: uuid.UUID, session: SessionDep, context: CurrentContext
-) -> GlancePublic:
+) -> GlancePublic | ClinicalGlancePublic:
     _require_patient_data_role(context)
     get_patient(session, context, patient_id)
     snapshot = session.exec(
@@ -56,8 +62,24 @@ def patient_glance(
     if context.role == "patient":
         # Defence in depth: old/internal snapshot cards never cross the patient DTO.
         cards = [card for card in cards if card.get("patient_facing") is True]
-    return GlancePublic(
+        patient_cards = []
+        for card in cards[:5]:
+            safe = {
+                key: value for key, value in card.items() if key != "score_components"
+            }
+            patient_cards.append(GlanceCard.model_validate(safe))
+        return GlancePublic(
+            patient_id=patient_id,
+            generated_at=generated_at,
+            cards=patient_cards,
+        )
+    return ClinicalGlancePublic(
         patient_id=patient_id,
         generated_at=generated_at,
-        cards=[GlanceCard.model_validate(card) for card in cards[:5]],
+        cards=[
+            ClinicalGlanceCard.model_validate(
+                card | {"score_components": card.get("score_components", {})}
+            )
+            for card in cards[:5]
+        ],
     )

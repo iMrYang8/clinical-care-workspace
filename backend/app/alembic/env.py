@@ -1,4 +1,3 @@
-import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -20,7 +19,7 @@ fileConfig(config.config_file_name)
 # target_metadata = None
 
 from app.models import SQLModel  # noqa
-from app.core.config import settings # noqa
+from app.core.config import settings  # noqa
 
 target_metadata = SQLModel.metadata
 
@@ -31,7 +30,9 @@ target_metadata = SQLModel.metadata
 
 
 def get_url():
-    return str(settings.DATABASE_URL)
+    # Alembic is a one-shot owner operation.  The API uses DATABASE_URL, while
+    # local/CI migration commands may supply a separate owner credential.
+    return str(settings.MIGRATION_DATABASE_URL or settings.DATABASE_URL)
 
 
 def run_migrations_offline():

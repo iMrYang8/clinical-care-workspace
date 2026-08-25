@@ -1,14 +1,20 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, cast
 
 import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from sentry_sdk.types import Event, Hint
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
 from app.core.config import settings
+from app.core.db import assert_restricted_runtime_database
 from app.services.nightingale import VersionConflictError
+from app.services.redaction import assert_presidio_runtime
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 
@@ -17,13 +23,80 @@ def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
 
 
+def _sanitize_sentry_event(event: Event, _hint: Hint) -> Event | None:
+    """Remove clinical request bodies and credentials from error/trace events."""
+
+    # Custom instrumentation can place identifiers or clinical values outside
+    # Sentry's request object. Fail closed by dropping every free-form carrier;
+    # exception types and core envelope metadata remain available for grouping.
+    event_data = cast(dict[str, Any], event)
+    for key in (
+        "breadcrumbs",
+        "contexts",
+        "extra",
+        "fingerprint",
+        "logentry",
+        "message",
+        "spans",
+        "stacktrace",
+        "tags",
+        "threads",
+        "transaction",
+        "user",
+    ):
+        event_data.pop(key, None)
+    request = event.get("request")
+    if isinstance(request, dict):
+        for key in (
+            "data",
+            "body",
+            "cookies",
+            "headers",
+            "env",
+            "query_string",
+            "url",
+            "path_info",
+            "fragment",
+        ):
+            request.pop(key, None)
+    exception = event.get("exception")
+    if isinstance(exception, dict):
+        values = exception.get("values")
+        if isinstance(values, list):
+            for value in values:
+                if isinstance(value, dict):
+                    value["value"] = "REDACTED"
+                    value.pop("stacktrace", None)
+    return event
+
+
 if settings.SENTRY_DSN and settings.FASTAPI_ENV != "development":
-    sentry_sdk.init(dsn=str(settings.SENTRY_DSN), enable_tracing=True)
+    sentry_sdk.init(
+        dsn=str(settings.SENTRY_DSN),
+        enable_tracing=False,
+        traces_sample_rate=0.0,
+        send_default_pii=False,
+        max_request_body_size="never",
+        include_local_variables=False,
+        before_send=_sanitize_sentry_event,
+        before_send_transaction=_sanitize_sentry_event,
+    )
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    if settings.FASTAPI_ENV != "development":
+        assert_restricted_runtime_database()
+        if settings.AI_PROVIDER == "openai" and settings.REMOTE_TEXT_EGRESS_ENABLED:
+            assert_presidio_runtime(settings.PRESIDIO_NLP_MODEL)
+    yield
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
+    lifespan=lifespan,
 )
 
 app.add_middleware(

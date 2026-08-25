@@ -1,16 +1,24 @@
 import logging
 
+from sqlalchemy import create_engine
 from sqlmodel import Session
 
-from app.core.db import engine, init_db
+from app.core.config import settings
+from app.core.db import init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def init() -> None:
-    with Session(engine) as session:
-        init_db(session)
+    migration_engine = create_engine(
+        str(settings.MIGRATION_DATABASE_URL or settings.DATABASE_URL)
+    )
+    try:
+        with Session(migration_engine) as session:
+            init_db(session)
+    finally:
+        migration_engine.dispose()
 
 
 def main() -> None:

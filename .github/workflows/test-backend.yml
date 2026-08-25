@@ -29,12 +29,16 @@ jobs:
           version: "0.11.18"
       - run: docker compose down -v --remove-orphans
       - run: docker compose up -d db mailpit
+      - name: Install locked Presidio model profile
+        run: uv sync --frozen --package app --group presidio-nlp
       - name: Migrate DB
         run: uv run bash scripts/prestart.sh
         working-directory: backend
       - name: Run tests
         run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
         working-directory: backend
+        env:
+          REQUIRE_PRESIDIO_MODEL_TEST: "true"
       - run: docker compose down -v --remove-orphans
       - name: Store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

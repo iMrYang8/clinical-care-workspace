@@ -20,13 +20,21 @@ jobs:
       DOMAIN: ${{ vars.DOMAIN }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
-      FIRST_SUPERUSER: ${{ vars.FIRST_SUPERUSER }}
-      FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}
+      FIELD_ENCRYPTION_MASTER_KEY: ${{ secrets.FIELD_ENCRYPTION_MASTER_KEY }}
       SMTP_HOST: ${{ vars.SMTP_HOST }}
       SMTP_USER: ${{ vars.SMTP_USER }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       EMAILS_FROM_EMAIL: ${{ vars.EMAILS_FROM_EMAIL }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      # Independent from POSTGRES_PASSWORD; never use the committed local value.
+      POSTGRES_APP_PASSWORD: ${{ secrets.POSTGRES_APP_PASSWORD }}
+      INSTALL_PRESIDIO_NLP: ${{ vars.INSTALL_PRESIDIO_NLP }}
+      AI_PROVIDER: ${{ vars.AI_PROVIDER }}
+      REMOTE_TEXT_EGRESS_ENABLED: ${{ vars.REMOTE_TEXT_EGRESS_ENABLED }}
+      PRESIDIO_NLP_MODEL: ${{ vars.PRESIDIO_NLP_MODEL }}
+      OPENAI_EXTRACT_MODEL: ${{ vars.OPENAI_EXTRACT_MODEL }}
+      OPENAI_REVIEW_MODEL: ${{ vars.OPENAI_REVIEW_MODEL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
     steps:
       - name: Checkout
@@ -36,6 +44,6 @@ jobs:
       - name: Build
         run: docker compose -f compose.yml -f compose.deploy.yml build
       - name: Prepare database
-        run: docker compose -f compose.yml -f compose.deploy.yml run --rm backend bash scripts/prestart.sh
+        run: docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
       - name: Start application
         run: docker compose -f compose.yml -f compose.deploy.yml up -d

@@ -21,6 +21,8 @@ from app.models import (
     EntryVersion,
     EntryVersionPublic,
     Highlight,
+    Job,
+    JobAttempt,
     Patient,
     PatientGlanceSnapshot,
     PatientPublic,
@@ -29,6 +31,7 @@ from app.models import (
     ProvenancePointer,
     get_datetime_utc,
 )
+from app.services.importance import record_feedback, refresh_highlight_score
 
 
 class VersionConflictError(Exception):
@@ -181,6 +184,46 @@ def authorize_entry_write(context: RequestContext, entry: Entry) -> None:
         raise HTTPException(status_code=403, detail="Role cannot edit this section")
 
 
+def _assert_worker_job_write(
+    session: Session, context: RequestContext, patient_id: uuid.UUID
+) -> None:
+    if context.role != "worker" or context.job_id is None:
+        return
+    job = session.exec(
+        select(Job)
+        .where(
+            Job.clinic_id == context.clinic_id,
+            Job.id == context.job_id,
+            Job.patient_id == patient_id,
+            Job.state == "running",
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if (
+        job is None
+        or job.locked_by is None
+        or job.locked_until is None
+        or job.locked_until <= get_datetime_utc()
+    ):
+        raise HTTPException(status_code=403, detail="Active worker job required")
+    try:
+        attempt_id = uuid.UUID(job.locked_by)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Active worker job required")
+    attempt = session.exec(
+        select(JobAttempt).where(
+            JobAttempt.clinic_id == context.clinic_id,
+            JobAttempt.id == attempt_id,
+            JobAttempt.job_id == job.id,
+            JobAttempt.worker_membership_id == context.membership.id,
+            JobAttempt.status == "started",
+        )
+    ).first()
+    if attempt is None:
+        raise HTTPException(status_code=403, detail="Active worker job required")
+
+
 def _new_version(
     *,
     entry: Entry,
@@ -274,6 +317,7 @@ def create_entry(
 ) -> EntryPublic:
     get_patient(session, context, data.patient_id)
     origin, patient_facing = authorize_entry_create(context, data)
+    _assert_worker_job_write(session, context, data.patient_id)
     entry = Entry(
         clinic_id=context.clinic_id,
         patient_id=data.patient_id,
@@ -374,6 +418,23 @@ def patch_entry(
     entry.current_version_id = next_version.id
     entry.patient_facing = effective_patient_facing
     session.add(entry)
+    affected_patients: set[uuid.UUID] = set()
+    if context.role in {"staff", "clinician"}:
+        related_highlights = session.exec(
+            select(Highlight).where(
+                Highlight.clinic_id == context.clinic_id,
+                Highlight.entry_id == entry.id,
+            )
+        ).all()
+        for highlight in related_highlights:
+            _, affected = record_feedback(
+                session,
+                context,
+                highlight,
+                signal="edit",
+                idempotency_key=f"edit:{next_version.id}:highlight:{highlight.id}",
+            )
+            affected_patients.update(affected)
     metadata = {
         "previous_version_id": str(current.id),
         "version_id": str(next_version.id),
@@ -388,6 +449,8 @@ def patch_entry(
         resource_id=entry.id,
         metadata=metadata,
     )
+    for patient_id in affected_patients:
+        rebuild_glance(session, context, patient_id)
     session.commit()
     session.refresh(entry)
     return entry_public(session, entry)
@@ -547,6 +610,22 @@ def rebuild_glance(
     session: Session, context: RequestContext, patient_id: uuid.UUID
 ) -> PatientGlanceSnapshot:
     get_patient(session, context, patient_id)
+    eligible = session.exec(
+        select(Highlight)
+        .where(
+            Highlight.clinic_id == context.clinic_id,
+            Highlight.patient_id == patient_id,
+            (col(Highlight.status) == "accepted") | col(Highlight.pinned).is_(True),
+            Highlight.anchor_state == "resolved",
+            col(Highlight.review_required).is_(False),
+        )
+        .execution_options(populate_existing=True)
+    ).all()
+    score_components = {
+        highlight.id: refresh_highlight_score(session, highlight).components
+        for highlight in eligible
+    }
+    session.flush()
     highlights = session.exec(
         select(Highlight)
         .where(
@@ -559,9 +638,13 @@ def rebuild_glance(
         .order_by(
             desc(col(Highlight.pinned)),
             desc(col(Highlight.critical)),
+            desc(col(Highlight.unresolved)),
+            desc(col(Highlight.clinician_confirmed)),
+            desc(col(Highlight.final_score)),
             desc(col(Highlight.created_at)),
         )
         .limit(5)
+        .execution_options(populate_existing=True)
     ).all()
     cards: list[dict[str, object]] = []
     for highlight in highlights:
@@ -587,13 +670,8 @@ def rebuild_glance(
                 "critical": highlight.critical,
                 "pinned": highlight.pinned,
                 "patient_facing": highlight.patient_facing,
-                "risk_reason": (
-                    "critical"
-                    if highlight.critical
-                    else "pinned"
-                    if highlight.pinned
-                    else "clinician_accepted"
-                ),
+                "risk_reason": highlight.risk_reason,
+                "score_components": score_components.get(highlight.id, {}),
                 "provenance_pointer_id": str(pointer.id),
             }
         )
