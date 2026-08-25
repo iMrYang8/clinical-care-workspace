@@ -124,8 +124,17 @@ async function me(): Promise<MePublic> {
   return (await AuthService.me()).data
 }
 
-async function logout(): Promise<void> {
-  await AuthService.logout()
+async function logout(token: string): Promise<void> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 1_500)
+  try {
+    await AuthService.logout({
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+  } finally {
+    window.clearTimeout(timeout)
+  }
 }
 
 async function patients(): Promise<PatientPublic[]> {

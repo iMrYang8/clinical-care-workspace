@@ -48,15 +48,14 @@ const useAuth = () => {
   })
 
   const logout = async () => {
-    try {
-      if (isLoggedIn()) await authApi.logout()
-    } catch {
-      // The local token and cached clinical data must still be discarded.
-    } finally {
-      discardAccessToken()
-      queryClient.clear()
-      await navigate({ to: "/login", replace: true })
-    }
+    const token = getAccessToken()
+    // Clear PHI-bearing client state synchronously. Server logout is best
+    // effort because the current bearer JWT is stateless and the API may be
+    // offline exactly when a user needs to leave the clinical screen.
+    discardAccessToken()
+    queryClient.clear()
+    await navigate({ to: "/login", replace: true })
+    if (token) void authApi.logout(token).catch(() => undefined)
   }
 
   return {

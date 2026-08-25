@@ -74,6 +74,7 @@ export function ClinicalCareNote({
   const queryClient = useQueryClient()
   useDomainEvents(
     currentUser.role === "staff" || currentUser.role === "clinician",
+    currentUser.clinic_id,
   )
   const [selectedEntry, setSelectedEntry] =
     useState<ClinicalTimelineEntry | null>(null)

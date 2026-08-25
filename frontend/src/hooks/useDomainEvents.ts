@@ -15,13 +15,30 @@ function waitForReconnect(signal: AbortSignal, milliseconds: number) {
   })
 }
 
-export function useDomainEvents(enabled: boolean): void {
+export function useDomainEvents(enabled: boolean, clinicId: string): void {
   const queryClient = useQueryClient()
 
   useEffect(() => {
     if (!enabled) return
     const controller = new AbortController()
-    let lastEventId: number | undefined
+    const cursorKey = `nightingale_event_cursor:${clinicId}`
+    const storedCursor = Number(window.sessionStorage.getItem(cursorKey))
+    let lastEventId =
+      Number.isFinite(storedCursor) && storedCursor > 0
+        ? storedCursor
+        : undefined
+    let invalidationTimer: number | undefined
+
+    const scheduleInvalidation = () => {
+      if (invalidationTimer !== undefined) return
+      invalidationTimer = window.setTimeout(() => {
+        invalidationTimer = undefined
+        void queryClient.invalidateQueries({
+          predicate: (query) =>
+            query.queryKey[0] === "patients" || query.queryKey[0] === "entries",
+        })
+      }, 100)
+    }
 
     const connect = async () => {
       let retryDelay = 1_000
@@ -31,13 +48,10 @@ export function useDomainEvents(enabled: boolean): void {
             (event) => {
               if (event.id !== null && Number.isFinite(event.id)) {
                 lastEventId = event.id
+                window.sessionStorage.setItem(cursorKey, String(event.id))
               }
               retryDelay = 1_000
-              void queryClient.invalidateQueries({
-                predicate: (query) =>
-                  query.queryKey[0] === "patients" ||
-                  query.queryKey[0] === "entries",
-              })
+              scheduleInvalidation()
             },
             { signal: controller.signal, lastEventId },
           )
@@ -51,6 +65,11 @@ export function useDomainEvents(enabled: boolean): void {
     }
 
     void connect()
-    return () => controller.abort()
-  }, [enabled, queryClient])
+    return () => {
+      controller.abort()
+      if (invalidationTimer !== undefined) {
+        window.clearTimeout(invalidationTimer)
+      }
+    }
+  }, [clinicId, enabled, queryClient])
 }
