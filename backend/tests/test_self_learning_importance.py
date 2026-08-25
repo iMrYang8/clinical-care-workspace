@@ -8,21 +8,26 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, delete, select
 
+from app.api.deps import RequestContext
 from app.core.db import engine, set_rls_clinic
 from app.models import (
     AuditEvent,
+    ClinicMembership,
     DomainEvent,
     Highlight,
     ImportanceFeatureStat,
     ImportanceFeedbackEvent,
+    User,
 )
 from app.seed import demo_id
 from app.services.importance import (
     MAX_FEATURE_WEIGHT,
     apply_weight_delta,
     calculate_score,
+    record_feedback,
     sanitize_feature_keys,
 )
+from app.services.nightingale import rebuild_glance
 
 
 @pytest.mark.unit
@@ -36,6 +41,8 @@ def test_feature_keys_are_non_phi_bounded_tokens() -> None:
             "free text secret",
         ]
     ) == ["entity:allergy", "topic:follow_up", "risk:critical"]
+    bounded = [f"entry_type:type_{index}" for index in range(11)]
+    assert sanitize_feature_keys(bounded) == bounded[:10]
 
 
 @pytest.mark.unit
@@ -63,6 +70,16 @@ def test_protected_highlight_ignores_negative_learned_score() -> None:
     assert score.learned == 0
     assert score.final >= score.base
     assert math.isclose(score.final, score.base)
+
+    learned = calculate_score(
+        critical=False,
+        unresolved=False,
+        clinician_confirmed=False,
+        feature_keys=["topic:follow_up"],
+        feature_weights={"topic:follow_up": 0.1},
+        age_days=0,
+    )
+    assert learned.risk_reason == "clinic_feedback"
 
 
 def _create_allergy_highlight(
@@ -211,6 +228,139 @@ def test_feedback_idempotency_key_is_bound_to_target_and_signal(
         assert len(events) == 1
         assert events[0].highlight_id == uuid.UUID(first["id"])
         assert events[0].signal == "pin"
+
+
+def test_patient_is_denied_before_internal_highlight_lookup(
+    client: TestClient, auth_headers
+) -> None:
+    clinician = auth_headers("clinician")
+    patient = auth_headers("patient")
+    highlight = _create_allergy_highlight(client, clinician, section="clinician")
+
+    # Existing and random internal identifiers are intentionally
+    # indistinguishable to a patient. Authorization happens before any lookup
+    # or row lock, so neither endpoint becomes an existence oracle.
+    for highlight_id in (highlight["id"], str(uuid.uuid4())):
+        transitioned = client.post(
+            f"/api/v1/highlights/{highlight_id}/pin",
+            headers=patient | {"Idempotency-Key": f"patient-pin-{highlight_id}"},
+        )
+        feedback = client.post(
+            f"/api/v1/highlights/{highlight_id}/feedback",
+            headers=patient | {"Idempotency-Key": f"patient-dismiss-{highlight_id}"},
+            json={"signal": "dismiss"},
+        )
+        assert transitioned.status_code == 403
+        assert feedback.status_code == 403
+        assert (
+            transitioned.json()
+            == feedback.json()
+            == {"detail": "Clinical review role required"}
+        )
+
+
+def test_dismiss_feedback_is_negative_idempotent_and_resource_bound(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    first = _create_allergy_highlight(client, headers, section="clinician")
+    second = _create_allergy_highlight(client, headers, section="clinician")
+    shared = headers | {"Idempotency-Key": "dismiss-resource-bound"}
+
+    for _ in range(2):
+        dismissed = client.post(
+            f"/api/v1/highlights/{first['id']}/feedback",
+            headers=shared,
+            json={"signal": "dismiss"},
+        )
+        assert dismissed.status_code == 200, dismissed.text
+        assert dismissed.json()["status"] == "dismissed"
+
+    second_dismissed = client.post(
+        f"/api/v1/highlights/{second['id']}/feedback",
+        headers=headers | {"Idempotency-Key": "dismiss-second"},
+        json={"signal": "dismiss"},
+    )
+    assert second_dismissed.status_code == 200, second_dismissed.text
+    conflict = client.post(
+        f"/api/v1/highlights/{second['id']}/feedback",
+        headers=shared,
+        json={"signal": "dismiss"},
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+    with Session(engine) as session:
+        feedback_events = session.exec(
+            select(ImportanceFeedbackEvent).where(
+                ImportanceFeedbackEvent.highlight_id == uuid.UUID(first["id"]),
+                ImportanceFeedbackEvent.signal == "dismiss",
+            )
+        ).all()
+        audits = session.exec(
+            select(AuditEvent).where(
+                AuditEvent.resource_id == uuid.UUID(first["id"]),
+                AuditEvent.action == "highlight.feedback.dismiss",
+            )
+        ).all()
+        domain_events = session.exec(
+            select(DomainEvent).where(
+                DomainEvent.aggregate_id == uuid.UUID(first["id"]),
+                DomainEvent.event_type == "highlight.feedback.dismiss",
+            )
+        ).all()
+        assert len(feedback_events) == 1
+        assert feedback_events[0].applied_delta < 0
+        assert len(audits) == 1
+        assert len(domain_events) == 1
+
+
+def test_stale_edit_feedback_refreshes_concurrent_pin_before_glance_rebuild(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    highlight = _create_allergy_highlight(client, headers, section="clinician")
+    highlight_id = uuid.UUID(highlight["id"])
+
+    with Session(engine) as stale_session:
+        stale = stale_session.get(Highlight, highlight_id)
+        user = stale_session.get(User, demo_id("user-clinician"))
+        membership = stale_session.get(
+            ClinicMembership, demo_id("membership-clinician")
+        )
+        assert stale is not None and user is not None and membership is not None
+        assert stale.pinned is False
+
+        pinned = client.post(
+            f"/api/v1/highlights/{highlight['id']}/pin",
+            headers=headers | {"Idempotency-Key": "concurrent-pin-before-edit"},
+        )
+        assert pinned.status_code == 200, pinned.text
+        assert pinned.json()["pinned"] is True
+
+        context = RequestContext(user=user, membership=membership)
+        _, affected = record_feedback(
+            stale_session,
+            context,
+            stale,
+            signal="edit",
+            idempotency_key="stale-edit-feedback",
+        )
+        assert stale.pinned is True
+        for patient_id in affected | {stale.patient_id}:
+            rebuild_glance(stale_session, context, patient_id)
+        stale_session.commit()
+
+    glance = client.get(
+        f"/api/v1/patients/{highlight['patient_id']}/glance", headers=headers
+    )
+    assert glance.status_code == 200, glance.text
+    card = next(
+        item
+        for item in glance.json()["cards"]
+        if item["highlight_id"] == highlight["id"]
+    )
+    assert card["pinned"] is True
 
 
 def test_concurrent_first_feature_and_same_request_feedback_are_atomic(

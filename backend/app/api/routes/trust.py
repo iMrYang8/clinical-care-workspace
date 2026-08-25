@@ -16,6 +16,7 @@ from app.models import (
     ProvenancePointer,
     ProvenanceResolved,
 )
+from app.services.decay import lock_active_version_for_protection
 from app.services.importance import (
     feedback_idempotency_replayed,
     lock_importance_scope,
@@ -114,6 +115,9 @@ def create_highlight(
     _require_reviewer(context)
     entry = get_scoped_entry(session, context, entry_id)
     version = get_scoped_version(session, context, entry, body.entry_version_id)
+    # Lock the immutable source before anchor validation. Archive takes the same
+    # row lock, so a protection cannot be inserted against newly-cold content.
+    version = lock_active_version_for_protection(session, context, version.id)
     if body.patient_facing and not version.patient_facing:
         raise HTTPException(
             status_code=409,
@@ -209,7 +213,29 @@ def _transition(
     action: str,
     idempotency_key: str | None = None,
 ) -> HighlightPublic:
+    # Authorize before even looking up the identifier. Otherwise a patient can
+    # distinguish a real internal highlight from a random UUID by observing
+    # 403 versus 404, and can unnecessarily take clinical row locks.
+    _require_reviewer(context)
     request_key = idempotency_key or f"{action}:{highlight_id}:{uuid.uuid4()}"
+    source_version_id = session.exec(
+        select(Highlight.source_entry_version_id).where(
+            Highlight.id == highlight_id,
+            Highlight.clinic_id == context.clinic_id,
+        )
+    ).first()
+    if source_version_id is None:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    # Version must precede clinic/entry/highlight locks for every transition
+    # that can dirty a protection column (including unpin on reject). This
+    # matches archive's Version -> Entry -> Highlight order and cannot cycle
+    # with entry edits, which take Entry -> Clinic.
+    lock_active_version_for_protection(
+        session,
+        context,
+        source_version_id,
+        require_active=action in {"accept", "pin"},
+    )
     lock_importance_scope(session, context.clinic_id)
     highlight = _get_highlight(session, context, highlight_id, lock=True)
     if feedback_idempotency_replayed(
@@ -307,6 +333,18 @@ def feedback(
     context: CurrentContext,
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> HighlightPublic:
+    _require_reviewer(context)
+    source_version_id = session.exec(
+        select(Highlight.source_entry_version_id).where(
+            Highlight.id == highlight_id,
+            Highlight.clinic_id == context.clinic_id,
+        )
+    ).first()
+    if source_version_id is None:
+        raise HTTPException(status_code=404, detail="Highlight not found")
+    lock_active_version_for_protection(
+        session, context, source_version_id, require_active=False
+    )
     lock_importance_scope(session, context.clinic_id)
     highlight = _get_highlight(session, context, highlight_id, lock=True)
     if feedback_idempotency_replayed(

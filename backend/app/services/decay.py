@@ -178,6 +178,8 @@ def list_decay_candidates(
                 entry_id=entry.id,
                 storage_tier=version.storage_tier
                 if version.storage_tier == "cold"
+                else "hot"
+                if reasons
                 else policy_tier,
                 age_days=age_days,
                 eligible_for_cold=eligible,
@@ -399,6 +401,20 @@ def rehydrate_version(
 ) -> EntryVersion:
     if version.clinic_id != context.clinic_id:
         raise HTTPException(status_code=404, detail="Version not found")
+    # Always reload under a row lock. This makes concurrent rehydrate calls
+    # idempotent and serializes them with archive_version's physical transition.
+    locked_version = session.exec(
+        select(EntryVersion)
+        .where(
+            EntryVersion.clinic_id == context.clinic_id,
+            EntryVersion.id == version.id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if locked_version is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    version = locked_version
     if version.storage_tier != "cold" or version.archive_blob_id is None:
         return version
     blob = session.exec(
@@ -422,4 +438,39 @@ def rehydrate_version(
     version.storage_tier = "warm"
     session.add(version)
     session.flush()
+    return version
+
+
+def lock_active_version_for_protection(
+    session: Session,
+    context: RequestContext,
+    version_id: uuid.UUID,
+    *,
+    require_active: bool = True,
+) -> EntryVersion:
+    """Serialize a trust transition with decay and optionally require content."""
+
+    version = session.exec(
+        select(EntryVersion)
+        .where(
+            EntryVersion.clinic_id == context.clinic_id,
+            EntryVersion.id == version_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if version is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    if require_active and (
+        version.storage_tier == "cold"
+        or version.title_ciphertext is None
+        or version.content_ciphertext is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "SOURCE_REHYDRATION_REQUIRED",
+                "message": "Rehydrate the immutable source before protecting it",
+            },
+        )
     return version

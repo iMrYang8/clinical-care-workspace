@@ -6,7 +6,12 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlmodel import Session, select
 
-from app.core.db import engine, set_rls_clinic
+from app.configure_db_roles import configure_runtime_role
+from app.core.db import (
+    assert_restricted_runtime_connection,
+    engine,
+    set_rls_clinic,
+)
 from app.models import Comment, EntryVersion, Highlight, ProvenancePointer
 from app.seed import demo_id
 
@@ -101,7 +106,10 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
                         'trg_entry_version_append_only',
                         'trg_provenance_append_only',
                         'trg_highlight_anchor_guard',
-                        'trg_retention_lock_decay_subject'
+                        'trg_retention_lock_decay_subject',
+                        'trg_highlight_cold_source',
+                        'trg_conflict_cold_source',
+                        'trg_task_cold_source'
                       )
                     """
                 )
@@ -113,6 +121,9 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
         "trg_provenance_append_only",
         "trg_highlight_anchor_guard",
         "trg_retention_lock_decay_subject",
+        "trg_highlight_cold_source",
+        "trg_conflict_cold_source",
+        "trg_task_cold_source",
     }
 
     inspector = inspect(engine)
@@ -269,6 +280,47 @@ def test_runtime_login_is_restricted_non_owner_and_rls_is_enforced() -> None:
                     "external_ref_hash": "b" * 64,
                 },
             )
+
+
+def test_runtime_guard_rejects_owner_connection(owner_session: Session) -> None:
+    with engine.connect() as runtime_connection:
+        assert_restricted_runtime_connection(runtime_connection)
+    with pytest.raises(RuntimeError, match="UNSAFE_DATABASE_RUNTIME_ROLE"):
+        assert_restricted_runtime_connection(owner_session.connection())
+
+
+def test_runtime_role_bootstrap_revokes_settable_memberships(
+    owner_session: Session,
+) -> None:
+    role_name = f"nightingale_fixture_{uuid.uuid4().hex}"
+    connection = owner_session.connection()
+    create_role = connection.scalar(
+        text("SELECT format('CREATE ROLE %I NOLOGIN', CAST(:role AS text))"),
+        {"role": role_name},
+    )
+    grant_role = connection.scalar(
+        text("SELECT format('GRANT %I TO nightingale_app', CAST(:role AS text))"),
+        {"role": role_name},
+    )
+    assert isinstance(create_role, str) and isinstance(grant_role, str)
+    connection.exec_driver_sql(create_role)
+    connection.exec_driver_sql(grant_role)
+    owner_session.commit()
+    try:
+        with engine.connect() as runtime_connection:
+            with pytest.raises(RuntimeError, match="UNSAFE_DATABASE_RUNTIME_ROLE"):
+                assert_restricted_runtime_connection(runtime_connection)
+        configure_runtime_role()
+        with engine.connect() as runtime_connection:
+            assert_restricted_runtime_connection(runtime_connection)
+    finally:
+        with owner_session.get_bind().begin() as cleanup:
+            drop_role = cleanup.scalar(
+                text("SELECT format('DROP ROLE IF EXISTS %I', CAST(:role AS text))"),
+                {"role": role_name},
+            )
+            assert isinstance(drop_role, str)
+            cleanup.exec_driver_sql(drop_role)
 
 
 def test_cross_clinic_composite_fk_and_append_only_triggers(

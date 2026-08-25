@@ -611,13 +611,15 @@ def rebuild_glance(
 ) -> PatientGlanceSnapshot:
     get_patient(session, context, patient_id)
     eligible = session.exec(
-        select(Highlight).where(
+        select(Highlight)
+        .where(
             Highlight.clinic_id == context.clinic_id,
             Highlight.patient_id == patient_id,
             (col(Highlight.status) == "accepted") | col(Highlight.pinned).is_(True),
             Highlight.anchor_state == "resolved",
             col(Highlight.review_required).is_(False),
         )
+        .execution_options(populate_existing=True)
     ).all()
     score_components = {
         highlight.id: refresh_highlight_score(session, highlight).components
@@ -642,6 +644,7 @@ def rebuild_glance(
             desc(col(Highlight.created_at)),
         )
         .limit(5)
+        .execution_options(populate_existing=True)
     ).all()
     cards: list[dict[str, object]] = []
     for highlight in highlights:

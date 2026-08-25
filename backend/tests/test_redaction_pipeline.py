@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import uuid
 
 import pytest
@@ -115,6 +116,37 @@ def test_crossing_known_aliases_are_union_redacted_before_remote_egress() -> Non
     assert "Mary" not in remote.inputs[0]
     assert "Ann" not in remote.inputs[0]
     assert "Lee" not in remote.inputs[0]
+    assert fallback.inputs == []
+
+
+@pytest.mark.presidio_model
+def test_locked_presidio_model_profile_allows_safe_remote_smoke() -> None:
+    try:
+        __import__("en_core_web_sm")
+    except ImportError:
+        if os.getenv("REQUIRE_PRESIDIO_MODEL_TEST") == "true":
+            pytest.fail("locked Presidio NLP model profile is required in CI")
+        pytest.skip("optional locked Presidio NLP model profile is not installed")
+    context = _context()
+    remote = RecordingProvider()
+    fallback = RecordingProvider()
+    pipeline = ClinicalScribePipeline(
+        RedactionService(require_presidio=True, presidio_model="en_core_web_sm"),
+        fallback_provider=fallback,
+    )
+
+    result = asyncio.run(
+        pipeline.run(
+            "Hydration is adequate; email alex@example.test.",
+            context=context,
+            remote_provider=remote,
+        )
+    )
+
+    assert result.redaction.remote_egress_allowed is True
+    assert result.used_fallback is False
+    assert len(remote.inputs) == 1
+    assert "alex@example.test" not in remote.inputs[0]
     assert fallback.inputs == []
 
 

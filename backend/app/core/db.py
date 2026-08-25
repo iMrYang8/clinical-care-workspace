@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.seed import seed_demo_data
 
 engine = create_engine(str(settings.DATABASE_URL))
+RUNTIME_DATABASE_ROLE = "nightingale_app"
 
 _RLS_CLINIC_SESSION_KEY = "nightingale.rls_clinic_id"
 
@@ -35,6 +36,60 @@ def set_rls_clinic(session: Session, clinic_id: uuid.UUID) -> None:
             text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
             {"clinic_id": str(clinic_id)},
         )
+
+
+def assert_restricted_runtime_connection(connection: Connection) -> None:
+    """Fail closed if a long-running process can bypass tenant RLS."""
+
+    if connection.dialect.name != "postgresql":
+        raise RuntimeError("UNSAFE_DATABASE_RUNTIME_ROLE")
+    role = connection.execute(
+        text(
+            """
+            SELECT current_user AS role_name,
+                   r.rolcanlogin,
+                   r.rolsuper,
+                   r.rolcreatedb,
+                   r.rolcreaterole,
+                   r.rolreplication,
+                   r.rolbypassrls,
+                   EXISTS (
+                     SELECT 1
+                     FROM pg_class AS c
+                     JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                     WHERE n.nspname = current_schema()
+                       AND c.relrowsecurity
+                       AND c.relowner = r.oid
+                   ) AS owns_rls_table,
+                   EXISTS (
+                     SELECT 1
+                     FROM pg_auth_members AS membership
+                     WHERE membership.member = r.oid
+                       AND membership.set_option
+                   ) AS has_settable_membership
+            FROM pg_roles AS r
+            WHERE r.rolname = current_user
+            """
+        )
+    ).one_or_none()
+    if (
+        role is None
+        or role.role_name != RUNTIME_DATABASE_ROLE
+        or not role.rolcanlogin
+        or role.rolsuper
+        or role.rolcreatedb
+        or role.rolcreaterole
+        or role.rolreplication
+        or role.rolbypassrls
+        or role.owns_rls_table
+        or role.has_settable_membership
+    ):
+        raise RuntimeError("UNSAFE_DATABASE_RUNTIME_ROLE")
+
+
+def assert_restricted_runtime_database() -> None:
+    with engine.connect() as connection:
+        assert_restricted_runtime_connection(connection)
 
 
 # make sure all SQLModel models are imported (app.models) before initializing DB

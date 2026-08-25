@@ -188,10 +188,19 @@ def job_public(session: Session, job: Job) -> JobPublic:
     )
 
 
-def get_scoped_job(session: Session, context: RequestContext, job_id: uuid.UUID) -> Job:
-    job = session.exec(
-        select(Job).where(Job.clinic_id == context.clinic_id, Job.id == job_id)
-    ).first()
+def get_scoped_job(
+    session: Session,
+    context: RequestContext,
+    job_id: uuid.UUID,
+    *,
+    lock: bool = False,
+) -> Job:
+    statement = select(Job).where(Job.clinic_id == context.clinic_id, Job.id == job_id)
+    if lock:
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
+    job = session.exec(statement).first()
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     get_patient(session, context, job.patient_id)
@@ -284,20 +293,21 @@ def worker_context_for_job(session: Session, job: Job) -> RequestContext | None:
     job binding is constructed server-side and rechecked again at claim time.
     """
 
-    membership = session.exec(
-        select(ClinicMembership)
+    worker = session.exec(
+        select(ClinicMembership, User)
+        .join(User)
         .where(
             ClinicMembership.clinic_id == job.clinic_id,
             ClinicMembership.role == "worker",
             col(ClinicMembership.is_active).is_(True),
+            col(User.is_active).is_(True),
         )
         .order_by(col(ClinicMembership.created_at), col(ClinicMembership.id))
+        .execution_options(populate_existing=True)
     ).first()
-    if membership is None:
+    if worker is None:
         return None
-    user = session.get(User, membership.user_id)
-    if user is None or not user.is_active:
-        return None
+    membership, user = worker
     return RequestContext(user=user, membership=membership, job_id=job.id)
 
 
@@ -600,6 +610,7 @@ def claim_job(
             claimable,
         )
         .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
     ).first()
     if job is None:
         raise HTTPException(status_code=409, detail={"code": "JOB_NOT_CLAIMABLE"})

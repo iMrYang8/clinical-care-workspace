@@ -106,7 +106,9 @@ async def retry_job(
     job_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> JobPublic:
     _require_ai_role(context)
-    job = get_scoped_job(session, context, job_id)
+    # Serialize retry against worker claim/recovery and refresh any identity-map
+    # copy before rechecking state and the attempt budget.
+    job = get_scoped_job(session, context, job_id, lock=True)
     if job.state != "failed":
         raise HTTPException(
             status_code=409,

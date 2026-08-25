@@ -8,6 +8,7 @@ import unicodedata
 import uuid
 from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Protocol
 
 from app.core.field_crypto import field_codec
@@ -64,6 +65,17 @@ class PresidioAnalyzerAdapter:
         ]
 
 
+@lru_cache(maxsize=4)
+def configured_presidio_analyzer(model_name: str) -> PresidioAnalyzerAdapter:
+    """Load an explicitly installed model once; never download at runtime."""
+
+    return PresidioAnalyzerAdapter(model_name)
+
+
+def assert_presidio_runtime(model_name: str) -> None:
+    configured_presidio_analyzer(model_name)
+
+
 @dataclass(frozen=True)
 class RedactionResult:
     normalized_text: str
@@ -106,7 +118,7 @@ class RedactionService:
 
     def _load_analyzer(self) -> AnalyzerAdapter:
         if self._analyzer is None:
-            self._analyzer = PresidioAnalyzerAdapter(self.presidio_model)
+            self._analyzer = configured_presidio_analyzer(self.presidio_model)
         return self._analyzer
 
     @staticmethod

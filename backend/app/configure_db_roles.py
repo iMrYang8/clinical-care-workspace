@@ -52,6 +52,31 @@ def configure_runtime_role() -> None:
             if not isinstance(ddl, str):
                 raise RuntimeError("PostgreSQL did not produce runtime role DDL")
             connection.exec_driver_sql(ddl)
+            # NOINHERIT does not prevent SET ROLE in PostgreSQL 16. Remove every
+            # pre-existing membership so a reused login cannot switch into an
+            # owner, superuser, or BYPASSRLS role after bootstrap.
+            memberships = connection.execute(
+                text(
+                    """
+                    SELECT parent.rolname
+                    FROM pg_auth_members AS membership
+                    JOIN pg_roles AS member ON member.oid = membership.member
+                    JOIN pg_roles AS parent ON parent.oid = membership.roleid
+                    WHERE member.rolname = :role
+                    """
+                ),
+                {"role": RUNTIME_DATABASE_ROLE},
+            ).scalars()
+            for parent_role in memberships:
+                revoke = connection.scalar(
+                    text(
+                        f"SELECT format('REVOKE %I FROM {RUNTIME_DATABASE_ROLE}', CAST(:parent AS text))"
+                    ),
+                    {"parent": parent_role},
+                )
+                if not isinstance(revoke, str):
+                    raise RuntimeError("PostgreSQL did not produce role revoke DDL")
+                connection.exec_driver_sql(revoke)
     finally:
         migration_engine.dispose()
 

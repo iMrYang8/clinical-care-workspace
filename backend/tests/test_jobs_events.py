@@ -3,12 +3,14 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
+from time import sleep
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session, col, select
 
+from app.api.deps import RequestContext
 from app.core.db import engine
 from app.models import (
     AIRun,
@@ -572,6 +574,221 @@ def test_worker_runner_drains_remote_queue_with_job_semantics(
     assert status.status_code == 200
     assert status.json()["state"] in {"completed", "needs_review"}
     assert status.json()["attempt_count"] == 1
+
+
+def test_retry_serializes_against_worker_claim(
+    client: TestClient, auth_headers, monkeypatch, owner_session: Session
+) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "openai")
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Retry claim CAS fixture",
+            "content": "routine follow up",
+        },
+    ).json()
+    queued = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "retry-claim-cas"},
+        json={"source_entry_version_id": source["version_id"]},
+    ).json()
+    job_id = uuid.UUID(queued["id"])
+    failed = owner_session.get(Job, job_id)
+    assert failed is not None
+    failed.state = "failed"
+    failed.error_code = "SYNTHETIC_FAILURE"
+    owner_session.add(failed)
+    owner_session.commit()
+
+    with Session(engine) as worker_session:
+        job = worker_session.get(Job, job_id)
+        assert job is not None
+        worker_context = worker_context_for_job(worker_session, job)
+        assert worker_context is not None
+        token = uuid.uuid4()
+        claimed = claim_job(worker_session, worker_context, job_id, claim_token=token)
+        claimed.attempt_count += 1
+        worker_session.add(claimed)
+        worker_session.add(
+            JobAttempt(
+                id=token,
+                clinic_id=claimed.clinic_id,
+                job_id=claimed.id,
+                worker_membership_id=worker_context.membership.id,
+                attempt_no=claimed.attempt_count,
+            )
+        )
+        worker_session.flush()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(
+                client.post, f"/api/v1/jobs/{job_id}/retry", headers=headers
+            )
+            sleep(0.15)
+            assert pending.done() is False
+            worker_session.commit()
+            response = pending.result(timeout=5)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "code": "JOB_NOT_RETRYABLE",
+        "state": "running",
+    }
+    with Session(engine) as session:
+        stored = session.get(Job, job_id)
+        attempt = session.exec(
+            select(JobAttempt).where(JobAttempt.job_id == job_id)
+        ).one()
+        assert stored is not None
+        assert stored.state == "running"
+        assert stored.locked_by == str(token)
+        assert attempt.status == "started"
+
+
+def test_worker_runner_skips_inactive_user_and_selects_healthy_worker(
+    client: TestClient, auth_headers, monkeypatch, owner_session: Session
+) -> None:
+    import app.ai_worker as ai_worker
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "openai")
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Healthy worker selection",
+            "content": "routine follow up",
+        },
+    ).json()
+    queued = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "healthy-second-worker"},
+        json={"source_entry_version_id": source["version_id"]},
+    ).json()
+
+    first_worker = owner_session.get(User, demo_id("user-worker"))
+    job = owner_session.get(Job, uuid.UUID(queued["id"]))
+    assert first_worker is not None and job is not None
+    first_worker.is_active = False
+    second_user_id = uuid.uuid4()
+    second_membership_id = uuid.uuid4()
+    owner_session.add(first_worker)
+    second_user = User(
+        id=second_user_id,
+        email="second.worker@nightingale.synthetic",
+        full_name="Second Synthetic Worker",
+        hashed_password=first_worker.hashed_password,
+    )
+    owner_session.add(second_user)
+    owner_session.flush()
+    owner_session.add(
+        ClinicMembership(
+            id=second_membership_id,
+            clinic_id=job.clinic_id,
+            user_id=second_user_id,
+            role="worker",
+        )
+    )
+    owner_session.commit()
+
+    selected: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = []
+
+    async def capture_worker(
+        _session: Session, context: RequestContext, job_id: uuid.UUID
+    ) -> None:
+        selected.append((context.user_id, context.membership.id, job_id))
+
+    monkeypatch.setattr(ai_worker, "process_job", capture_worker)
+    assert asyncio.run(ai_worker.run_once()) == 1
+    assert selected == [(second_user_id, second_membership_id, uuid.UUID(queued["id"]))]
+
+
+def test_expired_final_attempt_is_terminalized_without_provider_reentry(
+    client: TestClient, auth_headers, monkeypatch, owner_session: Session
+) -> None:
+    import app.ai_worker as ai_worker
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AI_PROVIDER", "openai")
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    source = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Final attempt recovery",
+            "content": "routine follow up",
+        },
+    ).json()
+    queued = client.post(
+        f"/api/v1/patients/{patient_id}/ai/ingest",
+        headers=headers | {"Idempotency-Key": "final-attempt-expiry"},
+        json={"source_entry_version_id": source["version_id"]},
+    ).json()
+    job_id = uuid.UUID(queued["id"])
+    token = uuid.uuid4()
+    job = owner_session.get(Job, job_id)
+    assert job is not None
+    job.state = "running"
+    job.attempt_count = job.max_attempts
+    job.locked_by = str(token)
+    job.locked_until = get_datetime_utc() - timedelta(seconds=1)
+    owner_session.add(job)
+    owner_session.add(
+        JobAttempt(
+            id=token,
+            clinic_id=job.clinic_id,
+            job_id=job.id,
+            worker_membership_id=demo_id("membership-worker"),
+            attempt_no=job.max_attempts,
+        )
+    )
+    owner_session.commit()
+
+    async def provider_must_not_run(*_args, **_kwargs) -> None:
+        raise AssertionError("exhausted job must not re-enter provider processing")
+
+    monkeypatch.setattr(ai_worker, "process_job", provider_must_not_run)
+    assert asyncio.run(ai_worker.run_once()) == 0
+    assert asyncio.run(ai_worker.run_once()) == 0
+
+    with Session(engine) as session:
+        terminal = session.get(Job, job_id)
+        attempt = session.exec(
+            select(JobAttempt).where(JobAttempt.job_id == job_id)
+        ).one()
+        assert terminal is not None
+        assert terminal.state == "failed"
+        assert terminal.error_code == "JOB_ATTEMPTS_EXHAUSTED"
+        assert terminal.locked_by is None
+        assert terminal.locked_until is None
+        assert attempt.status == "failed"
+        assert attempt.error_code == "WORKER_LEASE_EXPIRED"
+        assert attempt.completed_at is not None
+        events = session.exec(
+            select(DomainEvent).where(
+                DomainEvent.aggregate_id == job_id,
+                DomainEvent.event_type == "job.exhausted",
+            )
+        ).all()
+        assert len(events) == 1
+        assert events[0].payload_json == {
+            "error_code": "JOB_ATTEMPTS_EXHAUSTED",
+            "attempt_count": terminal.max_attempts,
+        }
 
 
 def test_expired_claim_cannot_finalize_after_new_worker_reclaims(

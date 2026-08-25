@@ -3,6 +3,7 @@ import importlib
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 from time import sleep
 
 import pytest
@@ -10,6 +11,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlmodel import Session, select
 
@@ -361,9 +363,154 @@ def test_concurrent_existing_highlight_transition_serializes_archive(
     assert detail["protected_reasons"] == ["pinned"]
 
 
+def test_cold_source_requires_rehydrate_before_pin_and_db_trigger_enforces_it(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    entry = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Cold protection boundary",
+            "content": "historical evidence",
+        },
+    ).json()
+    highlight = client.post(
+        f"/api/v1/entries/{entry['id']}/highlights",
+        headers=headers,
+        json={
+            "entry_version_id": entry["version_id"],
+            "start_offset": 11,
+            "end_offset": 19,
+            "exact_quote": "evidence",
+            "label": "Pending historical fact",
+        },
+    ).json()
+    version_id = uuid.UUID(entry["version_id"])
+    highlight_id = uuid.UUID(highlight["id"])
+
+    with Session(engine) as session:
+        user = session.get(User, demo_id("user-clinician"))
+        membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+        version = session.get(EntryVersion, version_id)
+        assert user is not None and membership is not None and version is not None
+        future = version.created_at + timedelta(days=731)
+        archive_version(
+            session,
+            RequestContext(user=user, membership=membership),
+            version,
+            now=future,
+        )
+        session.commit()
+
+    denied = client.post(
+        f"/api/v1/highlights/{highlight_id}/pin",
+        headers={**headers, "Idempotency-Key": "cold-pin-before-rehydrate"},
+    )
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["detail"]["code"] == "SOURCE_REHYDRATION_REQUIRED"
+
+    # The database guard is a second boundary for non-HTTP writers and closes
+    # insert/update races after anchor validation but before commit.
+    stored = owner_session.get(Highlight, highlight_id)
+    assert stored is not None
+    stored.pinned = True
+    owner_session.add(stored)
+    with pytest.raises(DBAPIError, match="requires rehydrated source"):
+        owner_session.flush()
+    owner_session.rollback()
+
+    restored = client.post(
+        f"/api/v1/decay/entries/{version_id}/rehydrate", headers=headers
+    )
+    assert restored.status_code == 200, restored.text
+    pinned = client.post(
+        f"/api/v1/highlights/{highlight_id}/pin",
+        headers={**headers, "Idempotency-Key": "cold-pin-after-rehydrate"},
+    )
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()["pinned"] is True
+
+    with Session(engine) as session:
+        user = session.get(User, demo_id("user-clinician"))
+        membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+        version = session.get(EntryVersion, version_id)
+        assert user is not None and membership is not None and version is not None
+        candidate = next(
+            item
+            for item in list_decay_candidates(
+                session,
+                RequestContext(user=user, membership=membership),
+                now=version.created_at + timedelta(days=731),
+            )
+            if item.entry_version_id == version_id
+        )
+    assert candidate.storage_tier == "hot"
+    assert candidate.eligible_for_cold is False
+    assert candidate.protected_reasons == ["pinned"]
+
+
+def test_concurrent_rehydrate_is_idempotent_and_serialized(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    entry = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Concurrent rehydrate",
+            "content": "durable archived payload",
+        },
+    ).json()
+    version_id = uuid.UUID(entry["version_id"])
+    with Session(engine) as session:
+        user = session.get(User, demo_id("user-clinician"))
+        membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+        version = session.get(EntryVersion, version_id)
+        assert user is not None and membership is not None and version is not None
+        archive_version(
+            session,
+            RequestContext(user=user, membership=membership),
+            version,
+            now=version.created_at + timedelta(days=731),
+        )
+        session.commit()
+
+    barrier = Barrier(2)
+
+    def restore() -> tuple[str, str]:
+        with Session(engine) as session:
+            user = session.get(User, demo_id("user-clinician"))
+            membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+            version = session.get(EntryVersion, version_id)
+            assert user is not None and membership is not None and version is not None
+            barrier.wait(timeout=5)
+            restored = rehydrate_version(
+                session, RequestContext(user=user, membership=membership), version
+            )
+            session.commit()
+            return restored.storage_tier, restored.content_sha256
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            future.result(timeout=5)
+            for future in [pool.submit(restore) for _ in range(2)]
+        ]
+    assert results == [("warm", results[0][1]), ("warm", results[0][1])]
+
+
 def test_ai_trust_downgrade_blocks_cold_data_then_clears_rehydrated_reference(
     client: TestClient, auth_headers, owner_session: Session
 ) -> None:
+    protection = importlib.import_module(
+        "app.alembic.versions.d7f4a2c9e610_guard_cold_protection_transitions"
+    )
     hardening = importlib.import_module(
         "app.alembic.versions.b5e7a9c2d140_harden_worker_feedback_and_decay"
     )
@@ -399,6 +546,7 @@ def test_ai_trust_downgrade_blocks_cold_data_then_clears_rehydrated_reference(
         migration_context = MigrationContext.configure(connection)
         with pytest.raises(DBAPIError, match="rehydrate every cold"):
             with Operations.context(migration_context):
+                protection.downgrade()
                 hardening.downgrade()
                 trust.downgrade()
         transaction.rollback()
@@ -417,6 +565,7 @@ def test_ai_trust_downgrade_blocks_cold_data_then_clears_rehydrated_reference(
         transaction = connection.begin()
         migration_context = MigrationContext.configure(connection)
         with Operations.context(migration_context):
+            protection.downgrade()
             hardening.downgrade()
             trust.downgrade()
         row = connection.execute(
@@ -429,4 +578,62 @@ def test_ai_trust_downgrade_blocks_cold_data_then_clears_rehydrated_reference(
         assert row.archive_blob_id is None
         assert row.title_ciphertext is not None
         assert row.content_ciphertext is not None
+        transaction.rollback()
+
+
+def test_cold_protection_migration_rejects_legacy_invalid_state(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    protection = importlib.import_module(
+        "app.alembic.versions.d7f4a2c9e610_guard_cold_protection_transitions"
+    )
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    entry = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Legacy cold protection",
+            "content": "legacy evidence",
+        },
+    ).json()
+    highlight = client.post(
+        f"/api/v1/entries/{entry['id']}/highlights",
+        headers=headers,
+        json={
+            "entry_version_id": entry["version_id"],
+            "start_offset": 7,
+            "end_offset": 15,
+            "exact_quote": "evidence",
+            "label": "Legacy initially unprotected",
+        },
+    ).json()
+    version_id = uuid.UUID(entry["version_id"])
+    with Session(engine) as session:
+        user = session.get(User, demo_id("user-clinician"))
+        membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+        version = session.get(EntryVersion, version_id)
+        assert user is not None and membership is not None and version is not None
+        archive_version(
+            session,
+            RequestContext(user=user, membership=membership),
+            version,
+            now=version.created_at + timedelta(days=731),
+        )
+        session.commit()
+
+    migration_engine = owner_session.get_bind()
+    with migration_engine.connect() as connection:
+        transaction = connection.begin()
+        migration_context = MigrationContext.configure(connection)
+        with Operations.context(migration_context):
+            protection.downgrade()
+            connection.execute(
+                text("UPDATE highlights SET pinned = true WHERE id = :id"),
+                {"id": uuid.UUID(highlight["id"])},
+            )
+            with pytest.raises(DBAPIError, match="rehydrate protected cold"):
+                protection.upgrade()
         transaction.rollback()

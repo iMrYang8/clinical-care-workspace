@@ -11,6 +11,12 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_KNOWN_LOCAL_SECRET_VALUES = {
+    "changethis",
+    "nightingale-app-local",
+    "4e69676874696e67616c652d73796e7468657469632d6465762d6b65792d3031",
+}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -27,7 +33,7 @@ class Settings(BaseSettings):
     # 60 minutes * 24 hours * 8 days = 8 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
     FRONTEND_HOST: str = "http://localhost:5173"
-    FASTAPI_ENV: Literal["development"] | None = None
+    FASTAPI_ENV: Literal["development", "production"] | None = None
     ENABLE_DEMO_AUTH: bool = False
     AI_PROVIDER: Literal["deterministic", "openai", "disabled"] = "deterministic"
     REMOTE_TEXT_EGRESS_ENABLED: bool = False
@@ -87,14 +93,16 @@ class Settings(BaseSettings):
         return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
 
     EMAIL_TEST_USER: EmailStr = "test@example.com"
-    FIRST_SUPERUSER: EmailStr
-    FIRST_SUPERUSER_PASSWORD: str
+    # Retained only for the template's local Playwright compatibility. Production
+    # identities are created by the explicit provision-clinic-admin command.
+    FIRST_SUPERUSER: EmailStr | None = None
+    FIRST_SUPERUSER_PASSWORD: str | None = None
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
-        if value == "changethis":
+        if value in _KNOWN_LOCAL_SECRET_VALUES:
             message = (
-                f'The value of {var_name} is "changethis", '
-                "for security, please change it, at least for deployments."
+                f"The value of {var_name} is a tracked local fixture value; "
+                "replace it for every deployment."
             )
             if self.FASTAPI_ENV == "development":
                 warnings.warn(message, stacklevel=1)
@@ -103,7 +111,23 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _enforce_non_default_secrets(self) -> Self:
+        if self.FASTAPI_ENV != "development":
+            if not self.FIELD_ENCRYPTION_MASTER_KEY:
+                raise ValueError(
+                    "FIELD_ENCRYPTION_MASTER_KEY is required outside development"
+                )
+            if (
+                self.AI_PROVIDER == "openai"
+                and self.REMOTE_TEXT_EGRESS_ENABLED
+                and not self.PRESIDIO_REQUIRED
+            ):
+                raise ValueError(
+                    "PRESIDIO_REQUIRED must remain enabled for remote text egress"
+                )
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
+        self._check_default_secret(
+            "FIELD_ENCRYPTION_MASTER_KEY", self.FIELD_ENCRYPTION_MASTER_KEY
+        )
         for host in self.DATABASE_URL.hosts():
             self._check_default_secret("DATABASE_URL password", host["password"])
         if self.MIGRATION_DATABASE_URL is not None:
@@ -115,9 +139,10 @@ class Settings(BaseSettings):
             self._check_default_secret(
                 "POSTGRES_APP_PASSWORD", self.POSTGRES_APP_PASSWORD
             )
-        self._check_default_secret(
-            "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
-        )
+        if self.FIRST_SUPERUSER_PASSWORD is not None:
+            self._check_default_secret(
+                "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
+            )
 
         return self
 

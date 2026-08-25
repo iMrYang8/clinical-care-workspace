@@ -15,9 +15,22 @@ from fastapi import HTTPException
 from sqlmodel import Session, col, select
 
 from app.core.config import settings
-from app.core.db import engine, set_rls_clinic
-from app.models import Clinic, Job, get_datetime_utc
+from app.core.db import (
+    assert_restricted_runtime_database,
+    engine,
+    set_rls_clinic,
+)
+from app.models import (
+    AuditEvent,
+    Clinic,
+    ClinicMembership,
+    DomainEvent,
+    Job,
+    JobAttempt,
+    get_datetime_utc,
+)
 from app.services.ai_jobs import process_job, worker_context_for_job
+from app.services.redaction import assert_presidio_runtime
 
 logger = logging.getLogger(__name__)
 _AI_JOB_KINDS = ("ai_ingest", "ai_reanalyze")
@@ -51,6 +64,82 @@ def _next_job(session: Session, clinic_id: uuid.UUID) -> Job | None:
     ).first()
 
 
+def _finalize_exhausted_expired_leases(session: Session, clinic_id: uuid.UUID) -> int:
+    """Terminalize expired final attempts without invoking a provider again."""
+
+    set_rls_clinic(session, clinic_id)
+    now = get_datetime_utc()
+    jobs = session.exec(
+        select(Job)
+        .where(
+            Job.clinic_id == clinic_id,
+            col(Job.kind).in_(_AI_JOB_KINDS),
+            Job.state == "running",
+            col(Job.locked_until) < now,
+            Job.attempt_count >= Job.max_attempts,
+        )
+        .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
+    ).all()
+    for job in jobs:
+        attempts = session.exec(
+            select(JobAttempt)
+            .where(
+                JobAttempt.clinic_id == clinic_id,
+                JobAttempt.job_id == job.id,
+                JobAttempt.status == "started",
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+        for attempt in attempts:
+            attempt.status = "failed"
+            attempt.error_code = "WORKER_LEASE_EXPIRED"
+            attempt.completed_at = now
+            session.add(attempt)
+        latest_attempt = max(attempts, key=lambda item: item.attempt_no, default=None)
+        membership = (
+            session.get(ClinicMembership, latest_attempt.worker_membership_id)
+            if latest_attempt is not None
+            and latest_attempt.worker_membership_id is not None
+            else None
+        )
+        actor_id = membership.user_id if membership is not None else job.created_by_id
+        job.state = "failed"
+        job.error_code = "JOB_ATTEMPTS_EXHAUSTED"
+        job.locked_by = None
+        job.locked_until = None
+        job.next_run_at = None
+        job.updated_at = now
+        session.add(job)
+        metadata: dict[str, object] = {
+            "error_code": "JOB_ATTEMPTS_EXHAUSTED",
+            "attempt_count": job.attempt_count,
+        }
+        session.add(
+            AuditEvent(
+                clinic_id=clinic_id,
+                actor_id=actor_id,
+                action="job.exhausted",
+                resource_type="job",
+                resource_id=job.id,
+                metadata_json=metadata,
+            )
+        )
+        session.add(
+            DomainEvent(
+                clinic_id=clinic_id,
+                event_type="job.exhausted",
+                aggregate_type="job",
+                aggregate_id=job.id,
+                actor_id=actor_id,
+                payload_json=metadata,
+            )
+        )
+    session.flush()
+    return len(jobs)
+
+
 def _safe_http_code(exc: HTTPException) -> str:
     detail = exc.detail
     candidate = detail.get("code") if isinstance(detail, dict) else None
@@ -64,12 +153,24 @@ def _safe_http_code(exc: HTTPException) -> str:
 async def run_once() -> int:
     """Attempt at most one job per clinic and return the processed count."""
 
+    if settings.FASTAPI_ENV != "development":
+        assert_restricted_runtime_database()
+        if settings.AI_PROVIDER == "openai" and settings.REMOTE_TEXT_EGRESS_ENABLED:
+            assert_presidio_runtime(settings.PRESIDIO_NLP_MODEL)
     with Session(engine) as catalog:
         clinic_ids = catalog.exec(select(Clinic.id).order_by(col(Clinic.id))).all()
 
     processed = 0
     for clinic_id in clinic_ids:
         with Session(engine) as session:
+            recovered = _finalize_exhausted_expired_leases(session, clinic_id)
+            if recovered:
+                session.commit()
+                logger.info(
+                    "ai_worker_recovered clinic_id=%s count=%s code=JOB_ATTEMPTS_EXHAUSTED",
+                    clinic_id,
+                    recovered,
+                )
             job = _next_job(session, clinic_id)
             if job is None:
                 continue

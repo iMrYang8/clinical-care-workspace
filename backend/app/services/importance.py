@@ -241,10 +241,6 @@ def record_feedback(
     signal: str,
     idempotency_key: str,
 ) -> tuple[bool, set[uuid.UUID]]:
-    feature_keys, request_hash, idempotency_token = _feedback_request_identity(
-        highlight, signal, idempotency_key
-    )
-
     # The clinic row is the serialization point for learning. It makes first
     # observation creation and idempotency replay atomic without introducing a
     # global lock across tenants.
@@ -252,6 +248,21 @@ def record_feedback(
     # two concurrent feedback requests would otherwise each hold a highlight
     # row while waiting on the other's clinic/candidate work.
     lock_importance_scope(session, context.clinic_id)
+    # Comment/edit callers may have loaded this object before waiting for the
+    # clinic lock. Re-lock and refresh it so a concurrently committed
+    # accept/pin transition cannot be overwritten by stale score/glance data.
+    highlight = session.exec(
+        select(Highlight)
+        .where(
+            Highlight.clinic_id == context.clinic_id,
+            Highlight.id == highlight.id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one()
+    feature_keys, request_hash, idempotency_token = _feedback_request_identity(
+        highlight, signal, idempotency_key
+    )
     if feedback_idempotency_replayed(
         session,
         context,
@@ -306,7 +317,9 @@ def record_feedback(
 
     affected_patients: set[uuid.UUID] = set()
     candidates = session.exec(
-        select(Highlight).where(Highlight.clinic_id == context.clinic_id)
+        select(Highlight)
+        .where(Highlight.clinic_id == context.clinic_id)
+        .execution_options(populate_existing=True)
     ).all()
     affected_features = set(feature_keys)
     for candidate in candidates:
