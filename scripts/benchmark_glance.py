@@ -54,13 +54,14 @@ def command_output(command: list[str], *, cwd: Path) -> str | None:
     return value or None
 
 
-def compose_identity(root: Path, project: str | None) -> dict[str, str]:
+def compose_identity(
+    root: Path, project: str | None, *, expected_commit: str
+) -> dict[str, str]:
     if not project:
-        return {
-            "project": "not reported",
-            "config_sha256": "not available",
-            "backend_image_digest": "not available",
-        }
+        raise RuntimeError(
+            "Release Glance benchmark requires --compose-project so its running "
+            "backend image can be bound to the checkout"
+        )
     config = command_output(
         [
             "docker",
@@ -77,33 +78,53 @@ def compose_identity(root: Path, project: str | None) -> dict[str, str]:
         ],
         cwd=root,
     )
-    image_ref = command_output(
+    container_id = command_output(
         [
             "docker",
+            "compose",
+            "--project-name",
+            project,
+            "-f",
+            "compose.yml",
+            "-f",
+            "compose.override.yml",
             "ps",
-            "--filter",
-            f"label=com.docker.compose.project={project}",
-            "--filter",
-            "label=com.docker.compose.service=backend",
-            "--format",
-            "{{.Image}}",
+            "-q",
+            "backend",
         ],
         cwd=root,
     )
-    image_digest = (
-        command_output(
-            ["docker", "image", "inspect", image_ref, "--format", "{{.Id}}"],
-            cwd=root,
+    if not config or not container_id:
+        raise RuntimeError(
+            f"Compose project {project!r} has no inspectable running backend"
         )
-        if image_ref
-        else None
+    image_digest = command_output(
+        ["docker", "inspect", "--format", "{{.Image}}", container_id],
+        cwd=root,
     )
+    if not image_digest:
+        raise RuntimeError("Running backend container has no immutable image digest")
+    image_revision = command_output(
+        [
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            '{{ index .Config.Labels "org.opencontainers.image.revision" }}',
+            image_digest,
+        ],
+        cwd=root,
+    )
+    if image_revision != expected_commit:
+        raise RuntimeError(
+            "Running backend image revision "
+            f"{image_revision!r} does not match checkout {expected_commit!r}"
+        )
     return {
         "project": project,
-        "config_sha256": (
-            hashlib.sha256(config.encode()).hexdigest() if config else "not available"
-        ),
-        "backend_image_digest": image_digest or "not available",
+        "config_sha256": hashlib.sha256(config.encode()).hexdigest(),
+        "backend_image_digest": image_digest,
+        "backend_image_revision": image_revision,
     }
 
 
@@ -184,6 +205,7 @@ def response_fingerprint(payload: dict[str, Any]) -> dict[str, Any]:
 
 def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
+    commit = git_commit(root)
     dirty = git_is_dirty(root)
     if dirty and not args.allow_dirty:
         raise RuntimeError(
@@ -237,7 +259,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     result: dict[str, Any] = {
         "schema_version": 2,
         "measured_at": datetime.now(UTC).isoformat(),
-        "commit": git_commit(root),
+        "commit": commit,
         "dirty": dirty,
         "hardware": {
             "platform": platform.platform(),
@@ -261,7 +283,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "expected_card_count": args.expected_card_count,
         },
         "response": response_fingerprint(target_payload),
-        "compose": compose_identity(root, args.compose_project),
+        "compose": compose_identity(root, args.compose_project, expected_commit=commit),
         "latency_ms": {
             "median": round(statistics.median(durations), 3),
             "p95": round(p95, 3),

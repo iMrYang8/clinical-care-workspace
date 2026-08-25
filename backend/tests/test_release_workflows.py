@@ -14,20 +14,33 @@ ROOT = Path(__file__).resolve().parents[2]
 )
 def test_deployment_waits_for_main_sha_release_gate(name: str) -> None:
     workflow = (ROOT / ".github" / "workflows" / name).read_text()
-    gate, deploy = workflow.split("\n  deploy:\n", maxsplit=1)
+    gate, protected_job = workflow.split("\n  protected-release:\n", maxsplit=1)
     assert "release-gates:" in gate
     assert "github.ref == 'refs/heads/main'" in gate
-    assert "scripts/verify-release.sh" in gate
+    assert "scripts/verify-release.sh --e2e --benchmark --ffmpeg" in gate
+    assert "NIGHTINGALE_RELEASE_EVIDENCE_DIR" in gate
     assert "verified-sha" in gate
     assert "secrets." not in gate
-    assert "needs: release-gates" in deploy
-    assert "needs.release-gates.result == 'success'" in deploy
-    assert "github.ref == 'refs/heads/main'" in deploy
-    assert "name: production" in deploy
-    assert "ref: ${{ github.sha }}" in deploy
-    assert "git rev-parse HEAD" in deploy
+    assert "needs: release-gates" in protected_job
+    assert "needs.release-gates.result == 'success'" in protected_job
+    assert "github.ref == 'refs/heads/main'" in protected_job
+    assert "name: production" in protected_job
+    assert "ref: ${{ github.sha }}" in protected_job
+    assert "git rev-parse HEAD" in protected_job
     assert "group: production-main" in workflow
     assert "cancel-in-progress: false" in workflow
+
+
+def test_fastapi_cloud_workflow_is_verification_only_until_worker_is_supported() -> (
+    None
+):
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+
+    assert "deployment disabled" in workflow.lower()
+    assert "uv run fastapi deploy" not in workflow
+    assert "MIGRATION_DATABASE_URL" not in workflow
+    assert "FASTAPI_CLOUD_TOKEN" not in workflow
+    assert "python -m app.ai_worker" in workflow
 
 
 def test_compose_deploy_uses_one_inspected_content_addressed_backend_image() -> None:
@@ -59,7 +72,38 @@ def test_compose_deploy_uses_one_inspected_content_addressed_backend_image() -> 
     build = workflow.index("Build and bind the immutable release image")
     migrate = workflow.index("Prepare database")
     start = workflow.index("Start application")
-    assert build < migrate < start
+    smoke = workflow.index("Verify HTTPS and worker readiness")
+    assert build < migrate < start < smoke
+
+
+def test_compose_production_deploy_waits_and_smokes_https_and_worker() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "deploy-docker-compose.yml"
+    ).read_text()
+
+    assert "up -d --wait --wait-timeout" in workflow
+    assert "https://${DOMAIN}/api/v1/utils/health-check/" in workflow
+    assert "exec -T ai-worker" in workflow
+    assert "assert_restricted_runtime_database" in workflow
+    assert "org.opencontainers.image.revision" in workflow
+    assert 'docker run --rm --entrypoint ffmpeg "$image_id" -version' in workflow
+
+
+def test_release_verification_live_gate_checks_https_worker_and_image_revision() -> (
+    None
+):
+    script = (ROOT / "scripts" / "verify-release.sh").read_text()
+
+    assert "assert_live_release_topology" in script
+    assert '"https://localhost:${live_https_port}/api/v1/utils/health-check/"' in script
+    assert "org.opencontainers.image.revision" in script
+    assert "app.ai_worker" in script
+
+
+def test_runtime_container_excludes_dev_group_from_both_sync_layers() -> None:
+    dockerfile = (ROOT / "backend" / "Dockerfile").read_text()
+
+    assert dockerfile.count("uv sync --frozen --no-dev") == 2
 
 
 def test_playwright_required_check_always_runs_and_cannot_allow_skip() -> None:

@@ -120,6 +120,62 @@ def test_benchmark_response_fingerprint_is_order_independent() -> None:
     )
 
 
+def test_compose_identity_binds_running_backend_image_to_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    outputs = iter(
+        [
+            '{"services": {}}',
+            "backend-container-id",
+            "sha256:immutable-image-id",
+            "candidate-commit",
+        ]
+    )
+    monkeypatch.setattr(
+        benchmark_glance,
+        "command_output",
+        lambda command, *, cwd: next(outputs),
+    )
+
+    identity = benchmark_glance.compose_identity(
+        tmp_path, "release-project", expected_commit="candidate-commit"
+    )
+
+    assert identity["project"] == "release-project"
+    assert identity["backend_image_digest"] == "sha256:immutable-image-id"
+    assert identity["backend_image_revision"] == "candidate-commit"
+
+
+def test_compose_identity_rejects_stale_running_backend_image(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    outputs = iter(
+        [
+            '{"services": {}}',
+            "backend-container-id",
+            "sha256:immutable-image-id",
+            "older-commit",
+        ]
+    )
+    monkeypatch.setattr(
+        benchmark_glance,
+        "command_output",
+        lambda command, *, cwd: next(outputs),
+    )
+
+    with pytest.raises(RuntimeError, match="does not match checkout"):
+        benchmark_glance.compose_identity(
+            tmp_path, "release-project", expected_commit="candidate-commit"
+        )
+
+
+def test_compose_identity_requires_a_running_project(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="--compose-project"):
+        benchmark_glance.compose_identity(
+            tmp_path, None, expected_commit="candidate-commit"
+        )
+
+
 def test_release_dirty_gate_ignores_test_bytecode_but_detects_real_changes(
     tmp_path: Path,
 ) -> None:

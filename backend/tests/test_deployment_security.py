@@ -73,7 +73,7 @@ def test_production_rejects_every_tracked_local_fixture_secret() -> None:
         _production_settings(POSTGRES_APP_PASSWORD="nightingale-app-local")
 
 
-def test_production_compose_and_cloud_workflow_override_demo_boundary() -> None:
+def test_production_compose_overrides_demo_and_cloud_path_is_disabled() -> None:
     compose = (REPOSITORY_ROOT / "compose.yml").read_text()
     workflow = (REPOSITORY_ROOT / ".github/workflows/deploy.yml").read_text()
     assert compose.count('FASTAPI_ENV: "production"') == 3
@@ -85,8 +85,9 @@ def test_production_compose_and_cloud_workflow_override_demo_boundary() -> None:
         == 3
     )
     assert compose.count("MIGRATION_DATABASE_URL:") == 1
-    assert workflow.count("FASTAPI_ENV: production") == 2
-    assert workflow.count('ENABLE_DEMO_AUTH: "false"') == 2
+    assert "fastapi deploy" not in workflow
+    assert "FASTAPI_CLOUD_TOKEN" not in workflow
+    assert "python -m app.ai_worker" in workflow
 
 
 def test_each_traefik_provider_is_scoped_to_its_compose_project() -> None:

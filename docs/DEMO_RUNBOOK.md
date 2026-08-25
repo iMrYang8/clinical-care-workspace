@@ -173,6 +173,13 @@ The orchestrated check is:
 ./scripts/verify-release.sh --e2e --benchmark --ffmpeg
 ```
 
+The second command is the mandatory pre-deployment gate in both production
+workflows. It runs Scenario A-F with three repetitions, checks the local TLS
+route and durable worker process, benchmarks the exact running backend image,
+and captures FFmpeg from a current-revision container. Set
+`NIGHTINGALE_RELEASE_EVIDENCE_DIR` to a directory outside the worktree when the
+evidence must be preserved as a CI artifact.
+
 The default verifies the frozen Python and Bun locks, backend Ruff/mypy/ty,
 pytest with a 90% coverage gate, an Alembic downgrade/upgrade roundtrip,
 frontend type/lint/unit/build, tracked OpenAPI schema/client synchronization, and
@@ -209,26 +216,34 @@ DOMAIN=nightingale.invalid NIGHTINGALE_BACKEND_IMAGE=nightingale-backend:config-
 Glance performance:
 
 ```bash
-uv run --frozen --package app python scripts/benchmark_glance.py --insecure
+uv run --frozen --package app python scripts/benchmark_glance.py \
+  --base-url https://localhost --insecure \
+  --compose-project "$(./scripts/demo-project-name.sh)"
 ```
 
 The benchmark uniquely resolves **Alex Synthetic** rather than trusting list
 order, requires the expected four non-empty cards on every read, and records
-the fixture patient ID plus observed card count. It warms the precomputed
-endpoint, records hardware/commit/sample counts, and fails if warm p95 exceeds
-300 ms. It does not measure a model call.
+the fixture patient ID plus observed card count. It requires the running
+backend OCI revision to equal checkout `HEAD`, warms the precomputed endpoint,
+records hardware/commit/sample counts, and fails if warm p95 exceeds 300 ms.
+It does not measure a model call. A checked-in record from an older commit is
+historical evidence only and cannot satisfy a current release gate.
 
 ## Production migration/deploy ordering
 
 Both GitHub production workflows use the same literal `production-main`
-concurrency group with `cancel-in-progress: false`; one migration/deploy
+concurrency group with `cancel-in-progress: false`; one protected release
 finishes before the newest pending main SHA begins, preventing an older SHA
-from deploying later. Both deployment workflows skip every non-main ref, run
-release gates without production secrets, and bind deployment to an uploaded
-verified-SHA artifact. Repository operators must additionally protect the
-GitHub `production` environment with required reviewers and a main-only
-deployment-branch rule; the YAML environment name cannot configure those
-repository settings. The `f9127d3b4c50` entry-metadata migration is an expand
+from deploying later. Both workflows skip every non-main ref, run the complete
+live gates without production secrets, and bind approval to an uploaded
+current-SHA evidence artifact. Only the Docker Compose workflow deploys: it
+uses `--wait`, then checks public HTTPS, the running worker command, restricted
+worker database access, and the exact image ID. The FastAPI Cloud workflow is
+verification-only because that single-service path does not provision the
+required durable `python -m app.ai_worker` process. Repository operators must
+add required reviewers and a main-only deployment-branch rule to the GitHub
+`production` environment; YAML cannot configure those repository settings.
+The `f9127d3b4c50` entry-metadata migration is an expand
 step: existing rows use trusted backfill, while old API binaries may still
 insert using `legacy_review_required` and `CURRENT_TIMESTAMP` server defaults.
 New code supplies formal metadata. Remove those compatibility defaults only in

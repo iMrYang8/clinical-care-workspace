@@ -59,7 +59,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY ./pyproject.toml ./uv.lock /app/
 COPY ./backend/pyproject.toml /app/backend/pyproject.toml
 RUN set -eu; \
-    set -- uv sync --frozen --no-install-workspace --package app; \
+    set -- uv sync --frozen --no-dev --no-install-workspace --package app; \
     if [ "$INSTALL_PRESIDIO_NLP" = "true" ]; then set -- "$@" --group presidio-nlp; fi; \
     if [ "$INSTALL_LOCAL_ASR" = "true" ]; then set -- "$@" --group local-asr; fi; \
     if [ "$INSTALL_DIARIZATION" = "true" ]; then set -- "$@" --group diarization; fi; \
@@ -87,7 +87,7 @@ COPY --from=frontend-build /app/backend/app/frontend /app/backend/app/frontend
 # Sync the project itself after source is present. Dependencies are already in
 # the preceding layer and uv still verifies the same frozen lock.
 RUN set -eu; \
-    set -- uv sync --frozen --package app; \
+    set -- uv sync --frozen --no-dev --package app; \
     if [ "$INSTALL_PRESIDIO_NLP" = "true" ]; then set -- "$@" --group presidio-nlp; fi; \
     if [ "$INSTALL_LOCAL_ASR" = "true" ]; then set -- "$@" --group local-asr; fi; \
     if [ "$INSTALL_DIARIZATION" = "true" ]; then set -- "$@" --group diarization; fi; \

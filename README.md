@@ -148,8 +148,8 @@ rendering):
 ./scripts/verify-release.sh
 ```
 
-Optional live checks create a collision-resistant, checkout-bound temporary
-synthetic demo on dynamically selected loopback ports:
+The complete deployment gate creates a collision-resistant, checkout-bound
+temporary synthetic demo on dynamically selected loopback ports:
 
 ```bash
 ./scripts/verify-release.sh --e2e --benchmark --ffmpeg
@@ -162,15 +162,22 @@ output at
 for a release image, the container build must be recorded as **not tested**;
 host FFmpeg output is not a substitute.
 
+Both production workflows run this complete command before crossing the
+protected release boundary. Scenario A-F runs with `--repeat-each=3`; the live
+benchmark rejects a running backend image whose OCI revision differs from
+checkout `HEAD`, and the worker/TLS topology must be ready.
+
 Individual commands are documented in the verification section of the demo
-runbook. The checked-in measurement for commit `ced58bf7501182b0b46147ebbe3a189eede3511a`
+runbook. The checked-in **historical** measurement for commit
+`ced58bf7501182b0b46147ebbe3a189eede3511a`
 used the exact **Alex Synthetic** fixture (4/4 expected cards), 20 warmups and
 100 local HTTPS samples on the recorded arm64 host: median `3.124 ms`, p95
 `3.508 ms`, and p99 `3.707 ms`. The schema/body, Compose config, and backend
 image fingerprints are in
 [`docs/evidence/glance-benchmark.json`](./docs/evidence/glance-benchmark.json).
-It measures the precomputed read path, not a model call; rerun it for a newer
-release commit or different hardware.
+It measures the precomputed read path, not a model call. Because it is not from
+the current `HEAD`, it never satisfies a current release gate; rerun the full
+command for every release commit and hardware target.
 
 ## Production boundary
 
@@ -187,7 +194,12 @@ release_image_id="$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEN
 test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image_id")" = "$NIGHTINGALE_SOURCE_COMMIT"
 export NIGHTINGALE_BACKEND_IMAGE="$release_image_id"
 docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
-docker compose -f compose.yml -f compose.deploy.yml up -d
+docker compose -f compose.yml -f compose.deploy.yml \
+  up -d --wait --wait-timeout 180 proxy backend ai-worker
+test "$(curl --fail --show-error --silent \
+  "https://${DOMAIN}/api/v1/utils/health-check/")" = "true"
+docker compose -f compose.yml -f compose.deploy.yml exec -T ai-worker \
+  python -c "import app.ai_worker; from app.core.db import assert_restricted_runtime_database; assert_restricted_runtime_database()"
 ```
 
 Production Compose refuses an implicit `backend:latest`. Migration, API, and
@@ -210,10 +222,14 @@ concurrency lane. The entry-metadata Alembic revision retains explicit
 bridge for an old API process during migration; a later contract migration may
 remove them only after old binaries are retired.
 
-Both deploy workflows run release gates without production secrets, upload an
-immutable verified-SHA artifact, and deploy only that exact SHA on `main`.
-Repository operators must configure required reviewers and a main-only branch
-rule on the GitHub `production` environment before enabling deployment.
+Both production workflows run full live release gates without production
+secrets and upload current-SHA evidence. The Docker Compose workflow is the
+only complete supported deployment and deploys that exact SHA on `main` after
+approval. The FastAPI Cloud workflow is intentionally verification-only because
+a one-process deployment does not start the durable `python -m app.ai_worker`
+required for voice and AI jobs. Repository operators must configure required
+reviewers and a main-only branch rule on the GitHub `production` environment
+before enabling Compose deployment.
 
 ## Repository map
 

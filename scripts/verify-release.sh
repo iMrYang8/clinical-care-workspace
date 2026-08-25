@@ -6,6 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 run_e2e=false
 run_benchmark=false
 run_ffmpeg=false
+evidence_dir="${NIGHTINGALE_RELEASE_EVIDENCE_DIR:-}"
 
 usage() {
   cat <<'EOF'
@@ -17,13 +18,15 @@ Default gates:
   production Compose rendering.
 
 Optional gates:
-  --e2e        start an isolated temporary TLS demo and run Playwright
-  --benchmark  run the precomputed Glance p95 <= 300 ms gate
-  --ffmpeg     archive the backend container's actual ffmpeg -version record
+  --e2e        start an isolated TLS demo and run Scenario A-F three times
+  --benchmark  run the current-image precomputed Glance p95 <= 300 ms gate
+  --ffmpeg     capture the current-image ffmpeg -version record
 
 Environment:
   BUN_BIN                    explicit Bun executable
   NIGHTINGALE_SKIP_INSTALL=1 require existing frozen Python/JS environments
+  NIGHTINGALE_RELEASE_EVIDENCE_DIR
+                             preserve live benchmark/FFmpeg evidence here
   COMPOSE_PROJECT_NAME       rejected; verification always chooses scoped project names
 EOF
 }
@@ -53,6 +56,7 @@ need git
 need uv
 need docker
 need python3
+need curl
 docker compose version >/dev/null 2>&1 || { echo "docker compose is required" >&2; exit 1; }
 if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
   echo "verify-release chooses isolated project names; unset COMPOSE_PROJECT_NAME." >&2
@@ -84,6 +88,11 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-${TMPDIR:-/tmp}/nightingale-uv-cache}"
 cd "$root"
 export NIGHTINGALE_SOURCE_COMMIT="$(git rev-parse HEAD)"
 export NIGHTINGALE_CHECKOUT_FINGERPRINT="$(./scripts/demo-project-name.sh --fingerprint)"
+if [[ -n "$evidence_dir" ]]; then
+  mkdir -p "$evidence_dir"
+  evidence_dir="$(cd "$evidence_dir" && pwd -P)"
+  printf '%s\n' "$NIGHTINGALE_SOURCE_COMMIT" > "$evidence_dir/release-commit.txt"
+fi
 
 section "Frozen dependency locks"
 uv lock --check
@@ -177,6 +186,7 @@ live_created=false
 live_http_port=""
 live_https_port=""
 benchmark_output=""
+benchmark_output_is_temporary=false
 cleanup_live() {
   if [[ -n "$live_project" && "$live_created" == true ]]; then
     if ! ./scripts/assert-demo-project-ownership.sh "$live_project" --temporary; then
@@ -189,9 +199,63 @@ cleanup_live() {
         down --volumes --remove-orphans
     live_created=false
   fi
-  if [[ -n "$benchmark_output" ]]; then
+  if [[ -n "$benchmark_output" && "$benchmark_output_is_temporary" == true ]]; then
     rm -f "$benchmark_output"
   fi
+}
+
+assert_live_release_topology() {
+  local backend_id backend_image backend_revision worker_id worker_image
+  local worker_revision worker_state worker_command health_body
+  backend_id="$(docker compose --project-name "$live_project" \
+    -f compose.yml -f compose.override.yml ps -q backend)"
+  worker_id="$(docker compose --project-name "$live_project" \
+    -f compose.yml -f compose.override.yml ps -q ai-worker)"
+  [[ -n "$backend_id" && -n "$worker_id" ]] || {
+    echo "Live release topology is missing backend or ai-worker." >&2
+    return 1
+  }
+
+  backend_image="$(docker inspect --format '{{.Image}}' "$backend_id")"
+  worker_image="$(docker inspect --format '{{.Image}}' "$worker_id")"
+  backend_revision="$(docker image inspect --format \
+    '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    "$backend_image")"
+  worker_revision="$(docker image inspect --format \
+    '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+    "$worker_image")"
+  [[ "$backend_image" == "$worker_image" ]] || {
+    echo "Backend and worker do not use the same immutable image." >&2
+    return 1
+  }
+  [[ "$backend_revision" == "$NIGHTINGALE_SOURCE_COMMIT" \
+     && "$worker_revision" == "$NIGHTINGALE_SOURCE_COMMIT" ]] || {
+    echo "Backend/worker image revision is not the checkout HEAD." >&2
+    return 1
+  }
+
+  worker_state="$(docker inspect --format '{{.State.Running}}' "$worker_id")"
+  worker_command="$(docker inspect --format '{{json .Config.Cmd}}' "$worker_id")"
+  [[ "$worker_state" == true && "$worker_command" == *"app.ai_worker"* ]] || {
+    echo "AI worker process is not running the expected command." >&2
+    return 1
+  }
+  docker compose --project-name "$live_project" \
+    -f compose.yml -f compose.override.yml exec -T ai-worker \
+    python -c "import app.ai_worker; from app.core.db import engine; from sqlalchemy import text; connection = engine.connect(); connection.execute(text('SELECT 1')); connection.close()"
+
+  health_body=""
+  for _ in {1..12}; do
+    if health_body="$(curl --fail --insecure \
+      "https://localhost:${live_https_port}/api/v1/utils/health-check/")"; then
+      break
+    fi
+    sleep 2
+  done
+  [[ "$health_body" == true ]] || {
+    echo "TLS application health check did not return true." >&2
+    return 1
+  }
 }
 
 if [[ "$run_e2e" == true || "$run_benchmark" == true ]]; then
@@ -210,6 +274,7 @@ if [[ "$run_e2e" == true || "$run_benchmark" == true ]]; then
     -f compose.yml -f compose.override.yml \
     up --build --detach --wait proxy db prestart backend ai-worker mailpit
   ./scripts/assert-demo-project-ownership.sh "$live_project" --temporary
+  assert_live_release_topology
 fi
 
 if [[ "$run_e2e" == true ]]; then
@@ -224,12 +289,20 @@ fi
 
 if [[ "$run_benchmark" == true ]]; then
   section "Warm precomputed Glance latency"
-  benchmark_output="$(mktemp "${TMPDIR:-/tmp}/nightingale-glance.XXXXXX.json")"
+  if [[ -n "$evidence_dir" ]]; then
+    benchmark_output="$evidence_dir/glance-benchmark.json"
+  else
+    benchmark_output="$(mktemp "${TMPDIR:-/tmp}/nightingale-glance.XXXXXX.json")"
+    benchmark_output_is_temporary=true
+  fi
   uv run --frozen --no-sync --package app python scripts/benchmark_glance.py \
     --base-url "https://localhost:${live_https_port}" --insecure \
     --compose-project "$live_project" --output "$benchmark_output"
-  rm -f "$benchmark_output"
+  if [[ "$benchmark_output_is_temporary" == true ]]; then
+    rm -f "$benchmark_output"
+  fi
   benchmark_output=""
+  benchmark_output_is_temporary=false
 fi
 
 if [[ -n "$live_project" ]]; then
@@ -240,7 +313,12 @@ fi
 
 if [[ "$run_ffmpeg" == true ]]; then
   section "Container FFmpeg release evidence"
-  ./scripts/capture_ffmpeg_inventory.sh
+  if [[ -n "$evidence_dir" ]]; then
+    ./scripts/capture_ffmpeg_inventory.sh \
+      --output "$evidence_dir/ffmpeg-container-version.txt"
+  else
+    ./scripts/capture_ffmpeg_inventory.sh
+  fi
 fi
 
 section "Release verification complete"
