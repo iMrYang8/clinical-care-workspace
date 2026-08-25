@@ -19,14 +19,22 @@ applicable license and model terms to the release notice.
 | [Tiptap core, React, ProseMirror bridge, and Starter Kit](https://github.com/ueberdosis/tiptap) | `3.30.3` (all four packages) | Open-source rich-text editing for care-note content. | MIT. This repository does not use Tiptap Pro, Cloud Comments, or Versioning. |
 | [Serene in Serenade Tiptap Comment Extension](https://github.com/sereneinserenade/tiptap-comment-extension) | `0.2.0` | Adds the selected-text `commentId` mark only; Nightingale owns persistence, immutable anchoring, review state, mentions, assignment, and audit behavior. | MIT. Used as an npm dependency through `CommentAnchorAdapter`; no source is vendored or modified. |
 
+## Direct backend dependencies
+
+| Component | Locked version | Role | License / notice |
+| --- | --- | --- | --- |
+| [Presidio Analyzer](https://github.com/data-privacy-stack/presidio) | `2.2.364` | Embedded PII/PHI analysis behind Nightingale's deterministic SG recognizers and fail-closed residual scan. | MIT. No standalone unauthenticated Presidio service is deployed. |
+| [Presidio Anonymizer](https://github.com/data-privacy-stack/presidio) | `2.2.362` | Locked anonymization dependency; Nightingale currently uses stable project-owned placeholders so immutable evidence mapping remains auditable. | MIT. |
+| [spaCy](https://github.com/explosion/spaCy) | `3.8.16` (transitive through Presidio) | NLP engine interface for configured Presidio language models. | MIT. `en_core_web_sm` or any other language model is **not** locked, bundled, downloaded by application code, or claimed as validated. Missing models produce `fallback/needs_review` and block remote egress. |
+| [python-zstandard](https://github.com/indygreg/python-zstandard) | `0.25.0` | Bounded zstd compression before AES-256-GCM cold archive encryption. | BSD 3-Clause; the installed wheel includes its license text. |
+
 ## Optional integrations
 
 | Component | Status | Intended role | Licensing note |
 | --- | --- | --- | --- |
-| [Presidio](https://github.com/data-privacy-stack/presidio) | **Optional integration — not installed.** | PII/PHI detection and anonymization. | MIT. The project transitioned from the Microsoft organization; review the selected package/image release at adoption. |
-| [FFmpeg](https://ffmpeg.org/) | **Optional runtime tool — not bundled.** | Audio normalization and conversion. | FFmpeg builds may be LGPL or GPL depending on enabled configuration; use a documented build and satisfy its corresponding obligations. |
-| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | **Optional integration — not installed.** | Speech-to-text. | MIT for the library; its CTranslate2 dependency and selected model artifacts retain their own notices and terms. |
-| [pyannote.audio](https://github.com/pyannote/pyannote-audio) | **Optional integration — not installed.** | Speaker diarization. | MIT for the library. Selected pretrained pipelines/models may have separate model cards, access conditions, and terms that must be recorded before download or redistribution. |
+| [FFmpeg](https://ffmpeg.org/) | **Host runtime observed, not bundled.** Developer smoke host reported `8.0.1`, Homebrew prefix `/opt/homebrew/Cellar/ffmpeg/8.0.1`, with `--enable-gpl` and codecs including x264/x265. | Audio normalization and conversion in the later voice profile. | This observed build is GPL-enabled. Container/release builds must record their own exact `ffmpeg -version` and satisfy the corresponding license; this host observation does not validate a distributed image. |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | **Declared optional `local-asr` dependency group; locked `1.2.1`, not default-installed.** | Speech-to-text. | MIT for the library; CTranslate2, PyAV, and selected Whisper weights retain separate notices/terms. No weights are bundled or claimed as smoke-tested. |
+| [pyannote.audio](https://github.com/pyannote/pyannote-audio) | **Declared optional `diarization` dependency group; locked `4.0.7`, not default-installed.** | Speaker diarization/overlap experiments. | Library and model terms must be checked separately. No gated model, Hugging Face token, cached pipeline, or CPU smoke is claimed. |
 
 ## Design references only
 

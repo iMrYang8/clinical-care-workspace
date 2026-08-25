@@ -17,9 +17,11 @@ def reset_synthetic_fixture(session: Session) -> None:
         text(
             """
             TRUNCATE TABLE
-              domain_events, audit_events, provenance_pointers, conflict_cases,
+              domain_events, audit_events, job_attempts, ai_runs, redaction_runs,
+              importance_feedback_events, importance_feature_stats, decay_runs,
+              retention_locks, archive_blobs, provenance_pointers, conflict_cases,
               highlights, care_tasks, comment_mentions, comments, entry_relations,
-              entry_versions, entries, patient_glance_snapshots, patient_user_links,
+              entry_versions, entries, jobs, patient_glance_snapshots, patient_user_links,
               patients, clinic_memberships, users, clinics
             RESTART IDENTITY CASCADE
             """
@@ -30,8 +32,12 @@ def reset_synthetic_fixture(session: Session) -> None:
 
 
 @pytest.fixture(autouse=True)
-def seeded_database() -> Generator[None]:
+def seeded_database(request: pytest.FixtureRequest) -> Generator[None]:
     """Every test starts from the same synthetic, clinic-scoped dataset."""
+
+    if request.node.get_closest_marker("unit") is not None:
+        yield
+        return
 
     with Session(engine) as session:
         reset_synthetic_fixture(session)

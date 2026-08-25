@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     FRONTEND_HOST: str = "http://localhost:5173"
     FASTAPI_ENV: Literal["development"] | None = None
     ENABLE_DEMO_AUTH: bool = False
+    AI_PROVIDER: Literal["deterministic", "openai", "disabled"] = "deterministic"
+    REMOTE_TEXT_EGRESS_ENABLED: bool = False
+    OPENAI_API_KEY: str | None = None
+    OPENAI_EXTRACT_MODEL: str | None = None
+    OPENAI_REVIEW_MODEL: str | None = None
+    PRESIDIO_REQUIRED: bool = True
+    PRESIDIO_NLP_MODEL: str = "en_core_web_sm"
+    IMPORTANCE_LEARNING_ENABLED: bool = True
+    DATA_DECAY_ENABLED: bool = True
+    DATA_DECAY_DRY_RUN: bool = True
 
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
