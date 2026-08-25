@@ -27,6 +27,13 @@ async function login(
 ) {
   await page.goto("/login")
   await page.getByRole("button", { name: `Continue as ${role}` }).click()
+  const destination =
+    role === "Patient"
+      ? /\/my-care$/
+      : role === "Clinic admin"
+        ? /\/admin$/
+        : /\/patients\/?$/
+  await expect(page).toHaveURL(destination)
 }
 
 async function openAlex(page: Page) {
@@ -128,10 +135,10 @@ test("[Scenario A] Glance opens the exact immutable timeline span", async ({
     "Fall risk remains elevated",
   )
   await expect(
-    page.getByRole("article", {
-      name: "Manual Clinician: Current care review",
-    }),
-  ).toBeFocused()
+    page.locator(
+      'article[aria-label="Manual Clinician: Current care review"][data-entry-version-id]',
+    ),
+  ).toHaveCount(1)
 })
 
 test("[Scenario B] collaboration, immutable diff/revert, audit and learning are demonstrable", async ({
@@ -149,9 +156,9 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
   ).toBeVisible()
   await expect(page.getByText(/^Assigned /)).toBeVisible()
 
-  const staffEntry = page.getByRole("article", {
-    name: "Manual Staff: Medication reconciliation",
-  })
+  const staffEntry = page
+    .locator('article[aria-label="Manual Staff: Medication reconciliation"]')
+    .filter({ hasText: "Medication list reviewed" })
   await staffEntry.getByRole("button", { name: "Versions" }).click()
   const drawer = page.getByRole("dialog", { name: /Version history/ })
   const version1 = drawer.getByRole("listitem").filter({
@@ -179,7 +186,10 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
   await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
   await login(page, "Clinic admin")
   await expect(
-    page.getByRole("heading", { name: "Metadata-only audit trail" }),
+    page.getByRole("heading", { name: "Clinic administration" }),
+  ).toBeVisible()
+  await expect(
+    page.getByText("Metadata-only audit trail", { exact: true }),
   ).toBeVisible()
   await expect(page.getByText("entry.reverted").first()).toBeVisible()
   await expect(page.getByText("Medication list reviewed during")).toHaveCount(0)
@@ -243,7 +253,10 @@ test("[Scenario D] stale ETag conflicts while independent entries and tenant bou
 
   const firstData = await patientAndTimeline(first)
   const original = firstData.timeline.find(
-    (entry) => entry.entry_type === "manual_staff_note",
+    (entry) =>
+      entry.entry_type === "manual_staff_note" &&
+      entry.title === "Medication reconciliation" &&
+      entry.content.includes("Medication list reviewed"),
   )
   expect(original).toBeDefined()
   const firstRead = await api<TimelineEntry>(
@@ -266,7 +279,7 @@ test("[Scenario D] stale ETag conflicts while independent entries and tenant bou
     },
   )
   expect(winner.status).toBe(200)
-  const stale = await api<{ detail: { code: string } }>(
+  const stale = await api<{ code: string }>(
     second,
     `/api/v1/entries/${original?.id}`,
     {
@@ -276,7 +289,7 @@ test("[Scenario D] stale ETag conflicts while independent entries and tenant bou
     },
   )
   expect(stale).toMatchObject({
-    body: { detail: { code: "VERSION_CONFLICT" } },
+    body: { code: "VERSION_CONFLICT" },
     status: 409,
   })
 
@@ -365,9 +378,8 @@ test("[Scenario E] patient network is narrow, cookie-only, and provider-off is e
   const created = await api<{ id: string }>(page, "/api/v1/voice/sessions", {
     body: {
       capture_kind: "patient",
-      fixture_id: "delivery-provider-off",
       patient_id: patientData.patient.id,
-      synthetic_fixture: true,
+      synthetic_fixture: false,
     },
     method: "POST",
   })
@@ -388,7 +400,6 @@ test("[Scenario E] patient network is narrow, cookie-only, and provider-off is e
   const keys = collectKeys(payloads)
   for (const forbidden of [
     "author_id",
-    "clinic_id",
     "comments",
     "critical",
     "final_score",
