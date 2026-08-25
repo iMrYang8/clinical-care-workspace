@@ -9,6 +9,7 @@ from sqlmodel import Session, col, select
 from app.core.field_crypto import field_codec
 from app.core.security import get_password_hash
 from app.models import (
+    AIRun,
     AuditEvent,
     CareTask,
     Clinic,
@@ -26,6 +27,7 @@ from app.models import (
     PatientGlanceSnapshot,
     PatientUserLink,
     ProvenancePointer,
+    RedactionRun,
     User,
     get_datetime_utc,
 )
@@ -65,10 +67,14 @@ def _seed_entry(
     contents: list[str],
     occurred_at: datetime,
     patient_facing: bool,
+    source_job_id: uuid.UUID | None = None,
 ) -> tuple[Entry, EntryVersion]:
     entry_id = demo_id(f"entry-{name}")
     existing = session.get(Entry, entry_id)
     if existing is not None:
+        if source_job_id is not None and existing.source_job_id is None:
+            existing.source_job_id = source_job_id
+            session.add(existing)
         assert existing.current_version_id is not None
         existing_version = session.get(EntryVersion, existing.current_version_id)
         assert existing_version is not None
@@ -81,6 +87,7 @@ def _seed_entry(
         origin=origin,
         entry_type=entry_type,
         patient_facing=patient_facing,
+        source_job_id=source_job_id,
         occurred_at=occurred_at,
         created_at=occurred_at,
     )
@@ -185,24 +192,51 @@ def _seed_demo_domain(session: Session) -> None:
         occurred_at=_fixture_time("2026-02-06T14:00:00"),
         patient_facing=True,
     )
-    for entry_type, title, content in (
+    for entry_type, interaction_type, title, content in (
         (
             "ai_doctor_consult_summary",
+            "doctor_consult",
             "AI doctor consult summary",
             "Synthetic doctor-consult draft; clinician review is required.",
         ),
         (
             "ai_nurse_consult_summary",
+            "care_note",
             "AI nurse consult summary",
             "Synthetic nurse-consult draft; clinician review is required.",
         ),
         (
             "ai_patient_session_summary",
+            "patient_insight",
             "AI patient session summary",
             "Synthetic patient-session draft; clinician review is required.",
         ),
     ):
-        _seed_entry(
+        job_id = demo_id(f"job-{entry_type}")
+        request_sha256 = hashlib.sha256(f"fixture:{entry_type}".encode()).hexdigest()
+        if session.get(Job, job_id) is None:
+            session.add(
+                Job(
+                    id=job_id,
+                    clinic_id=clinic_id,
+                    patient_id=patient_id,
+                    kind="ai_analyze",
+                    state="completed",
+                    idempotency_key=f"fixture:{entry_type}:v1",
+                    request_sha256=request_sha256,
+                    payload_ciphertext=field_codec.encrypt_json(
+                        clinic_id,
+                        "job.payload",
+                        job_id,
+                        {"interaction_type": interaction_type, "synthetic": True},
+                    ),
+                    created_by_id=demo_id("user-clinician"),
+                    created_at=_fixture_time("2026-02-06T14:04:00"),
+                    updated_at=_fixture_time("2026-02-06T14:05:00"),
+                )
+            )
+            session.flush()
+        output_entry, output_version = _seed_entry(
             session,
             name=entry_type,
             clinic_id=clinic_id,
@@ -215,7 +249,58 @@ def _seed_demo_domain(session: Session) -> None:
             contents=[content],
             occurred_at=_fixture_time("2026-02-06T14:05:00"),
             patient_facing=False,
+            source_job_id=job_id,
         )
+        redaction_id = demo_id(f"redaction-{entry_type}")
+        if session.get(RedactionRun, redaction_id) is None:
+            source_hash = current_version.content_sha256
+            session.add(
+                RedactionRun(
+                    id=redaction_id,
+                    clinic_id=clinic_id,
+                    source_entry_version_id=current_version.id,
+                    status="completed",
+                    input_sha256=source_hash,
+                    redacted_sha256=source_hash,
+                    entity_counts_json={},
+                    map_ciphertext=field_codec.encrypt_json(
+                        clinic_id, "redaction.map", redaction_id, {}
+                    ),
+                    residual_scan_passed=True,
+                    created_at=_fixture_time("2026-02-06T14:04:30"),
+                )
+            )
+            session.flush()
+        run_id = demo_id(f"ai-run-{entry_type}")
+        if session.get(AIRun, run_id) is None:
+            session.add(
+                AIRun(
+                    id=run_id,
+                    clinic_id=clinic_id,
+                    patient_id=patient_id,
+                    job_id=job_id,
+                    redaction_run_id=redaction_id,
+                    source_entry_version_id=current_version.id,
+                    executed_by_worker_membership_id=demo_id("membership-worker"),
+                    interaction_type=interaction_type,
+                    provider="deterministic_fixture",
+                    model="deterministic-fixture-v1",
+                    review_status="fixture",
+                    primary_output_ciphertext=field_codec.encrypt_json(
+                        clinic_id,
+                        "ai_run.primary_output",
+                        run_id,
+                        {"synthetic": True, "entry_type": entry_type},
+                    ),
+                    status="completed",
+                    needs_review=True,
+                    request_sha256=request_sha256,
+                    output_entry_id=output_entry.id,
+                    output_entry_version_id=output_version.id,
+                    warnings_json=["SYNTHETIC_FIXTURE"],
+                    created_at=_fixture_time("2026-02-06T14:05:00"),
+                )
+            )
     _seed_entry(
         session,
         name="decay-candidate-2023",

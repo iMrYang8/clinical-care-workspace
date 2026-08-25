@@ -1,6 +1,7 @@
 from sqlmodel import Session, select
 
 from app.models import (
+    AIRun,
     AuditEvent,
     CareTask,
     Comment,
@@ -30,6 +31,22 @@ def test_full_demo_fixture_is_idempotent_and_covers_delivery_scenarios(
         "ai_nurse_consult_summary",
         "ai_patient_session_summary",
     } <= entry_types
+    ai_runs = owner_session.exec(
+        select(AIRun).where(AIRun.clinic_id == demo_id("clinic-primary"))
+    ).all()
+    interaction_by_output = {
+        run.output_entry_id: run.interaction_type for run in ai_runs
+    }
+    for entry in entries:
+        if entry.entry_type == "ai_doctor_consult_summary":
+            assert interaction_by_output[entry.id] == "doctor_consult"
+        elif entry.entry_type == "ai_nurse_consult_summary":
+            assert interaction_by_output[entry.id] == "care_note"
+        elif entry.entry_type == "ai_patient_session_summary":
+            assert interaction_by_output[entry.id] in {
+                "patient_insight",
+                "voice_session",
+            }
     assert {entry.occurred_at.date().isoformat() for entry in entries} >= {
         "2023-01-10",
         "2025-04-15",
