@@ -7,7 +7,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.models import Comment, EntryVersion, ProvenancePointer
+from app.models import Comment, EntryVersion, Highlight, ProvenancePointer
 from app.seed import demo_id
 
 TENANT_TABLES = {
@@ -83,7 +83,8 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
                     WHERE NOT tgisinternal
                       AND tgname IN (
                         'trg_entry_version_append_only',
-                        'trg_provenance_append_only'
+                        'trg_provenance_append_only',
+                        'trg_highlight_anchor_guard'
                       )
                     """
                 )
@@ -93,6 +94,7 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
     assert triggers == {
         "trg_entry_version_append_only",
         "trg_provenance_append_only",
+        "trg_highlight_anchor_guard",
     }
 
     inspector = inspect(engine)
@@ -130,9 +132,17 @@ def test_cross_clinic_composite_fk_and_append_only_triggers(
     with Session(engine) as session:
         version = session.get(EntryVersion, uuid.UUID(entry["version_id"]))
         assert version is not None
-        version.content_sha256 = "0" * 64
+        version.content_ciphertext = b"tampered-in-place"
         session.add(version)
-        with pytest.raises(DBAPIError, match="immutable entry_version"):
+        with pytest.raises(DBAPIError, match="immutable entry_version payload"):
+            session.commit()
+
+    with Session(engine) as session:
+        version = session.get(EntryVersion, uuid.UUID(entry["version_id"]))
+        assert version is not None
+        version.title_ciphertext = b"tampered-title-in-place"
+        session.add(version)
+        with pytest.raises(DBAPIError, match="immutable entry_version payload"):
             session.commit()
 
     with Session(engine) as session:
@@ -144,4 +154,41 @@ def test_cross_clinic_composite_fk_and_append_only_triggers(
         pointer.review_required = True
         session.add(pointer)
         with pytest.raises(DBAPIError, match="append-only"):
+            session.commit()
+
+
+def test_highlight_anchor_fields_are_database_immutable(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    entry = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Highlight guard",
+            "content": "anchored",
+        },
+    ).json()
+    highlight = client.post(
+        f"/api/v1/entries/{entry['id']}/highlights",
+        headers=headers,
+        json={
+            "entry_version_id": entry["version_id"],
+            "start_offset": 0,
+            "end_offset": 8,
+            "exact_quote": "anchored",
+            "label": "Immutable anchor",
+        },
+    )
+    assert highlight.status_code == 201, highlight.text
+
+    with Session(engine) as session:
+        stored = session.get(Highlight, uuid.UUID(highlight.json()["id"]))
+        assert stored is not None
+        stored.entry_id = uuid.uuid4()
+        session.add(stored)
+        with pytest.raises(DBAPIError, match="immutable highlight anchor"):
             session.commit()

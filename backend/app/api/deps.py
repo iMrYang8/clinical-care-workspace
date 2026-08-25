@@ -47,7 +47,7 @@ class RequestContext:
         return cast(Role, self.membership.role)
 
 
-def get_request_context(session: SessionDep, token: TokenDep) -> RequestContext:
+def _resolve_request_context(session: Session, token: str) -> RequestContext:
     try:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
@@ -87,7 +87,22 @@ def get_request_context(session: SessionDep, token: TokenDep) -> RequestContext:
     return RequestContext(user=user, membership=membership, job_id=job_id)
 
 
+def get_request_context(session: SessionDep, token: TokenDep) -> RequestContext:
+    return _resolve_request_context(session, token)
+
+
+def get_detached_request_context(token: TokenDep) -> RequestContext:
+    """Resolve SSE auth in a bounded session released before streaming starts."""
+
+    with Session(engine) as session:
+        context = _resolve_request_context(session, token)
+        session.expunge(context.user)
+        session.expunge(context.membership)
+        return context
+
+
 CurrentContext = Annotated[RequestContext, Depends(get_request_context)]
+EventContext = Annotated[RequestContext, Depends(get_detached_request_context)]
 
 
 def require_roles(*roles: Role) -> Callable[[RequestContext], RequestContext]:

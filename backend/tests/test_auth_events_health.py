@@ -1,8 +1,10 @@
+import asyncio
 import uuid
 
 from sqlmodel import Session
 
 from app import initial_data
+from app.api.deps import get_detached_request_context
 from app.api.routes import events as events_route
 from app.core.config import settings
 from app.core.db import engine
@@ -144,19 +146,52 @@ def test_live_sse_generator_polls_and_emits_heartbeats(monkeypatch) -> None:
     monkeypatch.setattr(
         events_route, "_load_events", lambda _clinic, _after: next(pages)
     )
-    monkeypatch.setattr(events_route.time, "monotonic", lambda: 0.0)
-    monkeypatch.setattr(events_route.time, "sleep", sleeps.append)
-    frames = events_route._frames(clinic_id, 0, snapshot=False)
-    assert next(frames).startswith("id: 42\nevent: entry.updated")
-    assert sleeps == [events_route.POLL_INTERVAL_SECONDS]
-    frames.close()
+    monkeypatch.setattr(events_route, "monotonic", lambda: 0.0)
 
-    ticks = iter([0.0, events_route.HEARTBEAT_INTERVAL_SECONDS + 1])
-    monkeypatch.setattr(events_route, "_load_events", lambda _clinic, _after: [])
-    monkeypatch.setattr(events_route.time, "monotonic", lambda: next(ticks))
-    heartbeats = events_route._frames(clinic_id, 42, snapshot=False)
-    assert next(heartbeats) == ": heartbeat\n\n"
-    heartbeats.close()
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(events_route, "sleep", fake_sleep)
+
+    async def exercise() -> None:
+        frames = events_route._frames(clinic_id, 0, snapshot=False)
+        assert (await anext(frames)).startswith("id: 42\nevent: entry.updated")
+        assert sleeps == [events_route.POLL_INTERVAL_SECONDS]
+        await frames.aclose()
+
+        ticks = iter([0.0, events_route.HEARTBEAT_INTERVAL_SECONDS + 1])
+        monkeypatch.setattr(events_route, "_load_events", lambda _clinic, _after: [])
+        monkeypatch.setattr(events_route, "monotonic", lambda: next(ticks))
+        heartbeats = events_route._frames(clinic_id, 42, snapshot=False)
+        assert await anext(heartbeats) == ": heartbeat\n\n"
+        await heartbeats.aclose()
+
+    asyncio.run(exercise())
+
+
+def test_sse_auth_and_concurrent_snapshots_release_pool_connections(client) -> None:
+    login = client.post("/api/v1/auth/demo-login", json={"persona": "staff"})
+    token = login.json()["access_token"]
+    checked_out = engine.pool.checkedout
+    baseline = checked_out()
+    context = get_detached_request_context(token)
+    assert context.role == "staff"
+    assert checked_out() == baseline
+
+    async def drain_snapshots() -> None:
+        async def drain_one() -> list[str]:
+            return [
+                frame
+                async for frame in events_route._frames(
+                    context.clinic_id, 0, snapshot=True
+                )
+            ]
+
+        snapshots = await asyncio.gather(*(drain_one() for _ in range(20)))
+        assert all(frames[-1].startswith("event: caught-up") for frames in snapshots)
+
+    asyncio.run(drain_snapshots())
+    assert checked_out() == baseline
 
 
 def test_initial_data_is_idempotent() -> None:

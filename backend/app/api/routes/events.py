@@ -1,14 +1,16 @@
 import json
-import time
 import uuid
-from collections.abc import Iterator
+from asyncio import sleep
+from collections.abc import AsyncIterator
+from time import monotonic
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlmodel import Session, col, select
+from starlette.concurrency import run_in_threadpool
 
-from app.api.deps import CurrentContext
+from app.api.deps import EventContext
 from app.core.db import engine
 from app.models import DomainEvent
 
@@ -55,11 +57,13 @@ def _event_frame(event: DomainEvent) -> str:
     )
 
 
-def _frames(clinic_id: uuid.UUID, after: int, *, snapshot: bool) -> Iterator[str]:
+async def _frames(
+    clinic_id: uuid.UUID, after: int, *, snapshot: bool
+) -> AsyncIterator[str]:
     cursor = after
-    last_heartbeat = time.monotonic()
+    last_heartbeat = monotonic()
     while True:
-        events = _load_events(clinic_id, cursor)
+        events = await run_in_threadpool(_load_events, clinic_id, cursor)
         for event in events:
             if event.sequence_no is None:
                 continue
@@ -68,16 +72,16 @@ def _frames(clinic_id: uuid.UUID, after: int, *, snapshot: bool) -> Iterator[str
         if snapshot:
             yield "event: caught-up\ndata: {}\n\n"
             return
-        now = time.monotonic()
+        now = monotonic()
         if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
             yield ": heartbeat\n\n"
             last_heartbeat = now
-        time.sleep(POLL_INTERVAL_SECONDS)
+        await sleep(POLL_INTERVAL_SECONDS)
 
 
 @router.get("/stream")
 def event_stream(
-    context: CurrentContext,
+    context: EventContext,
     snapshot: bool = False,
     last_event_id: int | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
