@@ -3,7 +3,7 @@ name: Playwright Tests
 on:
   push:
     branches:
-    - master
+    - main
   pull_request:
   workflow_dispatch:
     inputs:
@@ -45,11 +45,6 @@ jobs:
     if: ${{ needs.changes.outputs.changed == 'true' }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        shardIndex: [1, 2, 3, 4]
-        shardTotal: [4]
-      fail-fast: false
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
@@ -78,14 +73,14 @@ jobs:
     - run: bash scripts/generate-client.sh
     - run: docker compose build
     - run: docker compose down -v --remove-orphans
-    - name: Run Playwright tests
-      run: docker compose run --rm playwright bunx playwright test --fail-on-flaky-tests --trace=retain-on-failure --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+    - name: Run Scenario A-F three consecutive rounds
+      run: docker compose run --rm playwright bunx playwright test --fail-on-flaky-tests --trace=retain-on-failure --repeat-each=3 --workers=1
     - run: docker compose down -v --remove-orphans
     - name: Upload blob report to GitHub Actions Artifacts
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: blob-report-${{ matrix.shardIndex }}
+        name: blob-report
         path: frontend/blob-report
         include-hidden-files: true
         retention-days: 1
@@ -111,7 +106,7 @@ jobs:
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         path: frontend/all-blob-reports
-        pattern: blob-report-*
+        pattern: blob-report
         merge-multiple: true
     - name: Merge into HTML Report
       run: bunx playwright merge-reports --reporter html ./all-blob-reports

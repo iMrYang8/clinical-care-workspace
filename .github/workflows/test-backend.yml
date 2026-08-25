@@ -3,7 +3,7 @@ name: Test Backend
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
 permissions:
   contents: read
@@ -28,14 +28,26 @@ jobs:
           # See: https://github.com/astral-sh/setup-uv/issues/851#issuecomment-4282017837
           version: "0.11.18"
       - run: docker compose down -v --remove-orphans
-      - run: docker compose up -d db mailpit
+      - run: DEV_DB_PORT=5432 docker compose -f compose.yml -f compose.override.yml -f compose.dev-tools.yml up -d --wait db mailpit
       - name: Install locked Presidio model profile
         run: uv sync --frozen --package app --group presidio-nlp
       - name: Migrate DB
-        run: uv run bash scripts/prestart.sh
+        run: |
+          set -a
+          source ../.env
+          set +a
+          export DATABASE_URL="postgresql://nightingale_app:${POSTGRES_APP_PASSWORD}@127.0.0.1:5432/app"
+          export MIGRATION_DATABASE_URL="postgresql://postgres:${POSTGRES_PASSWORD}@127.0.0.1:5432/app"
+          uv run bash scripts/prestart.sh
         working-directory: backend
       - name: Run tests
-        run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
+        run: |
+          set -a
+          source ../.env
+          set +a
+          export DATABASE_URL="postgresql://nightingale_app:${POSTGRES_APP_PASSWORD}@127.0.0.1:5432/app"
+          export MIGRATION_DATABASE_URL="postgresql://postgres:${POSTGRES_PASSWORD}@127.0.0.1:5432/app"
+          uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
         working-directory: backend
         env:
           REQUIRE_PRESIDIO_MODEL_TEST: "true"
