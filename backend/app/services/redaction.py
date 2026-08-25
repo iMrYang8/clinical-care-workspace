@@ -140,11 +140,22 @@ class RedactionService:
         valid = [item for item in entities if 0 <= item.start < item.end <= text_length]
         valid.sort(key=lambda item: (item.start, -(item.end - item.start)))
         selected: list[DetectedEntity] = []
-        cursor = -1
         for item in valid:
-            if item.start >= cursor:
+            if not selected or item.start >= selected[-1].end:
                 selected.append(item)
-                cursor = item.end
+                continue
+            previous = selected[-1]
+            # Crossing aliases such as "Mary Ann" and "Ann Lee" must expand
+            # to their interval union. Dropping the second overlapping span
+            # would leave " Lee" outside the placeholder and falsely pass the
+            # deterministic residual scan.
+            if item.end > previous.end:
+                selected[-1] = DetectedEntity(
+                    previous.entity_type,
+                    previous.start,
+                    item.end,
+                    max(previous.score, item.score),
+                )
         return selected
 
     @classmethod

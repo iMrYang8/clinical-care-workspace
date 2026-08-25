@@ -91,6 +91,33 @@ def test_remote_provider_only_receives_redacted_synthetic_phi() -> None:
     assert fallback.inputs == []
 
 
+def test_crossing_known_aliases_are_union_redacted_before_remote_egress() -> None:
+    context = _context()
+    remote = RecordingProvider()
+    fallback = RecordingProvider()
+    service = RedactionService(
+        analyzer=SequenceAnalyzer([[], []]), require_presidio=True
+    )
+    pipeline = ClinicalScribePipeline(service, fallback_provider=fallback)
+
+    result = asyncio.run(
+        pipeline.run(
+            "Mary Ann Lee reports pain",
+            context=context,
+            known_names=["Mary Ann", "Ann Lee"],
+            remote_provider=remote,
+        )
+    )
+
+    assert result.redaction.remote_egress_allowed is True
+    assert result.redaction.residual_scan_passed is True
+    assert remote.inputs == ["[KNOWN_NAME_1] reports pain"]
+    assert "Mary" not in remote.inputs[0]
+    assert "Ann" not in remote.inputs[0]
+    assert "Lee" not in remote.inputs[0]
+    assert fallback.inputs == []
+
+
 def test_presidio_exception_fails_closed_and_logs_no_phi(caplog) -> None:
     context = _context()
     remote = RecordingProvider()
