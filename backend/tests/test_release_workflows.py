@@ -8,12 +8,10 @@ pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["deploy.yml", "deploy-docker-compose.yml"],
-)
-def test_deployment_waits_for_main_sha_release_gate(name: str) -> None:
-    workflow = (ROOT / ".github" / "workflows" / name).read_text()
+def test_compose_deployment_waits_for_main_sha_release_gate() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "deploy-docker-compose.yml"
+    ).read_text()
     gate, protected_job = workflow.split("\n  protected-release:\n", maxsplit=1)
     assert "release-gates:" in gate
     assert "github.ref == 'refs/heads/main'" in gate
@@ -31,6 +29,19 @@ def test_deployment_waits_for_main_sha_release_gate(name: str) -> None:
     assert "cancel-in-progress: false" in workflow
 
 
+def test_fastapi_cloud_boundary_is_an_unprivileged_verification_workflow() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+
+    assert "release-gates:" in workflow
+    assert "github.ref == 'refs/heads/main'" in workflow
+    assert "scripts/verify-release.sh --e2e --benchmark --ffmpeg" in workflow
+    assert "protected-release:" not in workflow
+    assert "environment:" not in workflow
+    assert "secrets." not in workflow
+    assert "concurrency:" not in workflow
+    assert "group: production-main" not in workflow
+
+
 def test_fastapi_cloud_workflow_is_verification_only_until_worker_is_supported() -> (
     None
 ):
@@ -43,7 +54,7 @@ def test_fastapi_cloud_workflow_is_verification_only_until_worker_is_supported()
     assert "python -m app.ai_worker" in workflow
 
 
-def test_compose_deploy_uses_one_inspected_content_addressed_backend_image() -> None:
+def test_compose_deploy_loads_the_verified_content_addressed_backend_image() -> None:
     workflow = (
         ROOT / ".github" / "workflows" / "deploy-docker-compose.yml"
     ).read_text()
@@ -57,23 +68,35 @@ def test_compose_deploy_uses_one_inspected_content_addressed_backend_image() -> 
         )
         == 3
     )
+    gate, protected_job = workflow.split("\n  protected-release:\n", maxsplit=1)
+    assert "scripts/verify-release.sh --e2e --benchmark --ffmpeg" in gate
+    assert "backend_image_digest" in gate
+    assert "backend_image_id=" in gate
+    assert 'test "$source_image_id" = "$benchmark_image_id"' in gate
+    assert 'test "$source_image_id" = "$ffmpeg_image_id"' in gate
+    assert "docker image save" in gate
+    assert "nightingale-backend.oci.tar" in gate
+    assert "image-id.txt" in gate
+    assert "image-archive.sha256" in gate
+    assert "sha256sum" in gate
+    assert "docker image load" in protected_job
+    assert "nightingale-backend.oci.tar" in protected_job
+    assert "image-id.txt" in protected_job
+    assert "image-archive.sha256" in protected_job
+    assert "sha256sum" in protected_job
+    assert 'test "$loaded_image_id" = "$expected_image_id"' in protected_job
+    assert "docker build" not in protected_job
+    assert "docker compose -f compose.yml -f compose.deploy.yml build" not in workflow
     assert (
-        "NIGHTINGALE_BACKEND_IMAGE: nightingale-backend:${{ github.sha }}" in workflow
+        'printf \'NIGHTINGALE_BACKEND_IMAGE=%s\\n\' "$expected_image_id" '
+        '>> "$GITHUB_ENV"' in protected_job
     )
-    assert (
-        "docker compose -f compose.yml -f compose.deploy.yml build backend" in workflow
-    )
-    assert "docker image inspect --format '{{.Id}}'" in workflow
-    assert "org.opencontainers.image.revision" in workflow
-    assert (
-        'printf \'NIGHTINGALE_BACKEND_IMAGE=%s\\n\' "$image_id" >> "$GITHUB_ENV"'
-        in workflow
-    )
-    build = workflow.index("Build and bind the immutable release image")
+    build = workflow.index("Package the verified deployable release image once")
+    load = workflow.index("Load and verify the exact release image")
     migrate = workflow.index("Prepare database")
     start = workflow.index("Start application")
     smoke = workflow.index("Verify HTTPS and worker readiness")
-    assert build < migrate < start < smoke
+    assert build < load < migrate < start < smoke
 
 
 def test_compose_production_deploy_waits_and_smokes_https_and_worker() -> None:
@@ -85,8 +108,9 @@ def test_compose_production_deploy_waits_and_smokes_https_and_worker() -> None:
     assert "https://${DOMAIN}/api/v1/utils/health-check/" in workflow
     assert "exec -T ai-worker" in workflow
     assert "assert_restricted_runtime_database" in workflow
-    assert "org.opencontainers.image.revision" in workflow
-    assert 'docker run --rm --entrypoint ffmpeg "$image_id" -version' in workflow
+    assert "image-archive.sha256" in workflow
+    assert "docker run --rm --entrypoint ffmpeg" in workflow
+    assert '"$expected_image_id" -version' in workflow
 
 
 def test_release_verification_live_gate_checks_https_worker_and_image_revision() -> (

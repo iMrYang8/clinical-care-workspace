@@ -1,4 +1,4 @@
-name: Validate FastAPI Cloud boundary (deployment disabled)
+name: Verify FastAPI Cloud boundary (deployment disabled)
 
 on:
   push:
@@ -8,11 +8,6 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  # Share the only production lane with the supported Compose deployment.
-  group: production-main
-  cancel-in-progress: false
 
 jobs:
   release-gates:
@@ -66,49 +61,11 @@ jobs:
       - name: Upload current-SHA release evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: verified-sha-cloud-${{ github.run_id }}
+          name: fastapi-cloud-boundary-${{ github.run_id }}
           path: release-artifact/
           if-no-files-found: error
           retention-days: 1
-
-  protected-release:
-    needs: release-gates
-    if: ${{ github.ref == 'refs/heads/main' && needs.release-gates.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # Keep the approval boundary even though this path intentionally performs
-    # no deployment. Protect this environment with reviewers and main-only use.
-    environment:
-      name: production
-    steps:
-      - name: Checkout exact candidate SHA
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Download verified current-SHA evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: verified-sha-cloud-${{ github.run_id }}
-          path: .verified-release
-      - name: Refuse an unverified checkout
-        run: |
-          test "$(cat .verified-release/verified-sha.txt)" = "$GITHUB_SHA"
-          test "$(cat .verified-release/release-commit.txt)" = "$GITHUB_SHA"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          grep -Fxq "nightingale_source_commit=$GITHUB_SHA" \
-            .verified-release/ffmpeg-container-version.txt
-          python - .verified-release/glance-benchmark.json "$GITHUB_SHA" <<'PY'
-          import json
-          import sys
-
-          evidence = json.load(open(sys.argv[1], encoding="utf-8"))
-          assert evidence["commit"] == sys.argv[2]
-          assert evidence["compose"]["backend_image_revision"] == sys.argv[2]
-          assert evidence["gate"]["p95_lte_300ms"] is True
-          PY
-      - name: Keep unsupported FastAPI Cloud deployment disabled
+      - name: Record the disabled deployment boundary
         run: |
           echo "FastAPI Cloud deployment disabled: Nightingale requires the API and a durable python -m app.ai_worker service."
-          echo "Use the protected Docker Compose workflow for the complete production topology."
+          echo "This workflow is an unprivileged verifier; use the protected Docker Compose workflow for production."

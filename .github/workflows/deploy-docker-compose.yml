@@ -7,8 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  # Share the exact production lane with the cloud-boundary verification so
-  # two migration/deploy owners can never overlap.
+  # Only the supported production deployment owns this serialized lane.
   group: production-main
   cancel-in-progress: false
 
@@ -19,6 +18,10 @@ jobs:
     timeout-minutes: 60
     env:
       NIGHTINGALE_RELEASE_EVIDENCE_DIR: ${{ runner.temp }}/nightingale-release-evidence
+      # This must be a repository variable because the image is built and
+      # verified before the protected production approval boundary.
+      INSTALL_PRESIDIO_NLP: ${{ vars.INSTALL_PRESIDIO_NLP }}
+      RELEASE_IMAGE_REF: nightingale-backend:${{ github.sha }}
     steps:
       - name: Checkout exact candidate SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,6 +61,35 @@ jobs:
           mkdir -p release-artifact
           cp "$NIGHTINGALE_RELEASE_EVIDENCE_DIR"/* release-artifact/
           printf '%s\n' "$GITHUB_SHA" > release-artifact/verified-sha.txt
+      - name: Package the verified deployable release image once
+        run: |
+          set -euo pipefail
+          benchmark_image_id="$(python - "$NIGHTINGALE_RELEASE_EVIDENCE_DIR/glance-benchmark.json" <<'PY'
+          import json
+          import sys
+
+          evidence = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(evidence["compose"]["backend_image_digest"])
+          PY
+          )"
+          ffmpeg_image_id="$(awk -F= '/^backend_image_id=/{print $2}' \
+            "$NIGHTINGALE_RELEASE_EVIDENCE_DIR/ffmpeg-container-version.txt")"
+          source_image_id="$(docker image inspect --format '{{.Id}}' backend:latest)"
+          grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$source_image_id"
+          test "$source_image_id" = "$benchmark_image_id"
+          test "$source_image_id" = "$ffmpeg_image_id"
+
+          # Preserve the exact image that passed topology, benchmark, and
+          # FFmpeg gates. The protected job must load, never rebuild, it.
+          docker image tag "$source_image_id" "$RELEASE_IMAGE_REF"
+          docker image save --output \
+            release-artifact/nightingale-backend.oci.tar "$RELEASE_IMAGE_REF"
+          archive_sha256="$(sha256sum \
+            release-artifact/nightingale-backend.oci.tar | awk '{print $1}')"
+          grep -Eq '^[0-9a-f]{64}$' <<<"$archive_sha256"
+          printf '%s\n' "$source_image_id" > release-artifact/image-id.txt
+          printf '%s\n' "$archive_sha256" > release-artifact/image-archive.sha256
+          printf '%s\n' "$RELEASE_IMAGE_REF" > release-artifact/image-ref.txt
       - name: Upload current-SHA release evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -87,7 +119,6 @@ jobs:
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       # Independent from POSTGRES_PASSWORD; never use the committed local value.
       POSTGRES_APP_PASSWORD: ${{ secrets.POSTGRES_APP_PASSWORD }}
-      INSTALL_PRESIDIO_NLP: ${{ vars.INSTALL_PRESIDIO_NLP }}
       AI_PROVIDER: ${{ vars.AI_PROVIDER }}
       REMOTE_TEXT_EGRESS_ENABLED: ${{ vars.REMOTE_TEXT_EGRESS_ENABLED }}
       PRESIDIO_NLP_MODEL: ${{ vars.PRESIDIO_NLP_MODEL }}
@@ -96,8 +127,6 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
       NIGHTINGALE_SOURCE_COMMIT: ${{ github.sha }}
-      # Build with a collision-resistant tag, then use only its inspected ID.
-      NIGHTINGALE_BACKEND_IMAGE: nightingale-backend:${{ github.sha }}
     steps:
       - name: Checkout exact candidate SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,17 +155,28 @@ jobs:
           assert evidence["compose"]["backend_image_revision"] == sys.argv[2]
           assert evidence["gate"]["p95_lte_300ms"] is True
           PY
-      - name: Build and bind the immutable release image
+      - name: Load and verify the exact release image
         run: |
-          docker compose -f compose.yml -f compose.deploy.yml build backend
-          image_id="$(docker image inspect --format '{{.Id}}' "$NIGHTINGALE_BACKEND_IMAGE")"
-          image_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image_id")"
-          test -n "$image_id"
-          test "$image_revision" = "$GITHUB_SHA"
-          ffmpeg_version="$(docker run --rm --entrypoint ffmpeg "$image_id" -version 2>&1)"
+          set -euo pipefail
+          expected_image_ref="$(cat .verified-release/image-ref.txt)"
+          expected_image_id="$(cat .verified-release/image-id.txt)"
+          expected_archive_sha256="$(cat .verified-release/image-archive.sha256)"
+          test "$expected_image_ref" = "nightingale-backend:$GITHUB_SHA"
+          grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$expected_image_id"
+          grep -Eq '^[0-9a-f]{64}$' <<<"$expected_archive_sha256"
+          actual_archive_sha256="$(sha256sum \
+            .verified-release/nightingale-backend.oci.tar | awk '{print $1}')"
+          test "$actual_archive_sha256" = "$expected_archive_sha256"
+
+          docker image load --input .verified-release/nightingale-backend.oci.tar
+          loaded_image_id="$(docker image inspect --format '{{.Id}}' \
+            "$expected_image_ref")"
+          test "$loaded_image_id" = "$expected_image_id"
+          ffmpeg_version="$(docker run --rm --entrypoint ffmpeg \
+            "$expected_image_id" -version 2>&1)"
           printf '%s\n' "$ffmpeg_version"
           grep -q '^ffmpeg version ' <<<"$ffmpeg_version"
-          printf 'NIGHTINGALE_BACKEND_IMAGE=%s\n' "$image_id" >> "$GITHUB_ENV"
+          printf 'NIGHTINGALE_BACKEND_IMAGE=%s\n' "$expected_image_id" >> "$GITHUB_ENV"
       - name: Prepare database
         run: docker compose -f compose.yml -f compose.deploy.yml run --rm prestart
       - name: Start application and wait for declared service readiness
