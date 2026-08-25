@@ -45,10 +45,10 @@ docs/evidence/ffmpeg-container-version.txt
 
 The evidence generator now requires a backend image labeled with the current
 Git commit and records that image ID. A reused global `backend:latest` is
-rejected. The previously committed record was generated from the local release-candidate backend
-image on 2026-08-26: FFmpeg `7.1.5-0+deb13u1`, Debian arm64, with
+rejected. The committed record was generated from the local release-candidate
+backend image on 2026-08-26: FFmpeg `7.1.5-0+deb13u1`, Debian arm64, with
 `--enable-gpl`; its file SHA-256 is
-`e3379e95264b2189b027f0fae31698e1f6ce48dbac76548a3cb6fc65d1cc7f87`.
+`7c95cebe0302f3a0d7e277f5b59a069964d567422c1057208d0479677ff23501`.
 This validates that exact local image only. Rebuilds on another platform or
 from a newer base image must regenerate the record; a developer machine's
 FFmpeg output is not interchangeable with the container record.
