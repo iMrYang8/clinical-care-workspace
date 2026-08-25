@@ -51,6 +51,12 @@ function browserDeviceId(): string {
   return created
 }
 
+function stopMediaStream(stream: MediaStream): void {
+  stream.getTracks().forEach((track) => {
+    track.stop()
+  })
+}
+
 export function VoiceCapture({
   patientId,
   captureKind,
@@ -86,10 +92,13 @@ export function VoiceCapture({
   const writeChainRef = useRef(Promise.resolve())
   const writeErrorRef = useRef<Error | null>(null)
   const uploadChainRef = useRef<Promise<void>>(Promise.resolve())
+  const mountedRef = useRef(true)
+  const startGenerationRef = useRef(0)
 
   const refreshRecovery = useCallback(
     async (excludeCaptureId?: string) => {
       const captures = await recoverableCaptures()
+      if (!mountedRef.current) return
       setRecoverable(
         captures
           .filter(
@@ -110,24 +119,30 @@ export function VoiceCapture({
     async (localId: string) => {
       const activelyRecording = recorderRef.current?.state === "recording"
       if (!navigator.onLine) {
-        if (!activelyRecording) setState("queued")
-        setMessage("Offline: encrypted chunks remain on this device.")
+        if (mountedRef.current) {
+          if (!activelyRecording) setState("queued")
+          setMessage("Offline: encrypted chunks remain on this device.")
+        }
         return false
       }
-      if (!activelyRecording) setState("uploading")
+      if (!activelyRecording && mountedRef.current) setState("uploading")
       try {
         const result = await uploadPendingChunks(localId)
-        setUploadedChunks((count) => count + result.uploaded)
-        if (result.remaining === 0)
-          setMessage("All encrypted queue items acknowledged.")
+        if (mountedRef.current) {
+          setUploadedChunks((count) => count + result.uploaded)
+          if (result.remaining === 0)
+            setMessage("All encrypted queue items acknowledged.")
+        }
         // A periodically acknowledged chunk is not a stopped capture. Keep the
         // active recorder out of the recovery/finalization path until Stop has
         // fired and every dataavailable callback is durably persisted.
         await refreshRecovery(activelyRecording ? localId : undefined)
         return result.remaining === 0
       } catch (error) {
-        if (!activelyRecording) setState("queued")
-        setMessage(error instanceof Error ? error.message : "Upload paused")
+        if (mountedRef.current) {
+          if (!activelyRecording) setState("queued")
+          setMessage(error instanceof Error ? error.message : "Upload paused")
+        }
         return false
       }
     },
@@ -147,11 +162,9 @@ export function VoiceCapture({
   )
 
   const releaseCaptureHardware = useCallback(async () => {
-    streamRef.current?.getTracks().forEach((track) => {
-      track.stop()
-    })
+    if (streamRef.current) stopMediaStream(streamRef.current)
     streamRef.current = null
-    if (analyzerFrameRef.current) {
+    if (analyzerFrameRef.current !== null) {
       cancelAnimationFrame(analyzerFrameRef.current)
       analyzerFrameRef.current = null
     }
@@ -177,6 +190,7 @@ export function VoiceCapture({
         }
       }
       void releaseCaptureHardware()
+      if (!mountedRef.current) return
       setState("queued")
       setMessage(
         `Local encrypted storage failed; recording stopped. Previously persisted chunks remain recoverable. ${failure.message}`,
@@ -201,17 +215,23 @@ export function VoiceCapture({
     }
   }, [captureId, refreshRecovery, scheduleFlush])
 
-  useEffect(
-    () => () => {
-      if (analyzerFrameRef.current)
-        cancelAnimationFrame(analyzerFrameRef.current)
-      streamRef.current?.getTracks().forEach((track) => {
-        track.stop()
-      })
-      void audioContextRef.current?.close()
-    },
-    [],
-  )
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      startGenerationRef.current += 1
+      const recorder = recorderRef.current
+      recorderRef.current = null
+      if (recorder?.state === "recording") {
+        try {
+          recorder.stop()
+        } catch {
+          // The stream is still stopped synchronously below.
+        }
+      }
+      void releaseCaptureHardware()
+    }
+  }, [releaseCaptureHardware])
 
   const startLevelMeter = (stream: MediaStream) => {
     const context = new AudioContext()
@@ -221,6 +241,7 @@ export function VoiceCapture({
     audioContextRef.current = context
     const samples = new Uint8Array(analyser.fftSize)
     const sample = () => {
+      if (!mountedRef.current) return
       analyser.getByteTimeDomainData(samples)
       const result = analyzeInputLevel(samples)
       setInputLevel(result.level)
@@ -232,6 +253,10 @@ export function VoiceCapture({
   }
 
   const start = async () => {
+    const startGeneration = startGenerationRef.current + 1
+    startGenerationRef.current = startGeneration
+    const isStale = () =>
+      !mountedRef.current || startGenerationRef.current !== startGeneration
     setState("requesting")
     setMessage(undefined)
     let joinedSessionId: string | undefined
@@ -246,6 +271,7 @@ export function VoiceCapture({
             path: { session_id: requestedSessionId },
           })
         ).data
+        if (isStale()) return
         if (
           existing.patient_id !== patientId ||
           existing.capture_kind !== captureKind
@@ -257,20 +283,30 @@ export function VoiceCapture({
         serverSessionId = existing.id
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (isStale()) {
+        stopMediaStream(stream)
+        return
+      }
       streamRef.current = stream
       setPermission("granted")
       const track = stream.getAudioTracks()[0]
       setInputLabel(track?.label || "Microphone permission granted")
-      serverSessionId ??= (
-        await VoiceService.createSession({
-          body: {
-            patient_id: patientId,
-            capture_kind: captureKind,
-            synthetic_fixture: syntheticFixture,
-            fixture_id: syntheticFixture ? "code-switch-overlap-v1" : null,
-          },
-        })
-      ).data.id
+      if (!serverSessionId) {
+        serverSessionId = (
+          await VoiceService.createSession({
+            body: {
+              patient_id: patientId,
+              capture_kind: captureKind,
+              synthetic_fixture: syntheticFixture,
+              fixture_id: syntheticFixture ? "code-switch-overlap-v1" : null,
+            },
+          })
+        ).data.id
+        if (isStale()) {
+          await releaseCaptureHardware()
+          return
+        }
+      }
       const joined = (
         await VoiceService.joinDevice({
           path: { session_id: serverSessionId },
@@ -287,6 +323,16 @@ export function VoiceCapture({
       ).data
       joinedSessionId = serverSessionId
       joinedDeviceId = joined.id
+      if (isStale()) {
+        await releaseCaptureHardware()
+        await VoiceService.abandonDevice({
+          path: {
+            session_id: joinedSessionId,
+            device_id: joinedDeviceId,
+          },
+        }).catch(() => undefined)
+        return
+      }
       const mediaType = preferredRecorderMimeType()
       const recorder = mediaType
         ? new MediaRecorder(stream, { mimeType: mediaType })
@@ -299,6 +345,15 @@ export function VoiceCapture({
         mediaType: recorder.mimeType || mediaType || "audio/webm",
       })
       localCapturePersisted = true
+      if (isStale()) {
+        await releaseCaptureHardware()
+        recorderRef.current = null
+        // The local helper removes both the zero-chunk IndexedDB row and the
+        // joined server track. If the network is down, it intentionally keeps
+        // the row so the next mounted capture screen can recover it.
+        await abandonEmptyCapture(local.id).catch(() => undefined)
+        return
+      }
       setActiveSessionId(serverSessionId)
       setCaptureId(local.id)
       chunkStartedAtRef.current = 0
@@ -313,7 +368,7 @@ export function VoiceCapture({
           .then(async () => {
             if (writeErrorRef.current) return
             await enqueueEncryptedChunk(local.id, event.data, startMs, endMs)
-            setCapturedChunks((count) => count + 1)
+            if (mountedRef.current) setCapturedChunks((count) => count + 1)
             if (navigator.onLine) void scheduleFlush(local.id)
           })
           .catch(failLocalWrite)
@@ -340,6 +395,7 @@ export function VoiceCapture({
           },
         }).catch(() => undefined)
       }
+      if (isStale()) return
       if (error instanceof DOMException && error.name === "NotAllowedError") {
         setPermission("denied")
       }
@@ -354,7 +410,7 @@ export function VoiceCapture({
   const stop = async () => {
     const recorder = recorderRef.current
     if (!recorder || !captureId) return
-    setState("finalizing")
+    if (mountedRef.current) setState("finalizing")
     try {
       if (recorder.state === "recording") {
         await new Promise<void>((resolve) => {
@@ -368,23 +424,27 @@ export function VoiceCapture({
       const uploaded = await scheduleFlush(captureId)
       if (!uploaded) return
       const result = await finalizeCapture(captureId)
-      setCaptureId(undefined)
-      setState("idle")
-      setMessage(
-        `Recording accepted. Processing is ${result.state}; live captions are unavailable in this build.`,
-      )
+      if (mountedRef.current) {
+        setCaptureId(undefined)
+        setState("idle")
+        setMessage(
+          `Recording accepted. Processing is ${result.state}; live captions are unavailable in this build.`,
+        )
+      }
       await refreshRecovery()
-      onFinalized?.(result.session_id)
+      if (mountedRef.current) onFinalized?.(result.session_id)
     } catch (error) {
-      setState("queued")
-      const storageFailure = writeErrorRef.current
-      setMessage(
-        storageFailure
-          ? `Local encrypted storage failed; recording stopped. Previously persisted chunks remain recoverable. ${storageFailure.message}`
-          : error instanceof Error
-            ? error.message
-            : "Finalization paused",
-      )
+      if (mountedRef.current) {
+        setState("queued")
+        const storageFailure = writeErrorRef.current
+        setMessage(
+          storageFailure
+            ? `Local encrypted storage failed; recording stopped. Previously persisted chunks remain recoverable. ${storageFailure.message}`
+            : error instanceof Error
+              ? error.message
+              : "Finalization paused",
+        )
+      }
       await refreshRecovery()
     } finally {
       await releaseCaptureHardware()
@@ -402,15 +462,19 @@ export function VoiceCapture({
       const complete = await scheduleFlush(localId)
       if (complete) {
         const result = await finalizeCapture(localId)
-        setCaptureId(undefined)
-        onFinalized?.(result.session_id)
-        setMessage("Recovered queue uploaded and finalized.")
-        setState("idle")
+        if (mountedRef.current) {
+          setCaptureId(undefined)
+          onFinalized?.(result.session_id)
+          setMessage("Recovered queue uploaded and finalized.")
+          setState("idle")
+        }
         await refreshRecovery()
       }
     } catch (error) {
-      setState("queued")
-      setMessage(error instanceof Error ? error.message : "Recovery paused")
+      if (mountedRef.current) {
+        setState("queued")
+        setMessage(error instanceof Error ? error.message : "Recovery paused")
+      }
     }
   }
 
@@ -422,14 +486,22 @@ export function VoiceCapture({
     setState("uploading")
     try {
       await abandonEmptyCapture(localId)
-      setState("idle")
-      setMessage("Empty device removed; other joined tracks can now finalize.")
+      if (mountedRef.current) {
+        setState("idle")
+        setMessage(
+          "Empty device removed; other joined tracks can now finalize.",
+        )
+      }
       await refreshRecovery()
     } catch (error) {
-      setState("queued")
-      setMessage(
-        error instanceof Error ? error.message : "Empty device removal paused",
-      )
+      if (mountedRef.current) {
+        setState("queued")
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : "Empty device removal paused",
+        )
+      }
     }
   }
 
