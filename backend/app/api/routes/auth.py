@@ -16,17 +16,18 @@ from app.models import (
     Message,
     Token,
 )
-from app.seed import membership_for_persona
+from app.seed import demo_id, membership_for_persona
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _token(membership: ClinicMembership) -> Token:
+def _token(membership: ClinicMembership, *, job_id: str | None = None) -> Token:
     return Token(
         access_token=security.create_access_token(
             membership.user_id,
             expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
             membership_id=membership.id,
+            job_id=job_id,
         )
     )
 
@@ -38,7 +39,10 @@ def demo_login(body: DemoLoginRequest, session: SessionDep) -> Token:
     membership = membership_for_persona(session, body.persona)
     if membership is None:
         raise HTTPException(status_code=404, detail="Demo persona not seeded")
-    return _token(membership)
+    trusted_job_id = (
+        str(demo_id("job-worker-demo")) if body.persona == "worker" else None
+    )
+    return _token(membership, job_id=trusted_job_id)
 
 
 @router.post("/login", response_model=Token)

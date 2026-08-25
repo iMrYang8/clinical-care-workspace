@@ -32,6 +32,7 @@ TokenDep = Annotated[str, Depends(reusable_oauth2)]
 class RequestContext:
     user: User
     membership: ClinicMembership
+    job_id: uuid.UUID | None = None
 
     @property
     def user_id(self) -> uuid.UUID:
@@ -54,6 +55,7 @@ def get_request_context(session: SessionDep, token: TokenDep) -> RequestContext:
         token_data = TokenPayload(**payload)
         user_id = uuid.UUID(token_data.sub or "")
         membership_id = uuid.UUID(token_data.membership_id or "")
+        job_id = uuid.UUID(token_data.job_id) if token_data.job_id else None
     except (InvalidTokenError, ValidationError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -76,7 +78,7 @@ def get_request_context(session: SessionDep, token: TokenDep) -> RequestContext:
             text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
             {"clinic_id": str(membership.clinic_id)},
         )
-    return RequestContext(user=user, membership=membership)
+    return RequestContext(user=user, membership=membership, job_id=job_id)
 
 
 CurrentContext = Annotated[RequestContext, Depends(get_request_context)]

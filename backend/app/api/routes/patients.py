@@ -16,9 +16,15 @@ from app.services.nightingale import get_patient, list_patients, read_glance, ti
 router = APIRouter(prefix="/patients", tags=["patients"])
 
 
+def _require_patient_data_role(context: CurrentContext) -> None:
+    if context.role in {"admin", "worker"}:
+        raise HTTPException(status_code=403, detail="Role cannot access clinical data")
+
+
 @router.get("", response_model=PatientsPublic)
 @router.get("/", response_model=PatientsPublic, include_in_schema=False)
 def patients(session: SessionDep, context: CurrentContext) -> PatientsPublic:
+    _require_patient_data_role(context)
     data = list_patients(session, context)
     return PatientsPublic(data=data, count=len(data))
 
@@ -27,6 +33,7 @@ def patients(session: SessionDep, context: CurrentContext) -> PatientsPublic:
 def patient_timeline(
     patient_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> PatientTimeline:
+    _require_patient_data_role(context)
     data = timeline(session, context, patient_id)
     return PatientTimeline(data=data, count=len(data))
 
@@ -35,6 +42,7 @@ def patient_timeline(
 def patient_glance(
     patient_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> GlancePublic:
+    _require_patient_data_role(context)
     get_patient(session, context, patient_id)
     snapshot = session.exec(
         select(PatientGlanceSnapshot).where(

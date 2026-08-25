@@ -1,6 +1,11 @@
 import uuid
 
 from fastapi.testclient import TestClient
+from sqlmodel import Session
+
+from app.core.db import engine
+from app.models import Entry
+from app.seed import demo_id
 
 
 def _me(client: TestClient, headers: dict[str, str]) -> dict:
@@ -162,6 +167,13 @@ def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
         == 403
     )
     assert (
+        client.get("/api/v1/patients", headers=auth_headers("admin")).status_code == 403
+    )
+    assert (
+        client.get("/api/v1/patients", headers=auth_headers("worker")).status_code
+        == 403
+    )
+    assert (
         client.post(
             "/api/v1/entries", headers=auth_headers("worker"), json=body
         ).status_code
@@ -175,3 +187,7 @@ def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
     assert created.status_code == 201, created.text
     assert created.json()["origin"] == "system"
     assert created.json()["patient_facing"] is False
+    with Session(engine) as session:
+        stored = session.get(Entry, created.json()["id"])
+        assert stored is not None
+        assert stored.source_job_id == demo_id("job-worker-demo")

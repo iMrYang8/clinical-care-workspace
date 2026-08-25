@@ -153,6 +153,7 @@ def authorize_entry_create(
         return "human", True
     if (
         role == "worker"
+        and context.job_id is not None
         and data.section == "system"
         and data.origin in {"ai", "system"}
     ):
@@ -275,6 +276,7 @@ def create_entry(
         section=data.section,
         origin=origin,
         patient_facing=patient_facing,
+        source_job_id=context.job_id if context.role == "worker" else None,
     )
     session.add(entry)
     session.flush()

@@ -2,7 +2,7 @@ import hashlib
 import uuid
 
 from fastapi import APIRouter, HTTPException
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.api.deps import CurrentContext, RequestContext, SessionDep
 from app.core.field_crypto import field_codec
@@ -217,6 +217,18 @@ def provenance_resolve(
     ).first()
     if pointer is None:
         raise HTTPException(status_code=404, detail="Provenance not found")
+    if context.role == "patient":
+        if pointer.highlight_id is None:
+            raise HTTPException(status_code=404, detail="Provenance not found")
+        patient_highlight = session.exec(
+            select(Highlight).where(
+                Highlight.id == pointer.highlight_id,
+                Highlight.clinic_id == context.clinic_id,
+                col(Highlight.patient_facing).is_(True),
+            )
+        ).first()
+        if patient_highlight is None:
+            raise HTTPException(status_code=404, detail="Provenance not found")
     version = session.exec(
         select(EntryVersion).where(
             EntryVersion.id == pointer.entry_version_id,

@@ -118,6 +118,7 @@ class Entry(TenantRow, table=True):
     section: str = Field(max_length=20, index=True)
     origin: str = Field(default="human", max_length=20, index=True)
     patient_facing: bool = Field(default=False, index=True)
+    source_job_id: uuid.UUID | None = Field(default=None, index=True)
     current_version_id: uuid.UUID | None = Field(default=None, index=True)
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
@@ -378,6 +379,7 @@ class Token(SQLModel):
 class TokenPayload(SQLModel):
     sub: str | None = None
     membership_id: str | None = None
+    job_id: str | None = None
 
 
 class DemoLoginRequest(SQLModel):

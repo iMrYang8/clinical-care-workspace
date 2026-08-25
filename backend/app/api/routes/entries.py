@@ -27,6 +27,21 @@ def _set_etag(response: Response, version_id: uuid.UUID) -> None:
     response.headers["ETag"] = f'"{version_id}"'
 
 
+def _require_entry_read_role(context: CurrentContext) -> None:
+    if context.role in {"admin", "worker"}:
+        raise HTTPException(status_code=403, detail="Role cannot read clinical entries")
+
+
+def _require_version_access(
+    session: SessionDep, context: CurrentContext, entry_id: uuid.UUID
+) -> None:
+    _require_entry_read_role(context)
+    if context.role == "patient":
+        entry = get_scoped_entry(session, context, entry_id)
+        if entry.section != "patient":
+            raise HTTPException(status_code=404, detail="Entry not found")
+
+
 @router.post("", status_code=201)
 @router.post("/", status_code=201, include_in_schema=False)
 def create(
@@ -47,6 +62,7 @@ def read(
     session: SessionDep,
     context: CurrentContext,
 ):
+    _require_entry_read_role(context)
     entry = get_scoped_entry(session, context, entry_id)
     public = entry_public(session, entry)
     _set_etag(response, public.version_id)
@@ -93,6 +109,7 @@ def patch(
 def versions(
     entry_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> EntryVersionsPublic:
+    _require_version_access(session, context, entry_id)
     data = versions_for_entry(session, context, entry_id)
     return EntryVersionsPublic(data=data, count=len(data))
 
@@ -105,6 +122,7 @@ def diff(
     session: SessionDep,
     context: CurrentContext,
 ) -> DiffPublic:
+    _require_version_access(session, context, entry_id)
     return DiffPublic(
         from_version_id=version_id,
         to_version_id=against,
@@ -123,6 +141,7 @@ def revert(
 ):
     if if_match is None:
         raise HTTPException(status_code=428, detail="If-Match is required")
+    _require_version_access(session, context, entry_id)
     entry = get_scoped_entry(session, context, entry_id)
     target = get_scoped_version(session, context, entry, version_id)
     title, content = decrypt_version(target)
