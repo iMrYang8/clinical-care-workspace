@@ -475,6 +475,9 @@ test("[Scenario B] recipient accepts a one-time clinic invitation in the public 
   expect(leakedRequestUrls.some((url) => url.includes(oneTimeCode))).toBe(false)
 
   await page.getByRole("button", { name: "Continue as Clinic admin" }).click()
-  await expect(page.getByText(email)).toBeVisible()
-  await expect(page.getByText("Recipient Verified Name")).toBeVisible()
+  const acceptedMember = page.getByRole("row").filter({ hasText: email })
+  await expect(acceptedMember).toBeVisible()
+  await expect(
+    acceptedMember.getByText("Recipient Verified Name"),
+  ).toBeVisible()
 })
