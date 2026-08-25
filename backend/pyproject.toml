@@ -39,6 +39,9 @@ local-asr = [
 diarization = [
     "pyannote-audio>=3.3.2,<5.0.0",
 ]
+presidio-nlp = [
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -96,4 +99,7 @@ error-on-warning = true
 entrypoint = "app.main:app"
 
 [tool.pytest.ini_options]
-markers = ["unit: pure unit test that does not require PostgreSQL"]
+markers = [
+    "unit: pure unit test that does not require PostgreSQL",
+    "presidio_model: requires the optional locked Presidio spaCy model",
+]

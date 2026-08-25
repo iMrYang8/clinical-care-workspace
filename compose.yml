@@ -38,19 +38,25 @@ services:
         condition: service_healthy
         restart: true
     environment:
+      # Production is the base configuration. compose.override.yml is the only
+      # file that opts the local one-command workflow into synthetic demo data.
+      FASTAPI_ENV: "production"
+      ENABLE_DEMO_AUTH: "false"
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
-      FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
-      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
+      FIELD_ENCRYPTION_MASTER_KEY: ${FIELD_ENCRYPTION_MASTER_KEY:?Variable not set}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL}
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Variable not set}@db:5432/app
+      DATABASE_URL: postgresql://nightingale_app:${POSTGRES_APP_PASSWORD:?Variable not set}@db:5432/app
+      MIGRATION_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Variable not set}@db:5432/app
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?Variable not set}
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
     command: ["bash", "scripts/prestart.sh"]
     restart: "no"
 
@@ -63,10 +69,11 @@ services:
       prestart:
         condition: service_completed_successfully
     environment:
+      FASTAPI_ENV: "production"
+      ENABLE_DEMO_AUTH: "false"
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
-      FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
-      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
+      FIELD_ENCRYPTION_MASTER_KEY: ${FIELD_ENCRYPTION_MASTER_KEY:?Variable not set}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
@@ -96,6 +103,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
     labels:
       # Enable Traefik for this service
       - traefik.enable=true
@@ -116,10 +125,11 @@ services:
       prestart:
         condition: service_completed_successfully
     environment:
+      FASTAPI_ENV: "production"
+      ENABLE_DEMO_AUTH: "false"
       PROJECT_NAME: ${PROJECT_NAME:?Variable not set}
       SECRET_KEY: ${SECRET_KEY:?Variable not set}
-      FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Variable not set}
-      FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Variable not set}
+      FIELD_ENCRYPTION_MASTER_KEY: ${FIELD_ENCRYPTION_MASTER_KEY:?Variable not set}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
@@ -141,6 +151,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
     command: ["python", "-m", "app.ai_worker"]
     restart: unless-stopped
 
