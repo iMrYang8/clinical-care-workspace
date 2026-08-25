@@ -30,9 +30,7 @@ def test_password_login_logout_health_and_bad_token(client) -> None:
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
     assert client.post("/api/v1/auth/logout", headers=headers).status_code == 200
     assert client.get("/api/v1/utils/health-check/").json() is True
-    invalid = client.get(
-        "/api/v1/auth/me", headers={"Authorization": "Bearer invalid"}
-    )
+    invalid = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer invalid"})
     assert invalid.status_code == 403
     assert invalid.headers["X-Nightingale-Session-Invalid"] == "1"
 
