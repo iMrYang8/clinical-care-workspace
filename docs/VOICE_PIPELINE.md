@@ -25,8 +25,10 @@ created -> recording -> finalizing -> assembling -> preprocessing
 ```
 
 Worker transitions lock the clinic-scoped session and compare the expected
-state before writing the next state. Jobs use the existing PostgreSQL job lease,
-attempt token, retry budget, and worker membership binding. One session has at
+state before writing the next state. Jobs use a renewable/bounded PostgreSQL
+job lease, attempt token, retry budget, and worker membership binding. Voice
+retries always return to the durable worker rather than running FFmpeg or ASR
+inside an API request. One session has at
 most one assembled `AudioAsset`; transcript corrections create a new immutable
 `TranscriptRevision`; reanalysis creates another immutable revision. A retry
 therefore cannot duplicate an asset, transcript revision, or published entry.
@@ -36,8 +38,10 @@ The following rows use PostgreSQL RLS and clinic-composite foreign keys:
 - `voice_sessions`, `voice_devices`, `audio_chunks`, `audio_assets`
 - `transcript_revisions`, `transcript_segments`, `clinical_facts`
 
-Chunks, assembled assets, revisions, segments, and facts have append-only
-database triggers. Audio payloads and transcript/fact text use the same
+Chunks, assembled assets, revisions, and segments have append-only database
+triggers. Facts retain immutable evidence fields in application flow while
+their audited review status can move from `proposed` to `accepted` at
+publication. Audio payloads and transcript/fact text use the same
 clinic-derived AES-256-GCM envelope as other clinical fields.
 
 ## Capture and upload
@@ -52,10 +56,12 @@ Approximately every two seconds, the plaintext browser chunk is hashed, then
 encrypted with a non-extractable WebCrypto AES-GCM key and stored in IndexedDB.
 It is decrypted only for authenticated upload. The server independently checks
 the hash and encrypts the accepted bytes. A repeated `(device, chunk_index)`
-with the same hash is acknowledged; a different hash returns
-`AUDIO_CHUNK_HASH_CONFLICT`. Finalization requires declarations for every
-device that uploaded audio and returns `MISSING_AUDIO_CHUNKS` with exact indices
-when a gap exists.
+with the same hash and identical media/time metadata is acknowledged; changed
+bytes or metadata return a conflict. Each device seals its final index before
+the session-wide barrier can finalize. Finalization requires declarations for
+every joined device and returns `MISSING_AUDIO_CHUNKS` with exact indices when a
+gap exists. The API caps a session at eight devices, 21,601 two-second chunks
+per device, 12 hours of declared time, 8 MiB per chunk, and 512 MiB total.
 
 The browser key and ciphertext share the authenticated application origin.
 This prevents plaintext chunks from being written to IndexedDB, but it is not
@@ -65,8 +71,10 @@ finalization deletes its local key and queue rows.
 
 FFmpeg is invoked with an argument array, `-nostdin`, a timeout, and `0600`
 temporary files inside a `0700` directory. It produces 16 kHz mono PCM with a
-high-pass filter and loudness normalization. Silence, clipping, low-level noise,
-and multi-device overlap are persisted as review signals. The container writes
+high-pass filter and loudness normalization. Silence, clipping, and low-level
+noise are measured on each decoded track before normalization; multi-device
+overlap remains a conservative track-level review signal. All are persisted as
+review warnings and can force `needs_review`. The container writes
 its exact `ffmpeg -version` output at build time:
 
 ```bash
@@ -80,7 +88,7 @@ docker compose run --rm backend \
 | --- | --- | --- |
 | Disabled (default) | `VOICE_TRANSCRIPTION_PROVIDER=disabled` | No ASR; encrypted audio is retained with an explicit pending/review state. |
 | Synthetic fixture | Development demo plus explicit fixture checkbox | Fixed speaker/timestamp/code-switch/overlap fixture only; never selected for ordinary audio. |
-| OpenAI final transcription | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, `OPENAI_API_KEY`, `OPENAI_TRANSCRIBE_MODEL` | Sends the normalized audio only when every gate is true. `STRICT_NO_AUDIO_EGRESS=true` overrides all remote settings. Model IDs come from the environment. |
+| OpenAI final transcription | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, `OPENAI_API_KEY`, `OPENAI_TRANSCRIBE_MODEL` | Sends the normalized audio only when every gate is true. `STRICT_NO_AUDIO_EGRESS=true` overrides all remote settings. Model IDs come from the environment. Calls have a bounded ASR timeout. |
 | faster-whisper | `compose.local-asr.yml`, a pre-cached `LOCAL_ASR_MODEL_DIR` | CPU/int8 and `local_files_only=True`; no runtime model download. No diarization is claimed. |
 | pyannote experimental | `compose.diarization.yml`, accepted model terms, cached `PYANNOTE_MODEL_DIR` | Default off. Current code exposes a local readiness gate; it does not silently fetch or apply a gated model. |
 
@@ -119,7 +127,9 @@ persisted only when all of the following validate:
 - the fact maps to a segment in that revision;
 - the audio interval is inside the segment and assembled asset duration.
 
-Publication is clinician-only. It creates an immutable encrypted transcript
+Publication is clinician-only and only runs from a stable `ready` or
+`needs_review` session. It explicitly accepts the evidence-validated facts and
+records the actor/time before creating an immutable encrypted transcript
 source entry, a separate immutable derived summary entry, a relation between
 them, and append-only provenance pointers that bind the transcript span to the
 audio asset and millisecond interval. It never overwrites a human care note.
@@ -127,6 +137,8 @@ audio asset and millisecond interval. It never overwrites a human care note.
 Patient routes use only `VoiceSessionPublic`; that response omits raw transcript,
 facts, internal warnings, internal errors, and the current transcript revision
 identifier. The raw transcript endpoint rejects Patient and Admin roles.
+The patient UI never requests audio, and the audio endpoint rejects every
+Patient role. Raw normalized audio is restricted to Staff and Clinician review.
 
 ## API surface
 
@@ -134,6 +146,7 @@ identifier. The raw transcript endpoint rejects Patient and Admin roles.
 POST /api/v1/voice/sessions
 POST /api/v1/voice/sessions/{id}/devices
 PUT  /api/v1/voice/sessions/{id}/devices/{device_id}/chunks/{index}
+POST /api/v1/voice/sessions/{id}/devices/{device_id}/seal
 GET  /api/v1/voice/sessions/{id}/chunks/status
 POST /api/v1/voice/sessions/{id}/finalize
 GET  /api/v1/voice/sessions/{id}
@@ -145,8 +158,9 @@ GET  /api/v1/voice/sessions/{id}/audio
 GET  /api/v1/voice/sessions/{id}/live
 ```
 
-`/live` is a capability endpoint. It returns `unavailable` unless a live
-provider is explicitly enabled; it never fabricates provisional captions.
+`/live` is a capability endpoint. This build has no live provider/transport and
+therefore returns `unavailable` even when the deployment gate is enabled; it
+never fabricates provisional captions.
 
 ## Verification
 

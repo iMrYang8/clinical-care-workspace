@@ -12,7 +12,7 @@ def pyannote_runtime_status() -> tuple[bool, str]:
     if not settings.PYANNOTE_MODEL_DIR:
         return False, "PYANNOTE_LOCAL_MODEL_REQUIRED"
     model_dir = Path(settings.PYANNOTE_MODEL_DIR).expanduser()
-    if not model_dir.is_dir():
+    if not model_dir.is_dir() or not any(model_dir.iterdir()):
         return False, "PYANNOTE_MODEL_NOT_CACHED"
     try:
         importlib.import_module("pyannote.audio")

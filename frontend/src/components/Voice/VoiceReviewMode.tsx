@@ -85,9 +85,11 @@ function StatusBadges({
 function TranscriptPanel({
   transcript,
   lowConfidenceOnly,
+  onSeek,
 }: {
   transcript: TranscriptRevisionPublic
   lowConfidenceOnly: boolean
+  onSeek: (startMs: number) => void
 }) {
   const segments = transcript.segments.filter(
     (segment) =>
@@ -112,6 +114,7 @@ function TranscriptPanel({
               type="button"
               className="min-h-11 rounded px-2 font-mono text-teal-800"
               aria-label={`Jump to ${time(segment.start_ms)}`}
+              onClick={() => onSeek(segment.start_ms)}
             >
               {time(segment.start_ms)}–{time(segment.end_ms)}
             </button>
@@ -260,6 +263,22 @@ export function VoiceReviewMode({
   useEffect(() => {
     let cancelled = false
     let activeUrl: string | undefined
+    const audioState = sessionQuery.data?.state ?? "created"
+    if (
+      ![
+        "transcribing",
+        "redacting",
+        "extracting",
+        "ready",
+        "needs_review",
+        "published",
+      ].includes(audioState)
+    ) {
+      setAudioUrl(undefined)
+      return () => {
+        cancelled = true
+      }
+    }
     void loadAuthorizedAudio(sessionId)
       .then((url) => {
         if (cancelled) {
@@ -269,12 +288,14 @@ export function VoiceReviewMode({
         activeUrl = url
         setAudioUrl(url)
       })
-      .catch(() => setAudioUrl(undefined))
+      .catch(() => {
+        if (!cancelled) setAudioUrl(undefined)
+      })
     return () => {
       cancelled = true
       if (activeUrl) URL.revokeObjectURL(activeUrl)
     }
-  }, [sessionId])
+  }, [sessionId, sessionQuery.data?.state])
 
   const invalidate = async () => {
     await Promise.all([
@@ -340,10 +361,13 @@ export function VoiceReviewMode({
         .getElementById(`voice-segment-${segment?.id}`)
         ?.scrollIntoView({ behavior: "smooth", block: "center" })
     })
-    if (audioRef.current) {
-      audioRef.current.currentTime = fact.audio_start_ms / 1_000
-      void audioRef.current.play().catch(() => undefined)
-    }
+    seekAudio(fact.audio_start_ms)
+  }
+
+  const seekAudio = (startMs: number) => {
+    if (!audioRef.current) return
+    audioRef.current.currentTime = startMs / 1_000
+    void audioRef.current.play().catch(() => undefined)
   }
 
   const publishDisabled = useMemo(
@@ -352,9 +376,12 @@ export function VoiceReviewMode({
       !transcript ||
       transcript.stale ||
       transcript.facts.length === 0 ||
-      sessionQuery.data?.state === "published",
+      !["ready", "needs_review"].includes(sessionQuery.data?.state ?? ""),
     [membershipRole, sessionQuery.data?.state, transcript],
   )
+  const reviewMutationDisabled =
+    membershipRole !== "clinician" ||
+    !["ready", "needs_review"].includes(sessionQuery.data?.state ?? "")
 
   if (sessionQuery.isLoading) {
     return <LoaderCircle className="mx-auto mt-24 animate-spin text-teal-700" />
@@ -377,9 +404,9 @@ export function VoiceReviewMode({
             Transcript, summary & evidence
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Final speaker labels and timestamps replace provisional captions.
-            Overlap is preserved for review; it is not claimed as perfect source
-            separation.
+            Final speaker labels and timestamps appear only after persisted
+            processing. Overlap is preserved for review; it is not claimed as
+            perfect source separation.
           </p>
         </div>
         <StatusBadges session={session} transcript={transcript} />
@@ -431,6 +458,7 @@ export function VoiceReviewMode({
                 <TranscriptPanel
                   transcript={transcript}
                   lowConfidenceOnly={lowConfidenceOnly}
+                  onSeek={seekAudio}
                 />
               </CardContent>
             </Card>
@@ -470,6 +498,7 @@ export function VoiceReviewMode({
               <TranscriptPanel
                 transcript={transcript}
                 lowConfidenceOnly={lowConfidenceOnly}
+                onSeek={seekAudio}
               />
             </TabsContent>
             <TabsContent value="summary">
@@ -503,7 +532,9 @@ export function VoiceReviewMode({
                     onClick={() =>
                       editing ? correctMutation.mutate() : setEditing(true)
                     }
-                    disabled={correctMutation.isPending}
+                    disabled={
+                      reviewMutationDisabled || correctMutation.isPending
+                    }
                   >
                     <Save className="mr-2 size-4" />
                     {editing ? "Save new revision" : "Correct transcript"}
@@ -514,7 +545,9 @@ export function VoiceReviewMode({
                     variant="outline"
                     className="min-h-11"
                     onClick={() => reanalyzeMutation.mutate()}
-                    disabled={reanalyzeMutation.isPending}
+                    disabled={
+                      reviewMutationDisabled || reanalyzeMutation.isPending
+                    }
                   >
                     <RefreshCw className="mr-2 size-4" /> Reanalyze
                   </Button>

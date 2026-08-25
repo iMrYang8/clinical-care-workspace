@@ -895,6 +895,12 @@ class VoiceSession(TenantRow, table=True):
             "ix_voice_session_patient_created", "clinic_id", "patient_id", "created_at"
         ),
         Index("ix_voice_session_state_updated", "clinic_id", "state", "updated_at"),
+        CheckConstraint(
+            "state IN ('created','recording','finalizing','assembling',"
+            "'preprocessing','transcribing','redacting','extracting',"
+            "'ready','needs_review','published')",
+            name="ck_voice_session_state",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -902,8 +908,12 @@ class VoiceSession(TenantRow, table=True):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["clinic_id", "current_transcript_revision_id"],
-            ["transcript_revisions.clinic_id", "transcript_revisions.id"],
+            ["clinic_id", "id", "current_transcript_revision_id"],
+            [
+                "transcript_revisions.clinic_id",
+                "transcript_revisions.session_id",
+                "transcript_revisions.id",
+            ],
             name="fk_voice_session_current_revision_tenant",
             use_alter=True,
             deferrable=True,
@@ -963,6 +973,11 @@ class VoiceDevice(TenantRow, table=True):
             name="uq_voice_device_client_id",
         ),
         Index("ix_voice_device_session", "clinic_id", "session_id"),
+        CheckConstraint(
+            "last_declared_chunk_index IS NULL OR "
+            "last_declared_chunk_index BETWEEN 0 AND 21600",
+            name="ck_voice_device_last_index",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "session_id"],
             ["voice_sessions.clinic_id", "voice_sessions.id"],
@@ -995,6 +1010,9 @@ class AudioChunk(TenantRow, table=True):
             "session_id",
             "device_id",
             "chunk_index",
+        ),
+        CheckConstraint(
+            "chunk_index BETWEEN 0 AND 21600", name="ck_audio_chunk_index_bound"
         ),
         ForeignKeyConstraint(
             ["clinic_id", "session_id"],
@@ -1030,6 +1048,9 @@ class AudioAsset(TenantRow, table=True):
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_audio_asset_clinic_id"),
         UniqueConstraint("clinic_id", "session_id", name="uq_audio_asset_session"),
+        UniqueConstraint(
+            "clinic_id", "session_id", "id", name="uq_audio_asset_session_id"
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "session_id"],
             ["voice_sessions.clinic_id", "voice_sessions.id"],
@@ -1061,6 +1082,12 @@ class TranscriptRevision(TenantRow, table=True):
         UniqueConstraint(
             "clinic_id",
             "session_id",
+            "id",
+            name="uq_transcript_revision_session_id",
+        ),
+        UniqueConstraint(
+            "clinic_id",
+            "session_id",
             "revision_no",
             name="uq_transcript_revision_number",
         ),
@@ -1070,6 +1097,10 @@ class TranscriptRevision(TenantRow, table=True):
             "session_id",
             "created_at",
         ),
+        CheckConstraint(
+            "status IN ('ready','needs_review')",
+            name="ck_transcript_revision_status",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "session_id"],
             ["voice_sessions.clinic_id", "voice_sessions.id"],
@@ -1077,8 +1108,12 @@ class TranscriptRevision(TenantRow, table=True):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["clinic_id", "previous_revision_id"],
-            ["transcript_revisions.clinic_id", "transcript_revisions.id"],
+            ["clinic_id", "session_id", "previous_revision_id"],
+            [
+                "transcript_revisions.clinic_id",
+                "transcript_revisions.session_id",
+                "transcript_revisions.id",
+            ],
             name="fk_transcript_previous_revision_tenant",
         ),
     )
@@ -1113,6 +1148,13 @@ class TranscriptSegment(TenantRow, table=True):
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_transcript_segment_clinic_id"),
         UniqueConstraint(
+            "clinic_id",
+            "session_id",
+            "revision_id",
+            "id",
+            name="uq_transcript_segment_revision_id",
+        ),
+        UniqueConstraint(
             "clinic_id", "revision_id", "ordinal", name="uq_transcript_segment_ordinal"
         ),
         Index(
@@ -1122,13 +1164,18 @@ class TranscriptSegment(TenantRow, table=True):
             "start_ms",
         ),
         ForeignKeyConstraint(
-            ["clinic_id", "revision_id"],
-            ["transcript_revisions.clinic_id", "transcript_revisions.id"],
+            ["clinic_id", "session_id", "revision_id"],
+            [
+                "transcript_revisions.clinic_id",
+                "transcript_revisions.session_id",
+                "transcript_revisions.id",
+            ],
             name="fk_transcript_segment_revision_tenant",
             ondelete="CASCADE",
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    session_id: uuid.UUID
     revision_id: uuid.UUID
     ordinal: int = Field(ge=0)
     text_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
@@ -1156,24 +1203,48 @@ class ClinicalFact(TenantRow, table=True):
             "clinic_id", "revision_id", "ordinal", name="uq_clinical_fact_ordinal"
         ),
         Index("ix_clinical_fact_revision_status", "clinic_id", "revision_id", "status"),
+        CheckConstraint(
+            "status IN ('proposed','accepted','rejected')",
+            name="ck_clinical_fact_status",
+        ),
+        CheckConstraint(
+            "(status = 'proposed' AND reviewed_by_id IS NULL AND reviewed_at IS NULL) "
+            "OR (status IN ('accepted','rejected') AND reviewed_by_id IS NOT NULL "
+            "AND reviewed_at IS NOT NULL)",
+            name="ck_clinical_fact_review_pair",
+        ),
         ForeignKeyConstraint(
-            ["clinic_id", "revision_id"],
-            ["transcript_revisions.clinic_id", "transcript_revisions.id"],
+            ["clinic_id", "session_id", "revision_id"],
+            [
+                "transcript_revisions.clinic_id",
+                "transcript_revisions.session_id",
+                "transcript_revisions.id",
+            ],
             name="fk_clinical_fact_revision_tenant",
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["clinic_id", "segment_id"],
-            ["transcript_segments.clinic_id", "transcript_segments.id"],
+            ["clinic_id", "session_id", "revision_id", "segment_id"],
+            [
+                "transcript_segments.clinic_id",
+                "transcript_segments.session_id",
+                "transcript_segments.revision_id",
+                "transcript_segments.id",
+            ],
             name="fk_clinical_fact_segment_tenant",
         ),
         ForeignKeyConstraint(
-            ["clinic_id", "audio_asset_id"],
-            ["audio_assets.clinic_id", "audio_assets.id"],
+            ["clinic_id", "session_id", "audio_asset_id"],
+            [
+                "audio_assets.clinic_id",
+                "audio_assets.session_id",
+                "audio_assets.id",
+            ],
             name="fk_clinical_fact_audio_asset_tenant",
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    session_id: uuid.UUID
     revision_id: uuid.UUID
     segment_id: uuid.UUID
     ordinal: int = Field(ge=0)
@@ -1189,6 +1260,10 @@ class ClinicalFact(TenantRow, table=True):
     status: str = Field(default="proposed", max_length=30)
     patient_facing: bool = False
     stale: bool = False
+    reviewed_by_id: uuid.UUID | None = Field(default=None, foreign_key="users.id")
+    reviewed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
 
 
 # API schemas
@@ -1523,6 +1598,16 @@ class VoiceDevicePublic(SQLModel):
     created_at: datetime
 
 
+class VoiceDeviceSeal(SQLModel):
+    last_chunk_index: int = Field(ge=0, le=21_600)
+
+
+class VoiceDeviceSealPublic(SQLModel):
+    device_id: uuid.UUID
+    last_chunk_index: int
+    sealed: Literal[True] = True
+
+
 class AudioChunkAck(SQLModel):
     chunk_index: int
     acknowledged: bool = True
@@ -1543,7 +1628,9 @@ class VoiceChunkStatus(SQLModel):
 
 class VoiceFinalizeDevice(SQLModel):
     device_id: uuid.UUID
-    last_chunk_index: int = Field(ge=0)
+    # Two-second chunks: cap declarations at twelve hours to bound missing-list
+    # work even for an authenticated but malformed request.
+    last_chunk_index: int = Field(ge=0, le=21_600)
 
 
 class VoiceFinalizeRequest(SQLModel):

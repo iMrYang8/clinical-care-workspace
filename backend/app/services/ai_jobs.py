@@ -633,7 +633,10 @@ def claim_job(
             session.add(expired_attempt)
     job.state = "running"
     job.locked_by = str(claim_token or uuid.uuid4())
-    job.locked_until = now + timedelta(seconds=max(30, settings.AI_JOB_LEASE_SECONDS))
+    lease_seconds = settings.AI_JOB_LEASE_SECONDS
+    if job.kind in {"voice_process", "voice_reanalyze"}:
+        lease_seconds = max(lease_seconds, settings.VOICE_JOB_LEASE_SECONDS)
+    job.locked_until = now + timedelta(seconds=max(30, lease_seconds))
     job.error_code = None
     job.updated_at = now
     session.add(job)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import stat
 import tempfile
 import uuid
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +35,7 @@ from app.services.voice.ffmpeg import (
     AudioPreprocessingError,
     DeviceAudio,
     preprocess_audio,
+    write_private_file,
 )
 from app.services.voice.provenance import validate_fact_evidence
 from app.services.voice.providers.base import (
@@ -83,6 +86,32 @@ def _session_from_payload(
     return voice_session
 
 
+def _reanalyze_revision_from_payload(
+    db: Session,
+    context: RequestContext,
+    voice_session: VoiceSession,
+    payload: dict[str, Any],
+) -> TranscriptRevision:
+    try:
+        revision_id = uuid.UUID(str(payload["revision_id"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise VoiceJobError("INVALID_REANALYSIS_REVISION_ID") from exc
+    revision = db.exec(
+        select(TranscriptRevision).where(
+            TranscriptRevision.clinic_id == context.clinic_id,
+            TranscriptRevision.session_id == voice_session.id,
+            TranscriptRevision.id == revision_id,
+        )
+    ).first()
+    if revision is None:
+        raise VoiceJobError("REANALYSIS_REVISION_NOT_FOUND")
+    if voice_session.current_transcript_revision_id != revision.id:
+        # A queued extraction is bound to one immutable transcript.  Never
+        # silently switch it to a correction that appeared later.
+        raise VoiceJobError("REANALYSIS_REVISION_STALE")
+    return revision
+
+
 def _claim_is_current(
     db: Session, context: RequestContext, job_id: uuid.UUID, token: uuid.UUID
 ) -> tuple[Job, JobAttempt]:
@@ -117,6 +146,19 @@ def _claim_is_current(
     ):
         raise VoiceJobError("JOB_CLAIM_LOST")
     return job, attempt
+
+
+def _renew_claim(
+    db: Session, context: RequestContext, job_id: uuid.UUID, token: uuid.UUID
+) -> tuple[Job, JobAttempt]:
+    job, attempt = _claim_is_current(db, context, job_id, token)
+    job.locked_until = get_datetime_utc() + timedelta(
+        seconds=max(30, settings.VOICE_JOB_LEASE_SECONDS)
+    )
+    job.updated_at = get_datetime_utc()
+    db.add(job)
+    db.commit()
+    return _claim_is_current(db, context, job_id, token)
 
 
 def _transition_state(
@@ -281,9 +323,15 @@ async def _transcribe(
         temp_dir = Path(temp_name)
         os.chmod(temp_dir, stat.S_IRWXU)
         audio_path = temp_dir / "normalized.wav"
-        audio_path.write_bytes(asset_payload)
-        os.chmod(audio_path, stat.S_IRUSR | stat.S_IWUSR)
-        return validate_transcript_result(await provider.transcribe(audio_path)), None
+        write_private_file(audio_path, asset_payload)
+        try:
+            result = await asyncio.wait_for(
+                provider.transcribe(audio_path),
+                timeout=max(1, settings.VOICE_ASR_TIMEOUT_SECONDS),
+            )
+        except TimeoutError:
+            return None, "ASR_TIMEOUT"
+        return validate_transcript_result(result), None
 
 
 def _normalized_segments(
@@ -302,15 +350,17 @@ def _normalized_segments(
                 continue
             end = start + len(segment.text)
         cursor = end
-        start_ms = max(0, min(segment.start_ms, max(0, asset.duration_ms - 1)))
-        end_ms = max(start_ms + 1, min(segment.end_ms, asset.duration_ms))
+        # Never manufacture audio provenance by clamping provider timestamps.
+        # An out-of-range segment is omitted, forcing any fact that depended on
+        # it to be discarded and the revision/session into clinical review.
+        if segment.start_ms >= asset.duration_ms or segment.end_ms > asset.duration_ms:
+            warnings.append("SEGMENT_TIME_OUT_OF_BOUNDS")
+            continue
         output.append(
             replace(
                 segment,
                 text_start=start,
                 text_end=end,
-                start_ms=start_ms,
-                end_ms=end_ms,
             )
         )
     if not output:
@@ -368,13 +418,27 @@ def _create_revision(
             audio_end_ms=source_segment.end_ms,
             asset_duration_ms=asset.duration_ms,
         )
-    warnings = sorted({*result.warnings, *span_warnings})
+    preprocessing_warning_map = {
+        "silence_review": "SILENCE_REVIEW",
+        "clipping_review": "CLIPPING_REVIEW",
+        "noise_review": "NOISE_REVIEW",
+        "overlap_review": "MULTI_DEVICE_OVERLAP_REVIEW",
+    }
+    preprocessing_warnings = {
+        warning
+        for signal, warning in preprocessing_warning_map.items()
+        if asset.preprocessing_json.get(signal) is True
+    }
+    warnings = sorted({*result.warnings, *span_warnings, *preprocessing_warnings})
     low_confidence = any(
         item.confidence is not None and item.confidence < 0.75 for item in segments
     )
+    confidence_unavailable = any(item.confidence is None for item in segments)
     overlap = any(item.overlap_group_id for item in segments)
     if low_confidence:
         warnings.append("LOW_CONFIDENCE_REVIEW")
+    if confidence_unavailable:
+        warnings.append("CONFIDENCE_UNAVAILABLE")
     if overlap:
         warnings.append("OVERLAP_REVIEW")
     if fact_candidate is None:
@@ -382,7 +446,16 @@ def _create_revision(
     elif not fact_valid:
         warnings.append("INVALID_FACT_EVIDENCE")
     warnings = sorted(set(warnings))
-    needs_review = low_confidence or overlap or not fact_valid
+    # Provider and preprocessing warnings are review signals.  A clinician can
+    # still explicitly publish evidence-backed facts, but the UI never labels
+    # these outputs as automatically ready.
+    needs_review = (
+        low_confidence
+        or confidence_unavailable
+        or overlap
+        or not fact_valid
+        or bool(warnings)
+    )
     summary = (
         "Recorded allergy information is ready for clinician review."
         if fact_candidate is not None
@@ -425,6 +498,7 @@ def _create_revision(
         row = TranscriptSegment(
             id=segment_id,
             clinic_id=context.clinic_id,
+            session_id=voice_session.id,
             revision_id=revision.id,
             ordinal=ordinal,
             text_ciphertext=field_codec.encrypt_text(
@@ -470,6 +544,7 @@ def _create_revision(
                 ClinicalFact(
                     id=fact_id,
                     clinic_id=context.clinic_id,
+                    session_id=voice_session.id,
                     revision_id=revision.id,
                     segment_id=segment_row.id,
                     ordinal=0,
@@ -509,6 +584,7 @@ def _complete_attempt(
     target_state = "needs_review" if needs_review else "ready"
     if voice_session.state != target_state and voice_session.state not in {
         "transcribing",
+        "redacting",
         "extracting",
     }:
         raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
@@ -583,43 +659,81 @@ async def process_voice_job(
                     voice_session,
                     needs_review=existing_revision.needs_review,
                 )
-            voice_session = _transition_state(
-                db,
-                context,
-                voice_session.id,
-                expected={"finalizing"},
-                target="assembling",
-            )
-            db.commit()
-            job, attempt = _claim_is_current(db, context, job_id, token)
-            voice_session = _session_from_payload(db, context, job, payload)
-            voice_session = _transition_state(
-                db,
-                context,
-                voice_session.id,
-                expected={"assembling"},
-                target="preprocessing",
-            )
-            db.commit()
-            if asset is None:
+            if voice_session.state == "needs_review" and job.attempt_count > 1:
+                # An explicit retry may resume a transient preprocessing/ASR
+                # failure. The immutable asset decides the earliest safe stage.
+                voice_session = _transition_state(
+                    db,
+                    context,
+                    voice_session.id,
+                    expected={"needs_review"},
+                    target="transcribing" if asset is not None else "preprocessing",
+                )
+                db.commit()
                 job, attempt = _claim_is_current(db, context, job_id, token)
+                voice_session = _session_from_payload(db, context, job, payload)
+            resumable_states = {
+                "finalizing",
+                "assembling",
+                "preprocessing",
+                "transcribing",
+                "redacting",
+                "extracting",
+            }
+            if voice_session.state not in resumable_states:
+                raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
+            if voice_session.state == "finalizing":
+                voice_session = _transition_state(
+                    db,
+                    context,
+                    voice_session.id,
+                    expected={"finalizing"},
+                    target="assembling",
+                )
+                db.commit()
+                job, attempt = _claim_is_current(db, context, job_id, token)
+                voice_session = _session_from_payload(db, context, job, payload)
+            if voice_session.state == "assembling":
+                voice_session = _transition_state(
+                    db,
+                    context,
+                    voice_session.id,
+                    expected={"assembling"},
+                    target="preprocessing",
+                )
+                db.commit()
+                job, attempt = _claim_is_current(db, context, job_id, token)
+                voice_session = _session_from_payload(db, context, job, payload)
+            if asset is None:
+                if voice_session.state != "preprocessing":
+                    raise VoiceJobError("VOICE_AUDIO_ASSET_MISSING")
+                job, attempt = _renew_claim(db, context, job_id, token)
                 voice_session = _session_from_payload(db, context, job, payload)
                 asset = _store_asset(db, context, voice_session)
                 db.commit()
-            voice_session = _transition_state(
-                db,
-                context,
-                voice_session.id,
-                expected={"preprocessing"},
-                target="transcribing",
-            )
-            db.commit()
+                job, attempt = _claim_is_current(db, context, job_id, token)
+                voice_session = _session_from_payload(db, context, job, payload)
+            if voice_session.state == "preprocessing":
+                voice_session = _transition_state(
+                    db,
+                    context,
+                    voice_session.id,
+                    expected={"preprocessing"},
+                    target="transcribing",
+                )
+                db.commit()
+                job, attempt = _claim_is_current(db, context, job_id, token)
+                voice_session = _session_from_payload(db, context, job, payload)
+            if voice_session.state not in {"transcribing", "redacting", "extracting"}:
+                raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
             asset_payload = field_codec.decrypt(
                 asset.clinic_id,
                 "audio_asset.payload",
                 asset.id,
                 asset.payload_ciphertext,
             )
+            job, attempt = _renew_claim(db, context, job_id, token)
+            voice_session = _session_from_payload(db, context, job, payload)
             result, unavailable_reason = await _transcribe(voice_session, asset_payload)
             job, attempt = _claim_is_current(db, context, job_id, token)
             voice_session = _session_from_payload(db, context, job, payload)
@@ -638,31 +752,43 @@ async def process_voice_job(
                     voice_session,
                     needs_review=True,
                 )
-            voice_session = _transition_state(
-                db,
-                context,
-                voice_session.id,
-                expected={"transcribing"},
-                target="redacting",
-            )
-            db.commit()
-            job, attempt = _claim_is_current(db, context, job_id, token)
-            voice_session = _session_from_payload(db, context, job, payload)
-            voice_session = _transition_state(
-                db,
-                context,
-                voice_session.id,
-                expected={"redacting"},
-                target="extracting",
-            )
+            if voice_session.state == "transcribing":
+                voice_session = _transition_state(
+                    db,
+                    context,
+                    voice_session.id,
+                    expected={"transcribing"},
+                    target="redacting",
+                )
+                db.commit()
+                job, attempt = _claim_is_current(db, context, job_id, token)
+                voice_session = _session_from_payload(db, context, job, payload)
+            if voice_session.state == "redacting":
+                voice_session = _transition_state(
+                    db,
+                    context,
+                    voice_session.id,
+                    expected={"redacting"},
+                    target="extracting",
+                )
+            if voice_session.state != "extracting":
+                raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
             revision = _create_revision(db, context, voice_session, asset, result)
         else:
-            if voice_session.current_transcript_revision_id is None or asset is None:
-                raise VoiceJobError("TRANSCRIPT_NOT_READY")
-            previous = db.get(
-                TranscriptRevision, voice_session.current_transcript_revision_id
+            previous = _reanalyze_revision_from_payload(
+                db, context, voice_session, payload
             )
-            if previous is None:
+            if voice_session.state == "needs_review" and job.attempt_count > 1:
+                voice_session = _transition_state(
+                    db,
+                    context,
+                    voice_session.id,
+                    expected={"needs_review"},
+                    target="extracting",
+                )
+            if voice_session.state != "extracting":
+                raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
+            if asset is None:
                 raise VoiceJobError("TRANSCRIPT_NOT_READY")
             text = field_codec.decrypt_text(
                 previous.clinic_id,

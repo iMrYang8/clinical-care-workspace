@@ -17,8 +17,8 @@ class LocalFasterWhisperProvider:
 
     def __init__(self, model_dir: str) -> None:
         self.model_dir = Path(model_dir).expanduser().resolve()
-        if not self.model_dir.is_dir():
-            raise ValueError("LOCAL_ASR_MODEL_DIR must be an existing local directory")
+        if not self.model_dir.is_dir() or not any(self.model_dir.iterdir()):
+            raise ValueError("LOCAL_ASR_MODEL_DIR must be a non-empty local directory")
 
     async def transcribe(self, audio_path: Path) -> TranscriptResult:
         return await asyncio.to_thread(self._transcribe_sync, audio_path)

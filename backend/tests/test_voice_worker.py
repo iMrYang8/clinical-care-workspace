@@ -5,22 +5,27 @@ import math
 import struct
 import uuid
 import wave
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import engine
+from app.core.field_crypto import field_codec
 from app.models import (
     AudioAsset,
+    ClinicalFact,
     Job,
     ProvenancePointer,
     TranscriptRevision,
     VoiceSession,
 )
 from app.services.ai_jobs import worker_context_for_job
+from app.services.voice import worker as voice_worker
 from app.services.voice.providers.base import (
     TranscriptResult,
     TranscriptSegmentResult,
@@ -97,6 +102,44 @@ def test_result_contract_rejects_noncontiguous_text_offsets() -> None:
         validate_transcript_result(result)
 
 
+@pytest.mark.unit
+def test_result_contract_requires_explicit_overlap_labels() -> None:
+    with pytest.raises(ValueError, match="chronological unless marked overlap"):
+        validate_transcript_result(
+            TranscriptResult(
+                text="first\nsecond",
+                segments=[
+                    TranscriptSegmentResult(
+                        text="first",
+                        start_ms=0,
+                        end_ms=1_000,
+                        speaker_id="A",
+                        detected_language="en",
+                        confidence=0.9,
+                        confidence_source="provider",
+                        overlap_group_id=None,
+                        text_start=0,
+                        text_end=5,
+                    ),
+                    TranscriptSegmentResult(
+                        text="second",
+                        start_ms=900,
+                        end_ms=1_500,
+                        speaker_id="B",
+                        detected_language="en",
+                        confidence=0.9,
+                        confidence_source="provider",
+                        overlap_group_id=None,
+                        text_start=6,
+                        text_end=12,
+                    ),
+                ],
+                provider="test",
+                model="overlap-test",
+            )
+        )
+
+
 def _wav_fixture(duration_seconds: float = 11.0) -> bytes:
     sample_rate = 16_000
     frame_count = int(duration_seconds * sample_rate)
@@ -153,6 +196,12 @@ def _create_recording(
         content=payload,
     )
     assert uploaded.status_code == 200, uploaded.text
+    sealed = client.post(
+        f"/api/v1/voice/sessions/{voice_session_id}/devices/{joined.json()['id']}/seal",
+        headers=headers,
+        json={"last_chunk_index": 0},
+    )
+    assert sealed.status_code == 200, sealed.text
     finalized = client.post(
         f"/api/v1/voice/sessions/{voice_session_id}/finalize",
         headers=headers | {"Idempotency-Key": f"voice-{voice_session_id}"},
@@ -203,6 +252,13 @@ def test_synthetic_worker_persists_normalized_review_and_is_idempotent(
         assert len(revisions) == 1
         assert assets[0].payload_ciphertext[:1] == b"\x01"
 
+    with Session(engine) as db:
+        immutable_revision = db.exec(select(TranscriptRevision)).one()
+        immutable_revision.status = "ready"
+        db.add(immutable_revision)
+        with pytest.raises(DBAPIError, match="append-only"):
+            db.commit()
+
     # The durable job cannot be claimed again and derived rows remain unique.
     with pytest.raises(HTTPException):
         _run_job(job_id)
@@ -235,6 +291,135 @@ def test_provider_disabled_retains_encrypted_audio_without_fake_transcript(
         assert len(db.exec(select(AudioAsset)).all()) == 1
         assert len(db.exec(select(TranscriptRevision)).all()) == 0
 
+    async def restored_provider(
+        *_args: object, **_kwargs: object
+    ) -> tuple[TranscriptResult, None]:
+        return (
+            SyntheticFixtureProvider().transcribe_fixture("code-switch-overlap-v1"),
+            None,
+        )
+
+    monkeypatch.setattr(voice_worker, "_transcribe", restored_provider)
+    retried = client.post(f"/api/v1/jobs/{job_id}/retry", headers=headers)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["state"] == "pending"
+    _run_job(job_id)
+    transcript = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=headers
+    )
+    assert transcript.status_code == 200
+    with Session(engine) as db:
+        assert len(db.exec(select(AudioAsset)).all()) == 1
+        assert len(db.exec(select(TranscriptRevision)).all()) == 1
+
+
+def test_out_of_bounds_provider_time_never_becomes_fact_provenance(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    headers = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, headers, synthetic_fixture=True
+    )
+    text = "Safe introduction.\npenicillin allergy"
+
+    async def out_of_bounds_provider(
+        *_args: object, **_kwargs: object
+    ) -> tuple[TranscriptResult, None]:
+        return (
+            validate_transcript_result(
+                TranscriptResult(
+                    text=text,
+                    segments=[
+                        TranscriptSegmentResult(
+                            text="Safe introduction.",
+                            start_ms=0,
+                            end_ms=500,
+                            speaker_id="SPEAKER_00",
+                            detected_language="en",
+                            confidence=0.99,
+                            confidence_source="provider",
+                            overlap_group_id=None,
+                            text_start=0,
+                            text_end=18,
+                        ),
+                        TranscriptSegmentResult(
+                            text="penicillin allergy",
+                            start_ms=50_000,
+                            end_ms=51_000,
+                            speaker_id="SPEAKER_00",
+                            detected_language="en",
+                            confidence=0.99,
+                            confidence_source="provider",
+                            overlap_group_id=None,
+                            text_start=19,
+                            text_end=len(text),
+                        ),
+                    ],
+                    provider="boundary-fixture",
+                    model="outside-audio-v1",
+                )
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(voice_worker, "_transcribe", out_of_bounds_provider)
+    _run_job(job_id)
+    transcript = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=headers
+    )
+    assert transcript.status_code == 200
+    assert "SEGMENT_TIME_OUT_OF_BOUNDS" in transcript.json()["warning_codes"]
+    assert transcript.json()["facts"] == []
+    assert transcript.json()["segments"][0]["end_ms"] == 500
+    publish = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish", headers=headers
+    )
+    assert publish.status_code == 409
+    assert publish.json()["detail"]["code"] == "FACT_EVIDENCE_REQUIRED"
+
+
+def test_expired_worker_resumes_from_persisted_transcribing_state(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    headers = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, headers, synthetic_fixture=True
+    )
+    original_transcribe = voice_worker._transcribe
+
+    async def crash_after_preprocessing(*_args: object, **_kwargs: object) -> None:
+        raise SystemExit("simulated worker termination")
+
+    monkeypatch.setattr(voice_worker, "_transcribe", crash_after_preprocessing)
+    with pytest.raises(SystemExit, match="simulated worker termination"):
+        _run_job(job_id)
+
+    with Session(engine) as db:
+        voice_session = db.exec(
+            select(VoiceSession).where(VoiceSession.id == uuid.UUID(session_id))
+        ).one()
+        job = db.exec(select(Job).where(Job.id == uuid.UUID(job_id))).one()
+        assert voice_session.state == "transcribing"
+        assert len(db.exec(select(AudioAsset)).all()) == 1
+        job.locked_until = datetime.now(UTC) - timedelta(seconds=1)
+        db.add(job)
+        db.commit()
+
+    monkeypatch.setattr(voice_worker, "_transcribe", original_transcribe)
+    _run_job(job_id)
+
+    with Session(engine) as db:
+        voice_session = db.exec(
+            select(VoiceSession).where(VoiceSession.id == uuid.UUID(session_id))
+        ).one()
+        assert voice_session.state == "needs_review"
+        assert len(db.exec(select(AudioAsset)).all()) == 1
+        assert len(db.exec(select(TranscriptRevision)).all()) == 1
+
 
 def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
     client: TestClient, auth_headers
@@ -263,6 +448,24 @@ def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
         headers=clinician | {"Idempotency-Key": "corrected-reanalysis-v1"},
     )
     assert reanalyze.status_code == 202, reanalyze.text
+    replay = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "corrected-reanalysis-v1"},
+    )
+    assert replay.status_code == 202
+    assert replay.json()["job_id"] == reanalyze.json()["job_id"]
+    correction_race = client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript/correct",
+        headers=clinician,
+        json={"text": "A racing correction must be rejected."},
+    )
+    assert correction_race.status_code == 409
+    assert correction_race.json()["detail"]["code"] == "VOICE_REVIEW_STATE_CONFLICT"
+    publish_race = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish", headers=clinician
+    )
+    assert publish_race.status_code == 409
+    assert publish_race.json()["detail"]["code"] == "VOICE_NOT_PUBLISHABLE"
     _run_job(reanalyze.json()["job_id"])
     reviewed = client.get(
         f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
@@ -277,6 +480,22 @@ def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
     )
     assert published.status_code == 200, published.text
     assert published.json()["state"] == "published"
+    replayed_publication = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish", headers=clinician
+    )
+    assert replayed_publication.status_code == 200
+    assert replayed_publication.json()["entry_id"] == published.json()["entry_id"]
+    published_correction = client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript/correct",
+        headers=clinician,
+        json={"text": "Published transcripts are immutable through this API."},
+    )
+    assert published_correction.status_code == 409
+    published_reanalysis = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "after-publish"},
+    )
+    assert published_reanalysis.status_code == 409
     with Session(engine) as db:
         pointer = db.exec(select(ProvenancePointer)).one()
         voice_session = db.exec(
@@ -289,6 +508,19 @@ def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
         assert voice_session.published_entry_id == uuid.UUID(
             published.json()["entry_id"]
         )
+        fact = db.get(ClinicalFact, pointer.clinical_fact_id)
+        assert fact is not None
+        assert fact.status == "accepted"
+        assert fact.reviewed_by_id is not None
+        assert fact.reviewed_at is not None
+
+    with Session(engine) as db:
+        fact = db.get(ClinicalFact, pointer.clinical_fact_id)
+        assert fact is not None
+        fact.value_ciphertext = b"tampered-evidence"
+        db.add(fact)
+        with pytest.raises(DBAPIError, match="clinical fact evidence is immutable"):
+            db.commit()
 
     patient = auth_headers("patient")
     patient_status = client.get(f"/api/v1/voice/sessions/{session_id}", headers=patient)
@@ -296,3 +528,38 @@ def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
     assert patient_status.json()["patient_summary"]
     assert patient_status.json()["current_transcript_revision_id"] is None
     assert "penicillin allergy during review" not in patient_status.text
+
+
+def test_reanalysis_job_is_bound_to_payload_revision(
+    client: TestClient, auth_headers
+) -> None:
+    clinician = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, clinician, synthetic_fixture=True
+    )
+    _run_job(job_id)
+    reanalysis = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "tampered-revision-binding"},
+    )
+    assert reanalysis.status_code == 202
+    tampered_job_id = uuid.UUID(reanalysis.json()["job_id"])
+    with Session(engine) as db:
+        job = db.get(Job, tampered_job_id)
+        assert job is not None
+        job.payload_ciphertext = field_codec.encrypt_json(
+            job.clinic_id,
+            "job.payload",
+            job.id,
+            {"session_id": session_id, "revision_id": str(uuid.uuid4())},
+        )
+        db.add(job)
+        db.commit()
+    _run_job(str(tampered_job_id))
+    with Session(engine) as db:
+        job = db.get(Job, tampered_job_id)
+        voice_session = db.get(VoiceSession, uuid.UUID(session_id))
+        assert job is not None and voice_session is not None
+        assert job.state == "failed"
+        assert job.error_code == "REANALYSIS_REVISION_NOT_FOUND"
+        assert voice_session.state == "needs_review"

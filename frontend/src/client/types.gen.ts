@@ -1370,6 +1370,34 @@ export type VoiceDevicePublic = {
 };
 
 /**
+ * VoiceDeviceSeal
+ */
+export type VoiceDeviceSeal = {
+    /**
+     * Last Chunk Index
+     */
+    last_chunk_index: number;
+};
+
+/**
+ * VoiceDeviceSealPublic
+ */
+export type VoiceDeviceSealPublic = {
+    /**
+     * Device Id
+     */
+    device_id: string;
+    /**
+     * Last Chunk Index
+     */
+    last_chunk_index: number;
+    /**
+     * Sealed
+     */
+    sealed?: true;
+};
+
+/**
  * VoiceFinalizeDevice
  */
 export type VoiceFinalizeDevice = {
@@ -2594,7 +2622,7 @@ export type voiceJoinDeviceResponses = {
 export type voiceJoinDeviceResponse = voiceJoinDeviceResponses[keyof voiceJoinDeviceResponses];
 
 export type voicePutChunkData = {
-    body?: never;
+    body: Blob | File;
     headers: {
         /**
          * X-Chunk-Sha256
@@ -2644,6 +2672,40 @@ export type voicePutChunkResponses = {
 };
 
 export type voicePutChunkResponse = voicePutChunkResponses[keyof voicePutChunkResponses];
+
+export type voiceSealDeviceData = {
+    body: VoiceDeviceSeal;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+        /**
+         * Device Id
+         */
+        device_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/devices/{device_id}/seal';
+};
+
+export type voiceSealDeviceErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceSealDeviceError = voiceSealDeviceErrors[keyof voiceSealDeviceErrors];
+
+export type voiceSealDeviceResponses = {
+    /**
+     * Successful Response
+     */
+    200: VoiceDeviceSealPublic;
+};
+
+export type voiceSealDeviceResponse = voiceSealDeviceResponses[keyof voiceSealDeviceResponses];
 
 export type voiceGetChunkStatusData = {
     body?: never;
@@ -2860,10 +2922,12 @@ export type voiceAudioError = voiceAudioErrors[keyof voiceAudioErrors];
 
 export type voiceAudioResponses = {
     /**
-     * Successful Response
+     * Authorized normalized 16 kHz mono PCM audio
      */
-    200: unknown;
+    200: Blob | File;
 };
+
+export type voiceAudioResponse = voiceAudioResponses[keyof voiceAudioResponses];
 
 export type voiceLiveStatusData = {
     body?: never;

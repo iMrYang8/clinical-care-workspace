@@ -28,7 +28,6 @@ IMMUTABLE_TABLES = (
     "audio_assets",
     "transcript_revisions",
     "transcript_segments",
-    "clinical_facts",
 )
 
 
@@ -66,6 +65,11 @@ def upgrade() -> None:
           CONSTRAINT ck_voice_fixture_pair CHECK (
             (synthetic_fixture = false AND fixture_id IS NULL)
             OR (synthetic_fixture = true AND fixture_id IS NOT NULL)
+          ),
+          CONSTRAINT ck_voice_session_state CHECK (
+            state IN ('created','recording','finalizing','assembling',
+                      'preprocessing','transcribing','redacting','extracting',
+                      'ready','needs_review','published')
           )
         );
         CREATE INDEX ix_voice_session_patient_created
@@ -81,7 +85,7 @@ def upgrade() -> None:
           capture_role VARCHAR(30) NOT NULL
             CHECK (capture_role IN ('patient','staff','clinician')),
           joined_by_id UUID NOT NULL REFERENCES users(id),
-          last_declared_chunk_index INTEGER CHECK(last_declared_chunk_index >= 0),
+          last_declared_chunk_index INTEGER,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           CONSTRAINT uq_voice_device_clinic_id UNIQUE(clinic_id,id),
           CONSTRAINT uq_voice_device_session_id UNIQUE(clinic_id,session_id,id),
@@ -89,7 +93,11 @@ def upgrade() -> None:
             UNIQUE(clinic_id,session_id,client_device_id),
           CONSTRAINT fk_voice_device_session_tenant
             FOREIGN KEY(clinic_id,session_id)
-            REFERENCES voice_sessions(clinic_id,id) ON DELETE CASCADE
+            REFERENCES voice_sessions(clinic_id,id) ON DELETE CASCADE,
+          CONSTRAINT ck_voice_device_last_index CHECK(
+            last_declared_chunk_index IS NULL
+            OR last_declared_chunk_index BETWEEN 0 AND 21600
+          )
         );
         CREATE INDEX ix_voice_device_session
           ON voice_devices(clinic_id,session_id);
@@ -99,7 +107,7 @@ def upgrade() -> None:
           clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
           session_id UUID NOT NULL,
           device_id UUID NOT NULL,
-          chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0),
+          chunk_index INTEGER NOT NULL,
           payload_ciphertext BYTEA NOT NULL,
           plaintext_sha256 VARCHAR(64) NOT NULL,
           byte_length INTEGER NOT NULL CHECK(byte_length > 0),
@@ -118,6 +126,9 @@ def upgrade() -> None:
           CONSTRAINT ck_audio_chunk_range CHECK (
             (start_ms IS NULL AND end_ms IS NULL)
             OR (start_ms IS NOT NULL AND end_ms IS NOT NULL AND end_ms > start_ms)
+          ),
+          CONSTRAINT ck_audio_chunk_index_bound CHECK (
+            chunk_index BETWEEN 0 AND 21600
           )
         );
         CREATE INDEX ix_audio_chunk_session_device_index
@@ -137,6 +148,7 @@ def upgrade() -> None:
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           CONSTRAINT uq_audio_asset_clinic_id UNIQUE(clinic_id,id),
           CONSTRAINT uq_audio_asset_session UNIQUE(clinic_id,session_id),
+          CONSTRAINT uq_audio_asset_session_id UNIQUE(clinic_id,session_id,id),
           CONSTRAINT fk_audio_asset_session_tenant
             FOREIGN KEY(clinic_id,session_id)
             REFERENCES voice_sessions(clinic_id,id) ON DELETE CASCADE
@@ -162,27 +174,31 @@ def upgrade() -> None:
           warning_codes_json JSONB NOT NULL DEFAULT '[]'::jsonb,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           CONSTRAINT uq_transcript_revision_clinic_id UNIQUE(clinic_id,id),
+          CONSTRAINT uq_transcript_revision_session_id UNIQUE(clinic_id,session_id,id),
           CONSTRAINT uq_transcript_revision_number
             UNIQUE(clinic_id,session_id,revision_no),
           CONSTRAINT fk_transcript_revision_session_tenant
             FOREIGN KEY(clinic_id,session_id)
             REFERENCES voice_sessions(clinic_id,id) ON DELETE CASCADE,
           CONSTRAINT fk_transcript_previous_revision_tenant
-            FOREIGN KEY(clinic_id,previous_revision_id)
-            REFERENCES transcript_revisions(clinic_id,id)
+            FOREIGN KEY(clinic_id,session_id,previous_revision_id)
+            REFERENCES transcript_revisions(clinic_id,session_id,id),
+          CONSTRAINT ck_transcript_revision_status
+            CHECK(status IN ('ready','needs_review'))
         );
         CREATE INDEX ix_transcript_revision_session_created
           ON transcript_revisions(clinic_id,session_id,created_at);
 
         ALTER TABLE voice_sessions ADD CONSTRAINT
           fk_voice_session_current_revision_tenant
-          FOREIGN KEY(clinic_id,current_transcript_revision_id)
-          REFERENCES transcript_revisions(clinic_id,id)
+          FOREIGN KEY(clinic_id,id,current_transcript_revision_id)
+          REFERENCES transcript_revisions(clinic_id,session_id,id)
           DEFERRABLE INITIALLY DEFERRED;
 
         CREATE TABLE transcript_segments (
           id UUID PRIMARY KEY,
           clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+          session_id UUID NOT NULL,
           revision_id UUID NOT NULL,
           ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
           text_ciphertext BYTEA NOT NULL,
@@ -199,10 +215,11 @@ def upgrade() -> None:
           provider VARCHAR(80) NOT NULL,
           model VARCHAR(160) NOT NULL,
           CONSTRAINT uq_transcript_segment_clinic_id UNIQUE(clinic_id,id),
+          CONSTRAINT uq_transcript_segment_revision_id UNIQUE(clinic_id,session_id,revision_id,id),
           CONSTRAINT uq_transcript_segment_ordinal UNIQUE(clinic_id,revision_id,ordinal),
           CONSTRAINT fk_transcript_segment_revision_tenant
-            FOREIGN KEY(clinic_id,revision_id)
-            REFERENCES transcript_revisions(clinic_id,id) ON DELETE CASCADE
+            FOREIGN KEY(clinic_id,session_id,revision_id)
+            REFERENCES transcript_revisions(clinic_id,session_id,id) ON DELETE CASCADE
         );
         CREATE INDEX ix_transcript_segment_revision_time
           ON transcript_segments(clinic_id,revision_id,start_ms);
@@ -210,6 +227,7 @@ def upgrade() -> None:
         CREATE TABLE clinical_facts (
           id UUID PRIMARY KEY,
           clinic_id UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+          session_id UUID NOT NULL,
           revision_id UUID NOT NULL,
           segment_id UUID NOT NULL,
           ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
@@ -225,17 +243,26 @@ def upgrade() -> None:
           status VARCHAR(30) NOT NULL DEFAULT 'proposed',
           patient_facing BOOLEAN NOT NULL DEFAULT false,
           stale BOOLEAN NOT NULL DEFAULT false,
+          reviewed_by_id UUID REFERENCES users(id),
+          reviewed_at TIMESTAMPTZ,
           CONSTRAINT uq_clinical_fact_clinic_id UNIQUE(clinic_id,id),
           CONSTRAINT uq_clinical_fact_ordinal UNIQUE(clinic_id,revision_id,ordinal),
           CONSTRAINT fk_clinical_fact_revision_tenant
-            FOREIGN KEY(clinic_id,revision_id)
-            REFERENCES transcript_revisions(clinic_id,id) ON DELETE CASCADE,
+            FOREIGN KEY(clinic_id,session_id,revision_id)
+            REFERENCES transcript_revisions(clinic_id,session_id,id) ON DELETE CASCADE,
           CONSTRAINT fk_clinical_fact_segment_tenant
-            FOREIGN KEY(clinic_id,segment_id)
-            REFERENCES transcript_segments(clinic_id,id),
+            FOREIGN KEY(clinic_id,session_id,revision_id,segment_id)
+            REFERENCES transcript_segments(clinic_id,session_id,revision_id,id),
           CONSTRAINT fk_clinical_fact_audio_asset_tenant
-            FOREIGN KEY(clinic_id,audio_asset_id)
-            REFERENCES audio_assets(clinic_id,id)
+            FOREIGN KEY(clinic_id,session_id,audio_asset_id)
+            REFERENCES audio_assets(clinic_id,session_id,id),
+          CONSTRAINT ck_clinical_fact_status
+            CHECK(status IN ('proposed','accepted','rejected')),
+          CONSTRAINT ck_clinical_fact_review_pair CHECK (
+            (status = 'proposed' AND reviewed_by_id IS NULL AND reviewed_at IS NULL)
+            OR (status IN ('accepted','rejected') AND reviewed_by_id IS NOT NULL
+                AND reviewed_at IS NOT NULL)
+          )
         );
         CREATE INDEX ix_clinical_fact_revision_status
           ON clinical_facts(clinic_id,revision_id,status);
@@ -285,11 +312,58 @@ def upgrade() -> None:
               FOR EACH ROW EXECUTE FUNCTION nightingale_voice_append_only()
             """
         )
+    op.execute(
+        """
+        CREATE FUNCTION nightingale_clinical_fact_review_guard()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'clinical fact evidence is immutable' USING ERRCODE = '55000';
+          END IF;
+          IF OLD.clinic_id IS DISTINCT FROM NEW.clinic_id
+             OR OLD.session_id IS DISTINCT FROM NEW.session_id
+             OR OLD.revision_id IS DISTINCT FROM NEW.revision_id
+             OR OLD.segment_id IS DISTINCT FROM NEW.segment_id
+             OR OLD.ordinal IS DISTINCT FROM NEW.ordinal
+             OR OLD.fact_type IS DISTINCT FROM NEW.fact_type
+             OR OLD.value_ciphertext IS DISTINCT FROM NEW.value_ciphertext
+             OR OLD.exact_quote_ciphertext IS DISTINCT FROM NEW.exact_quote_ciphertext
+             OR OLD.quote_sha256 IS DISTINCT FROM NEW.quote_sha256
+             OR OLD.transcript_start IS DISTINCT FROM NEW.transcript_start
+             OR OLD.transcript_end IS DISTINCT FROM NEW.transcript_end
+             OR OLD.audio_asset_id IS DISTINCT FROM NEW.audio_asset_id
+             OR OLD.audio_start_ms IS DISTINCT FROM NEW.audio_start_ms
+             OR OLD.audio_end_ms IS DISTINCT FROM NEW.audio_end_ms
+             OR OLD.patient_facing IS DISTINCT FROM NEW.patient_facing
+             OR OLD.stale IS DISTINCT FROM NEW.stale
+             OR OLD.status <> 'proposed'
+             OR NEW.status NOT IN ('accepted','rejected')
+             OR NEW.reviewed_by_id IS NULL
+             OR NEW.reviewed_at IS NULL THEN
+            RAISE EXCEPTION 'clinical fact evidence is immutable' USING ERRCODE = '55000';
+          END IF;
+          RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER trg_clinical_fact_review_guard
+          BEFORE UPDATE OR DELETE ON clinical_facts
+          FOR EACH ROW EXECUTE FUNCTION nightingale_clinical_fact_review_guard();
+        """
+    )
 
 
 def downgrade() -> None:
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_clinical_fact_review_guard ON clinical_facts"
+    )
+    op.execute("DROP FUNCTION IF EXISTS nightingale_clinical_fact_review_guard()")
     for table in IMMUTABLE_TABLES:
         op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_append_only ON {table}")
+    # Older development snapshots briefly treated fact review status as
+    # append-only. Keep downgrade resilient for those local databases.
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_clinical_facts_append_only ON clinical_facts"
+    )
     op.execute("DROP FUNCTION IF EXISTS nightingale_voice_append_only()")
     op.execute(
         """

@@ -52,8 +52,12 @@ class Settings(BaseSettings):
     STRICT_NO_AUDIO_EGRESS: bool = False
     OPENAI_TRANSCRIBE_MODEL: str | None = None
     VOICE_MAX_CHUNK_BYTES: int = 8 * 1024 * 1024
+    VOICE_MAX_SESSION_BYTES: int = 512 * 1024 * 1024
     VOICE_FFMPEG_BIN: str = "ffmpeg"
     VOICE_FFMPEG_TIMEOUT_SECONDS: int = 120
+    VOICE_ASR_TIMEOUT_SECONDS: int = 600
+    # Covers bounded preprocessing (up to eight device tracks) plus bounded ASR.
+    VOICE_JOB_LEASE_SECONDS: int = 1_800
     LOCAL_ASR_MODEL_DIR: str | None = None
     PYANNOTE_ENABLED: bool = False
     PYANNOTE_MODEL_DIR: str | None = None

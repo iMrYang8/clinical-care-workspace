@@ -1,6 +1,7 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Header, Request, Response, status
+from fastapi import APIRouter, Header, HTTPException, Path, Request, Response, status
 
 from app.api.deps import CurrentContext, SessionDep
 from app.core.config import settings
@@ -12,6 +13,8 @@ from app.models import (
     VoiceChunkStatus,
     VoiceDeviceJoin,
     VoiceDevicePublic,
+    VoiceDeviceSeal,
+    VoiceDeviceSealPublic,
     VoiceFinalizePublic,
     VoiceFinalizeRequest,
     VoicePublishPublic,
@@ -30,6 +33,7 @@ from app.services.voice.service import (
     get_voice_session,
     join_voice_device,
     publish_voice_result,
+    seal_voice_device,
     transcript_public,
     upload_audio_chunk,
     voice_device_public,
@@ -37,6 +41,28 @@ from app.services.voice.service import (
 )
 
 router = APIRouter(prefix="/voice", tags=["voice"])
+
+
+async def _bounded_chunk_body(request: Request) -> bytes:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > settings.VOICE_MAX_CHUNK_BYTES:
+                raise HTTPException(
+                    status_code=413, detail={"code": "AUDIO_CHUNK_SIZE_INVALID"}
+                )
+        except ValueError:
+            pass
+    parts: list[bytes] = []
+    total = 0
+    async for part in request.stream():
+        total += len(part)
+        if total > settings.VOICE_MAX_CHUNK_BYTES:
+            raise HTTPException(
+                status_code=413, detail={"code": "AUDIO_CHUNK_SIZE_INVALID"}
+            )
+        parts.append(part)
+    return b"".join(parts)
 
 
 @router.post(
@@ -80,20 +106,33 @@ def join_device(
 @router.put(
     "/sessions/{session_id}/devices/{device_id}/chunks/{chunk_index}",
     response_model=AudioChunkAck,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                media_type: {"schema": {"type": "string", "format": "binary"}}
+                for media_type in ("audio/webm", "audio/mp4", "audio/wav")
+            },
+        }
+    },
 )
 async def put_chunk(
     session_id: uuid.UUID,
     device_id: uuid.UUID,
-    chunk_index: int,
+    chunk_index: Annotated[int, Path(ge=0, le=21_600)],
     request: Request,
     session: SessionDep,
     context: CurrentContext,
     chunk_sha256: str = Header(alias="X-Chunk-SHA256", min_length=64, max_length=64),
-    chunk_start_ms: int | None = Header(default=None, alias="X-Chunk-Start-Ms", ge=0),
-    chunk_end_ms: int | None = Header(default=None, alias="X-Chunk-End-Ms", ge=0),
+    chunk_start_ms: int | None = Header(
+        default=None, alias="X-Chunk-Start-Ms", ge=0, le=43_200_000
+    ),
+    chunk_end_ms: int | None = Header(
+        default=None, alias="X-Chunk-End-Ms", ge=0, le=43_200_000
+    ),
 ) -> AudioChunkAck:
     voice_session = get_voice_session(session, context, session_id, lock=True)
-    payload = await request.body()
+    payload = await _bounded_chunk_body(request)
     result = upload_audio_chunk(
         session,
         context,
@@ -105,6 +144,25 @@ async def put_chunk(
         media_type=request.headers.get("content-type", ""),
         start_ms=chunk_start_ms,
         end_ms=chunk_end_ms,
+    )
+    session.commit()
+    return result
+
+
+@router.post(
+    "/sessions/{session_id}/devices/{device_id}/seal",
+    response_model=VoiceDeviceSealPublic,
+)
+def seal_device(
+    session_id: uuid.UUID,
+    device_id: uuid.UUID,
+    body: VoiceDeviceSeal,
+    session: SessionDep,
+    context: CurrentContext,
+) -> VoiceDeviceSealPublic:
+    voice_session = get_voice_session(session, context, session_id, lock=True)
+    result = seal_voice_device(
+        session, context, voice_session, device_id=device_id, body=body
     )
     session.commit()
     return result
@@ -204,7 +262,18 @@ def publish(
     return result
 
 
-@router.get("/sessions/{session_id}/audio")
+@router.get(
+    "/sessions/{session_id}/audio",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Authorized normalized 16 kHz mono PCM audio",
+            "content": {
+                "audio/wav": {"schema": {"type": "string", "format": "binary"}}
+            },
+        }
+    },
+)
 def audio(
     session_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> Response:
@@ -232,6 +301,10 @@ def live_status(
             status="unavailable",
             reason_code="LIVE_TRANSCRIPT_NOT_CONFIGURED",
         )
-    # The endpoint reports availability only. Provisional content is never
-    # fabricated by the backend when no live provider is configured.
-    return LiveTranscriptAvailability(available=True, status="available")
+    # No live provider/transport is shipped in this build.  The feature flag is
+    # a deployment gate, not evidence that provisional captions exist.
+    return LiveTranscriptAvailability(
+        available=False,
+        status="unavailable",
+        reason_code="LIVE_TRANSCRIPT_TRANSPORT_UNAVAILABLE",
+    )

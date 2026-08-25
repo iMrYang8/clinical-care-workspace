@@ -42,12 +42,15 @@ def validate_transcript_result(result: TranscriptResult) -> TranscriptResult:
         raise ValueError("provider and model identifiers are required")
     if not result.text.strip():
         raise ValueError("transcript text must not be empty")
+    if not result.segments:
+        raise ValueError("at least one transcript segment is required")
     previous_end_ms = -1
     for segment in result.segments:
         if segment.start_ms < 0 or segment.end_ms <= segment.start_ms:
             raise ValueError("invalid segment time range")
-        # Overlap is allowed; a segment that moves wholly backwards is not.
-        if segment.end_ms <= previous_end_ms and segment.overlap_group_id is None:
+        # Every time intersection must be explicit.  Merely ending after the
+        # previous segment does not make an unlabelled overlap trustworthy.
+        if segment.start_ms < previous_end_ms and segment.overlap_group_id is None:
             raise ValueError("segments must be chronological unless marked overlap")
         previous_end_ms = max(previous_end_ms, segment.end_ms)
         if segment.confidence is not None and not 0 <= segment.confidence <= 1:

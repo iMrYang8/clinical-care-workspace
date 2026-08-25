@@ -35,6 +35,16 @@ class PreprocessedAudio:
     signals: dict[str, object]
 
 
+def write_private_file(path: Path, payload: bytes) -> None:
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        stat.S_IRUSR | stat.S_IWUSR,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+
+
 def _suffix(media_type: str) -> str:
     normalized = media_type.split(";", 1)[0].strip().lower()
     return {
@@ -89,6 +99,34 @@ def _pcm_signals(path: Path, *, multi_device: bool) -> tuple[int, dict[str, obje
     return duration_ms, signals
 
 
+def _run_ffmpeg(command: list[str], output: Path, *, timeout_seconds: int) -> None:
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            timeout=max(1, timeout_seconds),
+            umask=0o077,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        code = (
+            "FFMPEG_TIMEOUT"
+            if isinstance(exc, subprocess.TimeoutExpired)
+            else "FFMPEG_UNAVAILABLE"
+        )
+        raise AudioPreprocessingError(code) from exc
+    if completed.returncode != 0 or not output.is_file():
+        raise AudioPreprocessingError("FFMPEG_PREPROCESSING_FAILED")
+    os.chmod(output, stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _numeric_signal(signals: dict[str, object], key: str) -> float:
+    value = signals.get(key)
+    if not isinstance(value, (int, float)):
+        raise AudioPreprocessingError("AUDIO_SIGNAL_SCHEMA_INVALID")
+    return float(value)
+
+
 def preprocess_audio(
     devices: list[DeviceAudio],
     *,
@@ -105,9 +143,43 @@ def preprocess_audio(
         inputs: list[Path] = []
         for index, device in enumerate(devices):
             path = temp_dir / f"device-{index}{_suffix(device.media_type)}"
-            path.write_bytes(_ordered_device_payload(device))
-            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+            write_private_file(path, _ordered_device_payload(device))
             inputs.append(path)
+
+        # Measure each decoded track before highpass/loudnorm.  Otherwise
+        # normalization can conceal source clipping or amplify low-level noise.
+        raw_signals: list[dict[str, object]] = []
+        raw_filter = "aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono"
+        for index, path in enumerate(inputs):
+            analysis_output = temp_dir / f"analysis-{index}.wav"
+            analysis_command = [
+                ffmpeg_bin,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(path),
+                "-af",
+                raw_filter,
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                str(analysis_output),
+            ]
+            _run_ffmpeg(
+                analysis_command,
+                analysis_output,
+                timeout_seconds=timeout_seconds,
+            )
+            _duration, device_signals = _pcm_signals(
+                analysis_output, multi_device=len(inputs) > 1
+            )
+            raw_signals.append(device_signals)
 
         output = temp_dir / "normalized.wav"
         command = [ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
@@ -138,24 +210,32 @@ def preprocess_audio(
                 ]
             )
         command.extend(["-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(output)])
-        try:
-            completed = subprocess.run(
-                command,
-                check=False,
-                capture_output=True,
-                timeout=max(1, timeout_seconds),
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            code = (
-                "FFMPEG_TIMEOUT"
-                if isinstance(exc, subprocess.TimeoutExpired)
-                else "FFMPEG_UNAVAILABLE"
-            )
-            raise AudioPreprocessingError(code) from exc
-        if completed.returncode != 0 or not output.is_file():
-            raise AudioPreprocessingError("FFMPEG_PREPROCESSING_FAILED")
+        _run_ffmpeg(command, output, timeout_seconds=timeout_seconds)
         payload = output.read_bytes()
-        duration_ms, signals = _pcm_signals(output, multi_device=len(inputs) > 1)
+        duration_ms, normalized_signals = _pcm_signals(
+            output, multi_device=len(inputs) > 1
+        )
+        signals: dict[str, object] = {
+            "silence_ratio": max(
+                _numeric_signal(item, "silence_ratio") for item in raw_signals
+            ),
+            "clipping_ratio": max(
+                _numeric_signal(item, "clipping_ratio") for item in raw_signals
+            ),
+            "rms": min(_numeric_signal(item, "rms") for item in raw_signals),
+            "silence_review": any(
+                item["silence_review"] is True for item in raw_signals
+            ),
+            "clipping_review": any(
+                item["clipping_review"] is True for item in raw_signals
+            ),
+            "noise_review": any(item["noise_review"] is True for item in raw_signals),
+            "overlap_review": len(inputs) > 1,
+            "alignment": "track-start-only" if len(inputs) > 1 else "single-device",
+            "measurement_stage": "decoded-pre-normalization",
+            "device_signals": raw_signals,
+            "normalized_output_signals": normalized_signals,
+        }
         return PreprocessedAudio(
             payload=payload,
             sha256=hashlib.sha256(payload).hexdigest(),

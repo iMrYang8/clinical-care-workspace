@@ -12,7 +12,6 @@ from app.services.ai_jobs import (
     process_job,
     worker_context_for_job,
 )
-from app.services.voice.worker import process_voice_job
 
 router = APIRouter(tags=["ai"])
 
@@ -110,7 +109,8 @@ async def retry_job(
     # Serialize retry against worker claim/recovery and refresh any identity-map
     # copy before rechecking state and the attempt budget.
     job = get_scoped_job(session, context, job_id, lock=True)
-    if job.state != "failed":
+    voice_review_retry = job.state == "needs_review" and job.kind == "voice_process"
+    if job.state != "failed" and not voice_review_retry:
         raise HTTPException(
             status_code=409,
             detail={"code": "JOB_NOT_RETRYABLE", "state": job.state},
@@ -120,16 +120,28 @@ async def retry_job(
     worker_context = worker_context_for_job(session, job)
     if worker_context is None:
         raise HTTPException(status_code=503, detail={"code": "WORKER_UNAVAILABLE"})
-    if settings.AI_PROVIDER == "openai":
+    if voice_review_retry:
+        # ``claim_job`` deliberately excludes terminal review rows from the
+        # background poller. Only this explicit clinical action makes it
+        # claimable again after an ASR provider is configured.
+        job.state = "failed"
+        job.updated_at = get_datetime_utc()
+        session.add(job)
+        session.flush()
+    if job.kind in {"voice_process", "voice_reanalyze"}:
+        # Voice work always crosses the durable worker boundary.  Text-provider
+        # selection must never decide whether FFmpeg/ASR runs in an API request.
+        job.state = "pending"
+        job.error_code = None
+        job.updated_at = get_datetime_utc()
+        session.add(job)
+    elif settings.AI_PROVIDER == "openai":
         job.state = "pending"
         job.error_code = None
         job.updated_at = get_datetime_utc()
         session.add(job)
     else:
-        if job.kind in {"voice_process", "voice_reanalyze"}:
-            await process_voice_job(session, worker_context, job.id)
-        else:
-            await process_job(session, worker_context, job.id)
+        await process_job(session, worker_context, job.id)
     session.commit()
     session.refresh(job)
     return job_public(session, job)

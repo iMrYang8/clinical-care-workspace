@@ -74,17 +74,30 @@ export async function finalizeCapture(
   if (!capture || capture.nextChunkIndex < 1) {
     throw new Error("No captured audio is available to finalize")
   }
+  await VoiceService.sealDevice({
+    path: {
+      session_id: capture.serverSessionId,
+      device_id: capture.serverDeviceId,
+    },
+    body: { last_chunk_index: capture.nextChunkIndex - 1 },
+  })
   const status = (
     await VoiceService.getChunkStatus({
       path: { session_id: capture.serverSessionId },
     })
   ).data
-  const devices = status.devices
-    .filter((device) => device.received_indices.length > 0)
-    .map((device) => ({
-      device_id: device.device_id,
-      last_chunk_index: Math.max(...device.received_indices),
-    }))
+  const unsealed = status.devices.filter(
+    (device) => device.last_declared_chunk_index === null,
+  )
+  if (unsealed.length > 0) {
+    throw new Error(
+      "Other device tracks are still recording. Stop them before finalizing.",
+    )
+  }
+  const devices = status.devices.map((device) => ({
+    device_id: device.device_id,
+    last_chunk_index: device.last_declared_chunk_index as number,
+  }))
   if (devices.length < 1)
     throw new Error("No uploaded device tracks are available")
   const response = await VoiceService.finalize({

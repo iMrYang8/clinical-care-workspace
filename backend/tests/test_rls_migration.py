@@ -116,7 +116,12 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
                         'trg_retention_lock_decay_subject',
                         'trg_highlight_cold_source',
                         'trg_conflict_cold_source',
-                        'trg_task_cold_source'
+                        'trg_task_cold_source',
+                        'trg_audio_chunks_append_only',
+                        'trg_audio_assets_append_only',
+                        'trg_transcript_revisions_append_only',
+                        'trg_transcript_segments_append_only',
+                        'trg_clinical_fact_review_guard'
                       )
                     """
                 )
@@ -131,6 +136,11 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
         "trg_highlight_cold_source",
         "trg_conflict_cold_source",
         "trg_task_cold_source",
+        "trg_audio_chunks_append_only",
+        "trg_audio_assets_append_only",
+        "trg_transcript_revisions_append_only",
+        "trg_transcript_segments_append_only",
+        "trg_clinical_fact_review_guard",
     }
 
     inspector = inspect(engine)
@@ -154,7 +164,12 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
             "fk_audio_chunk_session_tenant",
             "fk_audio_chunk_device_tenant",
         },
-        "transcript_revisions": {"fk_transcript_revision_session_tenant"},
+        "voice_sessions": {"fk_voice_session_current_revision_tenant"},
+        "transcript_revisions": {
+            "fk_transcript_revision_session_tenant",
+            "fk_transcript_previous_revision_tenant",
+        },
+        "transcript_segments": {"fk_transcript_segment_revision_tenant"},
         "clinical_facts": {
             "fk_clinical_fact_revision_tenant",
             "fk_clinical_fact_segment_tenant",

@@ -102,11 +102,14 @@ describe("VoiceReviewMode", () => {
     expect(publish).toBeDisabled()
     expect(screen.getByText(/Publication disabled/)).toBeInTheDocument()
 
+    fireEvent.click(screen.getAllByRole("button", { name: "Jump to 0:02" })[0])
+    const audio = document.querySelector("audio")
+    expect(audio?.currentTime).toBe(2)
+
     fireEvent.click(screen.getAllByRole("button", { name: /allergy/i })[0])
     await waitFor(() =>
       expect(Element.prototype.scrollIntoView).toHaveBeenCalled(),
     )
-    const audio = document.querySelector("audio")
     expect(audio?.currentTime).toBe(2.1)
   })
 })

@@ -78,6 +78,7 @@ export function VoiceCapture({
   const analyzerFrameRef = useRef<number | null>(null)
   const chunkStartedAtRef = useRef(0)
   const writeChainRef = useRef(Promise.resolve())
+  const uploadChainRef = useRef<Promise<void>>(Promise.resolve())
 
   const refreshRecovery = useCallback(async () => {
     const captures = await recoverableCaptures()
@@ -90,12 +91,13 @@ export function VoiceCapture({
 
   const flush = useCallback(
     async (localId: string) => {
+      const activelyRecording = recorderRef.current?.state === "recording"
       if (!navigator.onLine) {
-        setState("queued")
+        if (!activelyRecording) setState("queued")
         setMessage("Offline: encrypted chunks remain on this device.")
         return false
       }
-      setState("uploading")
+      if (!activelyRecording) setState("uploading")
       try {
         const result = await uploadPendingChunks(localId)
         setUploadedChunks((count) => count + result.uploaded)
@@ -104,7 +106,7 @@ export function VoiceCapture({
         await refreshRecovery()
         return result.remaining === 0
       } catch (error) {
-        setState("queued")
+        if (!activelyRecording) setState("queued")
         setMessage(error instanceof Error ? error.message : "Upload paused")
         return false
       }
@@ -112,11 +114,23 @@ export function VoiceCapture({
     [refreshRecovery],
   )
 
+  const scheduleFlush = useCallback(
+    (localId: string): Promise<boolean> => {
+      const scheduled = uploadChainRef.current.then(() => flush(localId))
+      uploadChainRef.current = scheduled.then(
+        () => undefined,
+        () => undefined,
+      )
+      return scheduled
+    },
+    [flush],
+  )
+
   useEffect(() => {
     void refreshRecovery()
     const online = () => {
       setOffline(false)
-      if (captureId) void flush(captureId)
+      if (captureId) void scheduleFlush(captureId)
     }
     const offlineEvent = () => setOffline(true)
     window.addEventListener("online", online)
@@ -125,7 +139,7 @@ export function VoiceCapture({
       window.removeEventListener("online", online)
       window.removeEventListener("offline", offlineEvent)
     }
-  }, [captureId, flush, refreshRecovery])
+  }, [captureId, refreshRecovery, scheduleFlush])
 
   useEffect(
     () => () => {
@@ -213,7 +227,7 @@ export function VoiceCapture({
         writeChainRef.current = writeChainRef.current.then(async () => {
           await enqueueEncryptedChunk(local.id, event.data, startMs, endMs)
           setCapturedChunks((count) => count + 1)
-          if (navigator.onLine) await flush(local.id)
+          if (navigator.onLine) void scheduleFlush(local.id)
         })
       })
       recorder.start(VOICE_CHUNK_INTERVAL_MS)
@@ -247,14 +261,14 @@ export function VoiceCapture({
     if (analyzerFrameRef.current) cancelAnimationFrame(analyzerFrameRef.current)
     await audioContextRef.current?.close()
     await writeChainRef.current
-    const uploaded = await flush(captureId)
+    const uploaded = await scheduleFlush(captureId)
     if (!uploaded) return
     setState("finalizing")
     try {
       const result = await finalizeCapture(captureId)
       setState("idle")
       setMessage(
-        `Recording accepted. Processing is ${result.state}; final speaker labels replace provisional captions.`,
+        `Recording accepted. Processing is ${result.state}; live captions are unavailable in this build.`,
       )
       onFinalized?.(result.session_id)
     } catch (error) {
@@ -266,7 +280,7 @@ export function VoiceCapture({
   const resume = async (localId: string) => {
     try {
       setCaptureId(localId)
-      const complete = await flush(localId)
+      const complete = await scheduleFlush(localId)
       if (complete) {
         const result = await finalizeCapture(localId)
         onFinalized?.(result.session_id)

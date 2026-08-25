@@ -4,7 +4,7 @@ test.use({ storageState: { cookies: [], origins: [] } })
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    const wav = new Uint8Array(44 + 16_000 * 2)
+    const wav = new Uint8Array(44 + 16_000 * 2 * 11)
     const view = new DataView(wav.buffer)
     const write = (offset: number, value: string) =>
       [...value].forEach((character, index) => {
@@ -29,14 +29,27 @@ test.beforeEach(async ({ page }) => {
       }
       mimeType = "audio/wav"
       state = "inactive"
+      timer: number | undefined
       start() {
         this.state = "recording"
+        this.timer = window.setTimeout(() => {
+          this.dispatchEvent(
+            new BlobEvent("dataavailable", {
+              data: new Blob([wav.slice(0, Math.floor(wav.length / 2))], {
+                type: "audio/wav",
+              }),
+            }),
+          )
+        }, 20)
       }
       stop() {
+        if (this.timer) window.clearTimeout(this.timer)
         this.state = "inactive"
         this.dispatchEvent(
           new BlobEvent("dataavailable", {
-            data: new Blob([wav], { type: "audio/wav" }),
+            data: new Blob([wav.slice(Math.floor(wav.length / 2))], {
+              type: "audio/wav",
+            }),
           }),
         )
         queueMicrotask(() => this.dispatchEvent(new Event("stop")))
@@ -91,6 +104,10 @@ test("voice capture keeps encrypted chunks across offline reload", async ({
   await page.getByLabel("Synthetic fixture transcript").check()
   await page.getByRole("button", { name: "Start recording" }).click()
   await expect(page.getByText("Recording", { exact: true })).toBeVisible()
+  await expect(page.getByText("1/1 chunks acknowledged")).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Stop & finalize" }),
+  ).toBeVisible()
 
   await page.evaluate(() => {
     localStorage.setItem("voice-force-offline", "1")

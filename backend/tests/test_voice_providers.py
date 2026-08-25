@@ -132,6 +132,7 @@ def test_local_asr_uses_cpu_int8_and_never_downloads(
 ) -> None:
     model_dir = tmp_path / "cached-model"
     model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}")
     observed: dict[str, Any] = {}
 
     class FakeWhisperModel:
@@ -170,10 +171,13 @@ def test_local_asr_uses_cpu_int8_and_never_downloads(
 def test_local_asr_requires_cached_model_and_optional_dependency(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    with pytest.raises(ValueError, match="existing local directory"):
+    with pytest.raises(ValueError, match="non-empty local directory"):
         LocalFasterWhisperProvider(str(tmp_path / "missing"))
     model_dir = tmp_path / "cached-model"
     model_dir.mkdir()
+    with pytest.raises(ValueError, match="non-empty local directory"):
+        LocalFasterWhisperProvider(str(model_dir))
+    (model_dir / "config.json").write_text("{}")
     provider = LocalFasterWhisperProvider(str(model_dir))
 
     def missing_dependency(_name: str) -> Any:
@@ -205,6 +209,11 @@ def test_pyannote_readiness_is_gated_and_local_only(
     model_dir.mkdir()
     monkeypatch.setattr(settings, "PYANNOTE_MODEL_DIR", str(model_dir))
     monkeypatch.setattr(diarization.importlib, "import_module", lambda _name: object())
+    assert diarization.pyannote_runtime_status() == (
+        False,
+        "PYANNOTE_MODEL_NOT_CACHED",
+    )
+    (model_dir / "config.yaml").write_text("pipeline: synthetic-test\n")
     assert diarization.pyannote_runtime_status() == (
         True,
         "PYANNOTE_LOCAL_MODEL_READY",
