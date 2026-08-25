@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "measured_at": "2026-08-25T19:41:32.178414+00:00",
-  "commit": "42db3b79e455b9d205e557decd10253274c8a89a",
+  "measured_at": "2026-08-25T19:42:12.921104+00:00",
+  "commit": "2fb229f8db54756feb102c015c4f1490b38886bb",
   "hardware": {
     "platform": "macOS-26.4.1-arm64-arm-64bit",
     "machine": "arm64",
@@ -18,11 +18,11 @@
     "threshold_ms": 300.0
   },
   "latency_ms": {
-    "median": 3.639,
-    "p95": 4.694,
-    "p99": 6.616,
-    "min": 2.672,
-    "max": 7.274
+    "median": 3.931,
+    "p95": 4.722,
+    "p99": 4.944,
+    "min": 3.189,
+    "max": 5.016
   },
   "gate": {
     "p95_lte_300ms": true
