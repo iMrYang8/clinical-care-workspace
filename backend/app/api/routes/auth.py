@@ -1,8 +1,10 @@
+import uuid
 from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import text
 from sqlmodel import col, select
 
 from app import crud
@@ -21,12 +23,21 @@ from app.seed import demo_id, membership_for_persona
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _set_rls_clinic(session: SessionDep, clinic_id: uuid.UUID) -> None:
+    if session.get_bind().dialect.name == "postgresql":
+        session.connection().execute(
+            text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
+            {"clinic_id": str(clinic_id)},
+        )
+
+
 def _token(membership: ClinicMembership, *, job_id: str | None = None) -> Token:
     return Token(
         access_token=security.create_access_token(
             membership.user_id,
             expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
             membership_id=membership.id,
+            clinic_id=membership.clinic_id,
             job_id=job_id,
         )
     )
@@ -36,6 +47,12 @@ def _token(membership: ClinicMembership, *, job_id: str | None = None) -> Token:
 def demo_login(body: DemoLoginRequest, session: SessionDep) -> Token:
     """Map one fixed synthetic persona to its server-owned membership."""
 
+    if settings.FASTAPI_ENV != "development" or not settings.ENABLE_DEMO_AUTH:
+        raise HTTPException(status_code=404, detail="Not found")
+    trusted_clinic_id = demo_id(
+        "clinic-other" if body.persona == "other_staff" else "clinic-primary"
+    )
+    _set_rls_clinic(session, trusted_clinic_id)
     membership = membership_for_persona(session, body.persona)
     if membership is None:
         raise HTTPException(status_code=404, detail="Demo persona not seeded")
@@ -49,15 +66,18 @@ def demo_login(body: DemoLoginRequest, session: SessionDep) -> Token:
 def password_login(
     session: SessionDep,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    x_clinic_id: Annotated[uuid.UUID, Header(alias="X-Clinic-ID")],
 ) -> Token:
     user = crud.authenticate(
         session=session, email=form_data.username, password=form_data.password
     )
     if user is None or not user.is_active:
         raise HTTPException(status_code=400, detail="Incorrect email or password")
+    _set_rls_clinic(session, x_clinic_id)
     membership = session.exec(
         select(ClinicMembership).where(
             ClinicMembership.user_id == user.id,
+            ClinicMembership.clinic_id == x_clinic_id,
             col(ClinicMembership.is_active).is_(True),
         )
     ).first()

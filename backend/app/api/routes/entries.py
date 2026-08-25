@@ -7,7 +7,9 @@ from app.models import (
     DiffPublic,
     EntryCreate,
     EntryPatch,
+    EntryPublic,
     EntryVersionsPublic,
+    PatientTimelineEntry,
 )
 from app.services.nightingale import (
     create_entry,
@@ -42,46 +44,57 @@ def _require_version_access(
             raise HTTPException(status_code=404, detail="Entry not found")
 
 
-@router.post("", status_code=201)
-@router.post("/", status_code=201, include_in_schema=False)
+def _entry_response(
+    context: CurrentContext, public: EntryPublic
+) -> EntryPublic | PatientTimelineEntry:
+    if context.role != "patient":
+        return public
+    return PatientTimelineEntry(
+        id=public.id,
+        patient_id=public.patient_id,
+        section=public.section,
+        patient_facing=public.patient_facing,
+        version_id=public.version_id,
+        version_no=public.version_no,
+        title=public.title,
+        content=public.content,
+        created_at=public.created_at,
+    )
+
+
+@router.post("", status_code=201, response_model=EntryPublic | PatientTimelineEntry)
+@router.post(
+    "/",
+    status_code=201,
+    response_model=EntryPublic | PatientTimelineEntry,
+    include_in_schema=False,
+)
 def create(
     body: EntryCreate,
     response: Response,
     session: SessionDep,
     context: CurrentContext,
-):
+) -> EntryPublic | PatientTimelineEntry:
     created = create_entry(session, context, body)
     _set_etag(response, created.version_id)
-    return created
+    return _entry_response(context, created)
 
 
-@router.get("/{entry_id}")
+@router.get("/{entry_id}", response_model=EntryPublic | PatientTimelineEntry)
 def read(
     entry_id: uuid.UUID,
     response: Response,
     session: SessionDep,
     context: CurrentContext,
-):
+) -> EntryPublic | PatientTimelineEntry:
     _require_entry_read_role(context)
     entry = get_scoped_entry(session, context, entry_id)
     public = entry_public(session, entry)
     _set_etag(response, public.version_id)
-    if context.role == "patient":
-        return {
-            "id": public.id,
-            "patient_id": public.patient_id,
-            "section": public.section,
-            "patient_facing": public.patient_facing,
-            "version_id": public.version_id,
-            "version_no": public.version_no,
-            "title": public.title,
-            "content": public.content,
-            "created_at": public.created_at,
-        }
-    return public
+    return _entry_response(context, public)
 
 
-@router.patch("/{entry_id}")
+@router.patch("/{entry_id}", response_model=EntryPublic | PatientTimelineEntry)
 def patch(
     entry_id: uuid.UUID,
     body: EntryPatch,
@@ -89,7 +102,7 @@ def patch(
     session: SessionDep,
     context: CurrentContext,
     if_match: str | None = Header(default=None, alias="If-Match"),
-):
+) -> EntryPublic | PatientTimelineEntry:
     if if_match is None:
         raise HTTPException(status_code=428, detail="If-Match is required")
     updated = patch_entry(
@@ -102,7 +115,7 @@ def patch(
         patient_facing=body.patient_facing,
     )
     _set_etag(response, updated.version_id)
-    return updated
+    return _entry_response(context, updated)
 
 
 @router.get("/{entry_id}/versions", response_model=EntryVersionsPublic)
@@ -130,7 +143,10 @@ def diff(
     )
 
 
-@router.post("/{entry_id}/versions/{version_id}/revert")
+@router.post(
+    "/{entry_id}/versions/{version_id}/revert",
+    response_model=EntryPublic | PatientTimelineEntry,
+)
 def revert(
     entry_id: uuid.UUID,
     version_id: uuid.UUID,
@@ -138,7 +154,7 @@ def revert(
     session: SessionDep,
     context: CurrentContext,
     if_match: str | None = Header(default=None, alias="If-Match"),
-):
+) -> EntryPublic | PatientTimelineEntry:
     if if_match is None:
         raise HTTPException(status_code=428, detail="If-Match is required")
     _require_version_access(session, context, entry_id)
@@ -152,9 +168,9 @@ def revert(
         if_match=if_match,
         title=title,
         content=content,
-        patient_facing=None,
+        patient_facing=target.patient_facing,
         reverted_from_version_id=target.id,
         action="entry.reverted",
     )
     _set_etag(response, updated.version_id)
-    return updated
+    return _entry_response(context, updated)

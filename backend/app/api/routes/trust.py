@@ -92,6 +92,14 @@ def create_highlight(
     _require_reviewer(context)
     entry = get_scoped_entry(session, context, entry_id)
     version = get_scoped_version(session, context, entry, body.entry_version_id)
+    if body.patient_facing and not version.patient_facing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "SOURCE_NOT_PATIENT_FACING",
+                "message": "Publish the immutable source version before exposing it",
+            },
+        )
     _, content = decrypt_version(version)
     quote_hash = hashlib.sha256(body.exact_quote.encode()).hexdigest()
     anchor_state, review_required = validate_anchor(
@@ -163,6 +171,16 @@ def _transition(
     action: str,
 ) -> HighlightPublic:
     highlight = _get_highlight(session, context, highlight_id)
+    if action in {"accept", "pin"} and (
+        highlight.anchor_state != "resolved" or highlight.review_required
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PROVENANCE_REVIEW_REQUIRED",
+                "message": "Resolve the immutable source anchor before promotion",
+            },
+        )
     if action == "accept":
         highlight.status = "accepted"
     elif action == "reject":
@@ -209,6 +227,10 @@ def pin(
 def provenance_resolve(
     pointer_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> ProvenanceResolved:
+    if context.role in {"admin", "worker"}:
+        raise HTTPException(
+            status_code=403, detail="Role cannot resolve clinical provenance"
+        )
     pointer = session.exec(
         select(ProvenancePointer).where(
             ProvenancePointer.id == pointer_id,
@@ -217,6 +239,7 @@ def provenance_resolve(
     ).first()
     if pointer is None:
         raise HTTPException(status_code=404, detail="Provenance not found")
+    patient_highlight: Highlight | None = None
     if context.role == "patient":
         if pointer.highlight_id is None:
             raise HTTPException(status_code=404, detail="Provenance not found")
@@ -225,6 +248,10 @@ def provenance_resolve(
                 Highlight.id == pointer.highlight_id,
                 Highlight.clinic_id == context.clinic_id,
                 col(Highlight.patient_facing).is_(True),
+                Highlight.source_entry_version_id == pointer.entry_version_id,
+                Highlight.anchor_state == "resolved",
+                col(Highlight.review_required).is_(False),
+                (col(Highlight.status) == "accepted") | col(Highlight.pinned).is_(True),
             )
         ).first()
         if patient_highlight is None:
@@ -237,6 +264,8 @@ def provenance_resolve(
     ).first()
     if version is None:
         raise HTTPException(status_code=404, detail="Provenance source not found")
+    if context.role == "patient" and not version.patient_facing:
+        raise HTTPException(status_code=404, detail="Provenance not found")
     entry = session.exec(
         select(Entry).where(
             Entry.id == version.entry_id, Entry.clinic_id == context.clinic_id
@@ -244,10 +273,10 @@ def provenance_resolve(
     ).first()
     if entry is None:
         raise HTTPException(status_code=404, detail="Provenance source not found")
+    if context.role == "patient" and (
+        patient_highlight is None or patient_highlight.entry_id != entry.id
+    ):
+        raise HTTPException(status_code=404, detail="Provenance not found")
     get_scoped_entry(session, context, entry.id)
     resolved = resolve_pointer(pointer, version)
-    pointer.anchor_state = resolved["state"]
-    pointer.review_required = resolved["review_required"]
-    session.add(pointer)
-    session.commit()
     return ProvenanceResolved.model_validate(resolved)

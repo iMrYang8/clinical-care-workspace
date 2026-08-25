@@ -20,4 +20,5 @@ def init_db(session: Session) -> None:
     # This works because the models are already imported and registered from app.models
     # SQLModel.metadata.create_all(engine)
 
-    seed_demo_data(session)
+    if settings.FASTAPI_ENV == "development" and settings.ENABLE_DEMO_AUTH:
+        seed_demo_data(session)

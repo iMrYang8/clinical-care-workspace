@@ -34,7 +34,17 @@ def _require_collaborator(context: RequestContext) -> None:
         )
 
 
-def _comment_public(comment: Comment) -> CommentPublic:
+def _comment_public(session: Session, comment: Comment) -> CommentPublic:
+    mentioned_user_ids = list(
+        session.exec(
+            select(CommentMention.mentioned_user_id)
+            .where(
+                CommentMention.clinic_id == comment.clinic_id,
+                CommentMention.comment_id == comment.id,
+            )
+            .order_by(col(CommentMention.created_at))
+        ).all()
+    )
     return CommentPublic(
         id=comment.id,
         entry_id=comment.entry_id,
@@ -47,6 +57,7 @@ def _comment_public(comment: Comment) -> CommentPublic:
         anchor_state=comment.anchor_state,
         review_required=comment.review_required,
         assigned_membership_id=comment.assigned_membership_id,
+        mentioned_user_ids=mentioned_user_ids,
         resolved_at=comment.resolved_at,
         created_at=comment.created_at,
     )
@@ -81,6 +92,8 @@ def _validate_membership(
     ).first()
     if membership is None:
         raise HTTPException(status_code=404, detail="Membership not found")
+    if membership.role not in {"staff", "clinician"}:
+        raise HTTPException(status_code=422, detail="Assignee must be clinical staff")
 
 
 def _create_comment(
@@ -178,6 +191,10 @@ def _create_comment(
         ).first()
         if membership is None:
             raise HTTPException(status_code=404, detail="Mentioned user not found")
+        if membership.role not in {"staff", "clinician"}:
+            raise HTTPException(
+                status_code=422, detail="Mentioned user must be clinical staff"
+            )
         session.add(
             CommentMention(
                 clinic_id=context.clinic_id,
@@ -195,7 +212,7 @@ def _create_comment(
     )
     session.commit()
     session.refresh(comment)
-    return _comment_public(comment)
+    return _comment_public(session, comment)
 
 
 @router.get("/entries/{entry_id}/comments", response_model=list[CommentPublic])
@@ -209,7 +226,7 @@ def list_comments(
         .where(Comment.clinic_id == context.clinic_id, Comment.entry_id == entry_id)
         .order_by(col(Comment.created_at))
     ).all()
-    return [_comment_public(comment) for comment in comments]
+    return [_comment_public(session, comment) for comment in comments]
 
 
 @router.post(
@@ -260,7 +277,7 @@ def resolve(
     )
     session.commit()
     session.refresh(comment)
-    return _comment_public(comment)
+    return _comment_public(session, comment)
 
 
 @router.patch("/comments/{comment_id}/assignment", response_model=CommentPublic)
@@ -288,4 +305,4 @@ def assign(
     )
     session.commit()
     session.refresh(comment)
-    return _comment_public(comment)
+    return _comment_public(session, comment)

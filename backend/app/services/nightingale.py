@@ -1,7 +1,9 @@
 import difflib
 import hashlib
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
+from typing import cast
 
 from fastapi import HTTPException
 from sqlalchemy import desc
@@ -48,9 +50,9 @@ def emit_change(
     action: str,
     resource_type: str,
     resource_id: uuid.UUID,
-    metadata: dict | None = None,
+    metadata: Mapping[str, object] | None = None,
 ) -> None:
-    safe_metadata = metadata or {}
+    safe_metadata = dict(metadata or {})
     session.add(
         AuditEvent(
             clinic_id=context.clinic_id,
@@ -186,6 +188,7 @@ def _new_version(
     title: str,
     content: str,
     author_id: uuid.UUID,
+    patient_facing: bool,
     reverted_from_version_id: uuid.UUID | None = None,
 ) -> EntryVersion:
     version_id = uuid.uuid4()
@@ -201,6 +204,7 @@ def _new_version(
             entry.clinic_id, "entry_version.content", version_id, content
         ),
         content_sha256=hashlib.sha256(content.encode()).hexdigest(),
+        patient_facing=patient_facing,
         author_id=author_id,
         reverted_from_version_id=reverted_from_version_id,
     )
@@ -286,6 +290,7 @@ def create_entry(
         title=data.title,
         content=data.content,
         author_id=context.user_id,
+        patient_facing=patient_facing,
     )
     session.add(version)
     session.flush()
@@ -350,19 +355,24 @@ def patch_entry(
     if current is None:
         raise HTTPException(status_code=500, detail="Entry version missing")
     current_title, current_content = decrypt_version(current)
+    effective_patient_facing = (
+        patient_facing if patient_facing is not None else entry.patient_facing
+    )
+    if context.role == "patient":
+        effective_patient_facing = True
     next_version = _new_version(
         entry=entry,
         version_no=current.version_no + 1,
         title=title if title is not None else current_title,
         content=content if content is not None else current_content,
         author_id=context.user_id,
+        patient_facing=effective_patient_facing,
         reverted_from_version_id=reverted_from_version_id,
     )
     session.add(next_version)
     session.flush()
     entry.current_version_id = next_version.id
-    if patient_facing is not None:
-        entry.patient_facing = patient_facing if context.role != "patient" else True
+    entry.patient_facing = effective_patient_facing
     session.add(entry)
     metadata = {
         "previous_version_id": str(current.id),
@@ -491,7 +501,9 @@ def validate_anchor(
     return ("resolved", False) if valid else ("orphaned", True)
 
 
-def resolve_pointer(pointer: ProvenancePointer, version: EntryVersion) -> dict:
+def resolve_pointer(
+    pointer: ProvenancePointer, version: EntryVersion
+) -> dict[str, object]:
     _, content = decrypt_version(version)
     exact_quote = field_codec.decrypt_text(
         pointer.clinic_id,
@@ -541,6 +553,8 @@ def rebuild_glance(
             Highlight.clinic_id == context.clinic_id,
             Highlight.patient_id == patient_id,
             (col(Highlight.status) == "accepted") | col(Highlight.pinned).is_(True),
+            Highlight.anchor_state == "resolved",
+            col(Highlight.review_required).is_(False),
         )
         .order_by(
             desc(col(Highlight.pinned)),
@@ -549,7 +563,7 @@ def rebuild_glance(
         )
         .limit(5)
     ).all()
-    cards: list[dict] = []
+    cards: list[dict[str, object]] = []
     for highlight in highlights:
         pointer = session.exec(
             select(ProvenancePointer).where(
@@ -558,6 +572,8 @@ def rebuild_glance(
             )
         ).first()
         if pointer is None:
+            continue
+        if pointer.anchor_state != "resolved" or pointer.review_required:
             continue
         cards.append(
             {
@@ -601,11 +617,19 @@ def rebuild_glance(
     return snapshot
 
 
-def read_glance(snapshot: PatientGlanceSnapshot) -> tuple[list[dict], datetime]:
-    payload = field_codec.decrypt_json(
-        snapshot.clinic_id,
-        "glance.payload",
-        snapshot.id,
-        snapshot.payload_ciphertext,
+def read_glance(
+    snapshot: PatientGlanceSnapshot,
+) -> tuple[list[dict[str, object]], datetime]:
+    payload = cast(
+        dict[str, object],
+        field_codec.decrypt_json(
+            snapshot.clinic_id,
+            "glance.payload",
+            snapshot.id,
+            snapshot.payload_ciphertext,
+        ),
     )
-    return payload.get("cards", [])[:5], snapshot.generated_at
+    cards = payload.get("cards", [])
+    if not isinstance(cards, list):
+        return [], snapshot.generated_at
+    return cast(list[dict[str, object]], cards[:5]), snapshot.generated_at

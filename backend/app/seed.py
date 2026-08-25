@@ -3,27 +3,16 @@
 import hashlib
 import uuid
 
-from sqlmodel import Session, col, delete, select
+from sqlmodel import Session, col, select
 
 from app.core.field_crypto import field_codec
 from app.core.security import get_password_hash
 from app.models import (
-    AuditEvent,
-    CareTask,
     Clinic,
     ClinicMembership,
-    Comment,
-    CommentMention,
-    ConflictCase,
-    DomainEvent,
-    Entry,
-    EntryRelation,
-    EntryVersion,
-    Highlight,
     Patient,
     PatientGlanceSnapshot,
     PatientUserLink,
-    ProvenancePointer,
     User,
 )
 
@@ -141,34 +130,6 @@ def seed_demo_data(session: Session) -> None:
             )
         )
     session.commit()
-
-
-def reset_and_seed_demo_data(session: Session) -> None:
-    """Reset only Nightingale synthetic tables; no destructive schema operation."""
-
-    ordered_models = (
-        DomainEvent,
-        AuditEvent,
-        ProvenancePointer,
-        ConflictCase,
-        Highlight,
-        CareTask,
-        CommentMention,
-        Comment,
-        EntryRelation,
-        EntryVersion,
-        Entry,
-        PatientGlanceSnapshot,
-        PatientUserLink,
-        Patient,
-        ClinicMembership,
-        User,
-        Clinic,
-    )
-    for model in ordered_models:
-        session.exec(delete(model))
-    session.commit()
-    seed_demo_data(session)
 
 
 def membership_for_persona(session: Session, persona: str) -> ClinicMembership | None:
