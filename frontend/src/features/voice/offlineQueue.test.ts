@@ -3,7 +3,6 @@ import "fake-indexeddb/auto"
 import { deleteDB } from "idb"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { ACCESS_TOKEN_KEY } from "@/features/api"
 import {
   acknowledgeChunk,
   completeLocalCapture,
@@ -21,7 +20,6 @@ describe("encrypted voice offline queue", () => {
   beforeEach(async () => {
     await resetVoiceDatabaseForTests()
     await deleteDB("nightingale-voice-v1")
-    localStorage.setItem(ACCESS_TOKEN_KEY, "fixture-token")
   })
 
   afterEach(async () => {

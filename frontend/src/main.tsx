@@ -12,18 +12,16 @@ import { client } from "./client/client.gen"
 import { ThemeProvider } from "./components/theme-provider"
 import { Toaster } from "./components/ui/sonner"
 import "./index.css"
-import { ACCESS_TOKEN_KEY } from "./features/api"
 import { routeTree } from "./routeTree.gen"
 
 client.setConfig({
   baseURL: import.meta.env.VITE_API_URL ?? "",
-  auth: () => localStorage.getItem(ACCESS_TOKEN_KEY) || "",
+  withCredentials: true,
 })
 
 const handleApiError = (error: Error) => {
   if (error instanceof AxiosError && error.response?.status === 401) {
-    localStorage.removeItem(ACCESS_TOKEN_KEY)
-    window.location.href = "/login"
+    if (window.location.pathname !== "/login") window.location.href = "/login"
   }
 }
 export const queryClient = new QueryClient({

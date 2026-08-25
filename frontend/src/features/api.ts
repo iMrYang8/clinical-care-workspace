@@ -23,8 +23,6 @@ import {
   TrustService,
 } from "@/client"
 
-export const ACCESS_TOKEN_KEY = "nightingale_access_token"
-
 export type DemoPersona = "patient" | "staff" | "clinician" | "admin"
 export type ClinicalRole = MePublic["role"]
 
@@ -51,18 +49,6 @@ export type VersionConflict = {
   code: "VERSION_CONFLICT"
   message: string
   current_version_id?: string
-}
-
-export function getAccessToken(): string | null {
-  return window.localStorage.getItem(ACCESS_TOKEN_KEY)
-}
-
-export function storeAccessToken(token: string): void {
-  window.localStorage.setItem(ACCESS_TOKEN_KEY, token)
-}
-
-export function discardAccessToken(): void {
-  window.localStorage.removeItem(ACCESS_TOKEN_KEY)
 }
 
 export function quotedEtag(versionId: string): string {
@@ -116,22 +102,18 @@ export function versionConflictFrom(error: unknown): VersionConflict | null {
 }
 
 async function demoLogin(persona: DemoPersona): Promise<void> {
-  const { data } = await AuthService.demoLogin({ body: { persona } })
-  storeAccessToken(data.access_token)
+  await AuthService.demoLogin({ body: { persona } })
 }
 
 async function me(): Promise<MePublic> {
   return (await AuthService.me()).data
 }
 
-async function logout(token: string): Promise<void> {
+async function logout(): Promise<void> {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), 1_500)
   try {
-    await AuthService.logout({
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
-    })
+    await AuthService.logout({ signal: controller.signal })
   } finally {
     window.clearTimeout(timeout)
   }
@@ -354,13 +336,11 @@ export async function streamDomainEvents(
   onEvent: (event: DomainEvent) => void,
   options: { signal: AbortSignal; lastEventId?: number },
 ): Promise<void> {
-  const token = getAccessToken()
-  if (!token) throw new Error("A signed-in membership is required")
   const response = await fetch(
     `${import.meta.env.VITE_API_URL ?? ""}/api/v1/events/stream`,
     {
+      credentials: "same-origin",
       headers: {
-        Authorization: `Bearer ${token}`,
         ...(options.lastEventId !== undefined
           ? { "Last-Event-ID": String(options.lastEventId) }
           : {}),

@@ -1,15 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { discardAccessToken, storeAccessToken, streamDomainEvents } from "./api"
+import { streamDomainEvents } from "./api"
 
 afterEach(() => {
-  discardAccessToken()
   vi.unstubAllGlobals()
 })
 
 describe("domain event transport", () => {
-  it("uses an authorization header and Last-Event-ID without URL tokens", async () => {
-    storeAccessToken("secret-browser-token")
+  it("uses the same-origin cookie and Last-Event-ID without browser tokens", async () => {
     const bytes = new TextEncoder().encode(
       'id: 42\nevent: entry.updated\ndata: {"aggregate_type":"entry","aggregate_id":"entry-1","payload":{}}\n\n',
     )
@@ -30,11 +28,12 @@ describe("domain event transport", () => {
 
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toMatch(/\/api\/v1\/events\/stream$/)
-    expect(url).not.toContain("secret-browser-token")
+    expect(url).not.toContain("token")
+    expect(init.credentials).toBe("same-origin")
     expect(init.headers).toMatchObject({
-      Authorization: "Bearer secret-browser-token",
       "Last-Event-ID": "41",
     })
+    expect(init.headers).not.toHaveProperty("Authorization")
     expect(received).toEqual([{ id: 42, event: "entry.updated" }])
   })
 })

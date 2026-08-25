@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 
+from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app import initial_data
@@ -8,6 +9,7 @@ from app.api.deps import get_detached_request_context
 from app.api.routes import events as events_route
 from app.core.config import settings
 from app.core.db import engine
+from app.main import app
 from app.models import ClinicMembership, DomainEvent
 from app.seed import demo_id
 
@@ -174,7 +176,7 @@ def test_sse_auth_and_concurrent_snapshots_release_pool_connections(client) -> N
     token = login.json()["access_token"]
     checked_out = engine.pool.checkedout
     baseline = checked_out()
-    context = get_detached_request_context(token)
+    context = get_detached_request_context(token, None)
     assert context.role == "staff"
     assert checked_out() == baseline
 
@@ -192,6 +194,69 @@ def test_sse_auth_and_concurrent_snapshots_release_pool_connections(client) -> N
 
     asyncio.run(drain_snapshots())
     assert checked_out() == baseline
+
+
+def test_browser_cookie_flags_cookie_auth_logout_and_csrf() -> None:
+    with TestClient(app, base_url="https://testserver") as browser:
+        login = browser.post("/api/v1/auth/demo-login", json={"persona": "staff"})
+        assert login.status_code == 200
+        set_cookie = login.headers["set-cookie"]
+        assert "nightingale_session=" in set_cookie
+        assert "HttpOnly" in set_cookie
+        assert "Secure" in set_cookie
+        assert "SameSite=lax" in set_cookie
+        assert browser.get("/api/v1/auth/me").status_code == 200
+
+        patient_id = browser.get("/api/v1/patients").json()["data"][0]["id"]
+        denied = browser.post(
+            "/api/v1/entries",
+            json={
+                "patient_id": patient_id,
+                "section": "staff",
+                "title": "CSRF denied",
+                "content": "No trusted browser origin",
+            },
+        )
+        assert denied.status_code == 403
+        assert denied.json()["detail"] == "CSRF origin rejected"
+
+        allowed = browser.post(
+            "/api/v1/entries",
+            headers={"Origin": str(settings.FRONTEND_HOST).rstrip("/")},
+            json={
+                "patient_id": patient_id,
+                "section": "staff",
+                "title": "Cookie mutation",
+                "content": "Trusted same-origin request",
+            },
+        )
+        assert allowed.status_code == 201, allowed.text
+
+        logout = browser.post(
+            "/api/v1/auth/logout",
+            headers={"Origin": str(settings.FRONTEND_HOST).rstrip("/")},
+        )
+        assert logout.status_code == 200
+        assert 'nightingale_session=""' in logout.headers["set-cookie"]
+        assert browser.get("/api/v1/auth/me").status_code == 401
+
+
+def test_bearer_mutation_remains_available_without_browser_origin(
+    client, auth_headers
+) -> None:
+    headers = auth_headers("staff")
+    patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
+    response = client.post(
+        "/api/v1/entries",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "section": "staff",
+            "title": "Bearer API",
+            "content": "Explicit non-browser transport",
+        },
+    )
+    assert response.status_code == 201
 
 
 def test_initial_data_is_idempotent() -> None:

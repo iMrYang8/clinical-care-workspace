@@ -4,7 +4,6 @@ import type {
   VoiceSessionPublic,
 } from "@/client"
 import { VoiceService } from "@/client"
-import { ACCESS_TOKEN_KEY } from "@/features/api"
 import {
   acknowledgeChunk,
   completeLocalCapture,
@@ -13,12 +12,6 @@ import {
   nextPendingChunk,
   pendingChunkCount,
 } from "./offlineQueue"
-
-function token(): string {
-  const value = localStorage.getItem(ACCESS_TOKEN_KEY)
-  if (!value) throw new Error("A signed-in membership is required")
-  return value
-}
 
 function apiUrl(path: string): string {
   return `${import.meta.env.VITE_API_URL ?? ""}${path}`
@@ -45,8 +38,8 @@ export async function uploadPendingChunks(captureId: string): Promise<{
       ),
       {
         method: "PUT",
+        credentials: "same-origin",
         headers: {
-          Authorization: `Bearer ${token()}`,
           "Content-Type": chunk.mediaType,
           "X-Chunk-SHA256": chunk.sha256,
           "X-Chunk-Start-Ms": String(chunk.startMs),
@@ -154,7 +147,7 @@ export function voiceAudioUrl(sessionId: string): string {
 
 export async function loadAuthorizedAudio(sessionId: string): Promise<string> {
   const response = await fetch(voiceAudioUrl(sessionId), {
-    headers: { Authorization: `Bearer ${token()}` },
+    credentials: "same-origin",
   })
   if (!response.ok) throw new Error(`Audio unavailable (${response.status})`)
   return URL.createObjectURL(await response.blob())

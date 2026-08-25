@@ -2,12 +2,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from sentry_sdk.types import Event, Hint
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
@@ -107,6 +109,45 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["ETag"],
 )
+
+
+def _origin(value: str) -> str:
+    parsed = urlsplit(value)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+class CookieCsrfMiddleware(BaseHTTPMiddleware):
+    """Require a trusted browser Origin for cookie-authenticated mutations.
+
+    Bearer callers remain available for explicit API and worker automation. The
+    browser UI uses only the Secure SameSite cookie and therefore passes this
+    independent origin check on every state-changing request.
+    """
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        is_mutation = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        cookie_auth = bool(request.cookies.get(settings.AUTH_COOKIE_NAME))
+        bearer_auth = (
+            request.headers.get("authorization", "").lower().startswith("bearer ")
+        )
+        login_path = request.url.path in {
+            f"{settings.API_V1_STR}/auth/login",
+            f"{settings.API_V1_STR}/auth/demo-login",
+        }
+        if is_mutation and cookie_auth and not bearer_auth and not login_path:
+            supplied = request.headers.get("origin")
+            if supplied is None:
+                referer = request.headers.get("referer")
+                supplied = _origin(referer) if referer else None
+            allowed = {_origin(settings.FRONTEND_HOST)}
+            if supplied is None or _origin(supplied) not in allowed:
+                return JSONResponse(
+                    status_code=403, content={"detail": "CSRF origin rejected"}
+                )
+        return await call_next(request)
+
+
+app.add_middleware(CookieCsrfMiddleware)
 
 
 @app.exception_handler(VersionConflictError)

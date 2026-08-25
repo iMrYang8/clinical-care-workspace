@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Annotated, cast
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
@@ -15,7 +15,9 @@ from app.core.config import settings
 from app.core.db import engine, set_rls_clinic
 from app.models import ClinicMembership, Role, TokenPayload, User
 
-reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
+reusable_oauth2 = OAuth2PasswordBearer(
+    tokenUrl=f"{settings.API_V1_STR}/auth/login", auto_error=False
+)
 
 
 def get_db() -> Generator[Session]:
@@ -24,7 +26,10 @@ def get_db() -> Generator[Session]:
 
 
 SessionDep = Annotated[Session, Depends(get_db)]
-TokenDep = Annotated[str, Depends(reusable_oauth2)]
+BearerTokenDep = Annotated[str | None, Depends(reusable_oauth2)]
+CookieTokenDep = Annotated[
+    str | None, Cookie(default=None, alias=settings.AUTH_COOKIE_NAME)
+]
 
 
 @dataclass(frozen=True)
@@ -82,15 +87,30 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
     return RequestContext(user=user, membership=membership, job_id=job_id)
 
 
-def get_request_context(session: SessionDep, token: TokenDep) -> RequestContext:
-    return _resolve_request_context(session, token)
+def _trusted_token(bearer: str | None, cookie: str | None) -> str:
+    token = bearer or cookie
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return token
 
 
-def get_detached_request_context(token: TokenDep) -> RequestContext:
+def get_request_context(
+    session: SessionDep, bearer: BearerTokenDep, cookie: CookieTokenDep
+) -> RequestContext:
+    return _resolve_request_context(session, _trusted_token(bearer, cookie))
+
+
+def get_detached_request_context(
+    bearer: BearerTokenDep, cookie: CookieTokenDep
+) -> RequestContext:
     """Resolve SSE auth in a bounded session released before streaming starts."""
 
     with Session(engine) as session:
-        context = _resolve_request_context(session, token)
+        context = _resolve_request_context(session, _trusted_token(bearer, cookie))
         session.expunge(context.user)
         session.expunge(context.membership)
         return context

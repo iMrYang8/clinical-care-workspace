@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     FIELD_ENCRYPTION_MASTER_KEY: str | None = None
     # 60 minutes * 24 hours * 8 days = 8 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
+    AUTH_COOKIE_NAME: str = "nightingale_session"
+    AUTH_COOKIE_SECURE: bool = True
+    AUTH_COOKIE_SAMESITE: Literal["lax", "strict"] = "lax"
     FRONTEND_HOST: str = "http://localhost:5173"
     FASTAPI_ENV: Literal["development", "production"] | None = None
     ENABLE_DEMO_AUTH: bool = False

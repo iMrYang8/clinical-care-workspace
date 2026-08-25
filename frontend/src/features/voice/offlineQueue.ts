@@ -1,4 +1,4 @@
-import { type DBSchema, type IDBPDatabase, openDB } from "idb"
+import { type DBSchema, deleteDB, type IDBPDatabase, openDB } from "idb"
 
 export type LocalCapture = {
   id: string
@@ -68,6 +68,11 @@ export async function resetVoiceDatabaseForTests(): Promise<void> {
   const existing = databasePromise
   databasePromise = undefined
   if (existing) (await existing).close()
+}
+
+export async function purgeVoiceDatabase(): Promise<void> {
+  await resetVoiceDatabaseForTests()
+  await deleteDB("nightingale-voice-v1")
 }
 
 function hex(buffer: ArrayBuffer): string {

@@ -2,16 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 
 import type { MePublic } from "@/client"
-import {
-  authApi,
-  type DemoPersona,
-  discardAccessToken,
-  getAccessToken,
-} from "@/features/api"
+import { authApi, type DemoPersona } from "@/features/api"
+import { purgeVoiceDatabase } from "@/features/voice/offlineQueue"
 import useCustomToast from "./useCustomToast"
 
-const isLoggedIn = () => {
-  return getAccessToken() !== null
+const isLoggedIn = async () => {
+  try {
+    await authApi.me()
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function roleHome(
@@ -30,7 +31,6 @@ const useAuth = () => {
   const meQuery = useQuery<MePublic, Error>({
     queryKey: ["auth", "me"],
     queryFn: authApi.me,
-    enabled: isLoggedIn(),
     retry: false,
     staleTime: 30_000,
   })
@@ -48,14 +48,11 @@ const useAuth = () => {
   })
 
   const logout = async () => {
-    const token = getAccessToken()
-    // Clear PHI-bearing client state synchronously. Server logout is best
-    // effort because the current bearer JWT is stateless and the API may be
-    // offline exactly when a user needs to leave the clinical screen.
-    discardAccessToken()
+    // Clear PHI-bearing query and IndexedDB state before changing screens.
     queryClient.clear()
+    await purgeVoiceDatabase()
+    await authApi.logout().catch(() => undefined)
     await navigate({ to: "/login", replace: true })
-    if (token) void authApi.logout(token).catch(() => undefined)
   }
 
   return {

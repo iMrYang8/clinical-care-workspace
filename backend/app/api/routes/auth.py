@@ -2,7 +2,7 @@ import uuid
 from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import col, select
 
@@ -39,8 +39,22 @@ def _token(membership: ClinicMembership, *, job_id: str | None = None) -> Token:
     )
 
 
+def _set_browser_cookie(response: Response, token: Token) -> None:
+    response.set_cookie(
+        key=settings.AUTH_COOKIE_NAME,
+        value=token.access_token,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True,
+        secure=settings.AUTH_COOKIE_SECURE,
+        samesite=settings.AUTH_COOKIE_SAMESITE,
+        path="/",
+    )
+
+
 @router.post("/demo-login", response_model=Token)
-def demo_login(body: DemoLoginRequest, session: SessionDep) -> Token:
+def demo_login(
+    body: DemoLoginRequest, response: Response, session: SessionDep
+) -> Token:
     """Map one fixed synthetic persona to its server-owned membership."""
 
     if settings.FASTAPI_ENV != "development" or not settings.ENABLE_DEMO_AUTH:
@@ -55,12 +69,15 @@ def demo_login(body: DemoLoginRequest, session: SessionDep) -> Token:
     trusted_job_id = (
         str(demo_id("job-worker-demo")) if body.persona == "worker" else None
     )
-    return _token(membership, job_id=trusted_job_id)
+    token = _token(membership, job_id=trusted_job_id)
+    _set_browser_cookie(response, token)
+    return token
 
 
 @router.post("/login", response_model=Token)
 def password_login(
     session: SessionDep,
+    response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     x_clinic_id: Annotated[uuid.UUID, Header(alias="X-Clinic-ID")],
 ) -> Token:
@@ -79,7 +96,9 @@ def password_login(
     ).first()
     if membership is None:
         raise HTTPException(status_code=403, detail="No active clinic membership")
-    return _token(membership)
+    token = _token(membership)
+    _set_browser_cookie(response, token)
+    return token
 
 
 @router.get("/me", response_model=MePublic)
@@ -95,6 +114,12 @@ def me(context: CurrentContext) -> MePublic:
 
 
 @router.post("/logout", response_model=Message)
-def logout(context: CurrentContext) -> Message:
-    # JWTs are stateless; clients discard the token. No user-controlled context is used.
+def logout(context: CurrentContext, response: Response) -> Message:
+    response.delete_cookie(
+        settings.AUTH_COOKIE_NAME,
+        path="/",
+        secure=settings.AUTH_COOKIE_SECURE,
+        httponly=True,
+        samesite=settings.AUTH_COOKIE_SAMESITE,
+    )
     return Message(message=f"Logged out membership {context.membership.id}")
