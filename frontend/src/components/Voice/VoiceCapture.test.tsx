@@ -93,6 +93,11 @@ describe("VoiceCapture lifecycle", () => {
       patientId: "patient-1",
       captureKind: "clinical" as const,
       role: "clinician" as const,
+      owner: {
+        userId: "user-1",
+        membershipId: "membership-1",
+        clinicId: "clinic-1",
+      },
     }
     const view = render(<VoiceCapture {...captureProps} />)
 
@@ -119,6 +124,11 @@ describe("VoiceCapture lifecycle", () => {
       patientId: "patient-1",
       captureKind: "clinical" as const,
       role: "clinician" as const,
+      owner: {
+        userId: "user-1",
+        membershipId: "membership-1",
+        clinicId: "clinic-1",
+      },
     }
     const view = render(<VoiceCapture {...captureProps} />)
 

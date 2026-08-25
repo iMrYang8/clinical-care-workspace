@@ -18,6 +18,12 @@ import {
 import { uploadPendingChunks } from "./voiceApi"
 
 describe("encrypted voice offline queue", () => {
+  const owner = {
+    userId: "user-1",
+    membershipId: "membership-1",
+    clinicId: "clinic-1",
+  }
+
   beforeEach(async () => {
     await resetVoiceDatabaseForTests()
     await deleteDB("nightingale-voice-v1")
@@ -36,10 +42,11 @@ describe("encrypted voice offline queue", () => {
       serverSessionId: "session-1",
       serverDeviceId: "device-1",
       patientId: "patient-1",
+      ...owner,
       mediaType: "audio/webm;codecs=opus",
     })
     expect(capture.key.extractable).toBe(false)
-    expect((await recoverableCaptures()).map((item) => item.id)).toEqual([
+    expect((await recoverableCaptures(owner)).map((item) => item.id)).toEqual([
       "session-1",
     ])
     const first = await enqueueEncryptedChunk(
@@ -60,7 +67,7 @@ describe("encrypted voice offline queue", () => {
     )
 
     await resetVoiceDatabaseForTests()
-    const recovered = await recoverableCaptures()
+    const recovered = await recoverableCaptures(owner)
     expect(recovered.map((item) => item.id)).toEqual(["session-1"])
     expect((await nextPendingChunk(capture.id))?.chunkIndex).toBe(0)
     expect(await pendingChunkCount(capture.id)).toBe(2)
@@ -70,12 +77,12 @@ describe("encrypted voice offline queue", () => {
     await acknowledgeChunk(second.id)
     expect(await nextPendingChunk(capture.id)).toBeUndefined()
     expect(await pendingChunkCount(capture.id)).toBe(0)
-    expect((await recoverableCaptures()).map((item) => item.id)).toEqual([
+    expect((await recoverableCaptures(owner)).map((item) => item.id)).toEqual([
       "session-1",
     ])
 
     await completeLocalCapture(capture.id)
-    expect(await recoverableCaptures()).toEqual([])
+    expect(await recoverableCaptures(owner)).toEqual([])
   })
 
   it("streams a large recovery queue without getAll materialization", async () => {
@@ -83,6 +90,7 @@ describe("encrypted voice offline queue", () => {
       serverSessionId: "session-large",
       serverDeviceId: "device-large",
       patientId: "patient-1",
+      ...owner,
       mediaType: "audio/webm;codecs=opus",
     })
     const payload = new Uint8Array(1024 * 1024)
@@ -120,5 +128,37 @@ describe("encrypted voice offline queue", () => {
     )
 
     held.close()
+  })
+
+  it("never restores another user, membership, clinic, or legacy unowned capture", async () => {
+    await createLocalCapture({
+      serverSessionId: "owned-session",
+      serverDeviceId: "owned-device",
+      patientId: "shared-patient",
+      ...owner,
+      mediaType: "audio/webm",
+    })
+    await createLocalCapture({
+      serverSessionId: "foreign-session",
+      serverDeviceId: "foreign-device",
+      patientId: "shared-patient",
+      userId: "user-2",
+      membershipId: "membership-2",
+      clinicId: "clinic-2",
+      mediaType: "audio/webm",
+    })
+
+    expect(
+      (await recoverableCaptures(owner)).map((capture) => capture.id),
+    ).toEqual(["owned-session"])
+    expect(
+      (
+        await recoverableCaptures({
+          userId: "user-2",
+          membershipId: "membership-2",
+          clinicId: "clinic-2",
+        })
+      ).map((capture) => capture.id),
+    ).toEqual(["foreign-session"])
   })
 })

@@ -8,6 +8,7 @@ import {
   authApi,
   type DemoPersona,
   httpStatus,
+  type PasswordLoginInput,
 } from "@/features/api"
 import {
   closeVoiceDatabaseForLogout,
@@ -26,6 +27,32 @@ const LOGOUT_EPOCH_KEY = "nightingale_logout_epoch"
 const LOGOUT_CONTROL_KEY = "nightingale_session_control_v1"
 const LOGOUT_CHANNEL_NAME = "nightingale-session-control-v1"
 const terminationListeners = new Set<() => void>()
+const CROSS_TAB_TERMINATION_TAKEOVER_MS = 6_000
+let terminationTakeoverTimer: number | undefined
+
+function clearTerminationTakeover() {
+  if (terminationTakeoverTimer !== undefined) {
+    window.clearTimeout(terminationTakeoverTimer)
+    terminationTakeoverTimer = undefined
+  }
+}
+
+function scheduleTerminationTakeover(epoch: string) {
+  clearTerminationTakeover()
+  terminationTakeoverTimer = window.setTimeout(() => {
+    terminationTakeoverTimer = undefined
+    if (
+      terminationState.phase === "terminating" &&
+      terminationState.epoch === epoch &&
+      activeServerTermination === undefined
+    ) {
+      // The tab that originated the logout may have closed mid-request. Any
+      // surviving tab takes over the same idempotent cookie deletion instead
+      // of leaving the shared browser permanently masked as "terminating".
+      void requestServerTermination()
+    }
+  }, CROSS_TAB_TERMINATION_TAKEOVER_MS)
+}
 
 function persistedTermination(): "unconfirmed" | "server-ended" | null {
   try {
@@ -123,6 +150,8 @@ function acceptControlMessage(message: LogoutControlMessage) {
         error: null,
         epoch: message.epoch,
       })
+      closeVoiceDatabaseForLogout()
+      scheduleTerminationTakeover(message.epoch)
     }
     return
   }
@@ -137,9 +166,11 @@ function acceptControlMessage(message: LogoutControlMessage) {
         serverEnded: false,
         epoch: message.epoch,
       })
+      clearTerminationTakeover()
     }
     return
   }
+  clearTerminationTakeover()
   acceptConfirmedLogout(message.epoch)
 }
 
@@ -195,16 +226,19 @@ let activeServerTermination: Promise<boolean> | undefined
 
 async function requestServerTermination(): Promise<boolean> {
   if (terminationState.phase === "confirmed") return true
+  let epoch: string
   if (terminationState.phase === "terminating") {
-    return activeServerTermination ?? false
-  }
-  if (terminationState.phase === "failed" && terminationState.serverEnded) {
-    acceptConfirmedLogout(terminationState.epoch)
-    return true
-  }
+    if (activeServerTermination) return activeServerTermination
+    epoch = terminationState.epoch
+  } else {
+    if (terminationState.phase === "failed" && terminationState.serverEnded) {
+      acceptConfirmedLogout(terminationState.epoch)
+      return true
+    }
 
-  const epoch = newLogoutEpoch()
-  publishControlMessage({ type: "logout-started", epoch })
+    epoch = newLogoutEpoch()
+    publishControlMessage({ type: "logout-started", epoch })
+  }
   closeVoiceDatabaseForLogout()
 
   const pending = (async () => {
@@ -371,8 +405,21 @@ const useAuth = (options: { loadSession?: boolean } = {}) => {
     onError: (error) => showErrorToast(error.message),
   })
 
+  const passwordLoginMutation = useMutation({
+    mutationFn: (input: PasswordLoginInput) => authApi.passwordLogin(input),
+    onSuccess: async () => {
+      const me = await queryClient.fetchQuery({
+        queryKey: ["auth", "me"],
+        queryFn: authApi.me,
+      })
+      await navigate({ to: roleHome(me.role) })
+    },
+    onError: (error) => showErrorToast(error.message),
+  })
+
   return {
     loginMutation,
+    passwordLoginMutation,
     logout,
     user: meQuery.data,
     meQuery,

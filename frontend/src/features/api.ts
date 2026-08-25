@@ -112,6 +112,22 @@ async function demoLogin(persona: DemoPersona): Promise<void> {
   await AuthService.demoLogin({ body: { persona } })
 }
 
+export type PasswordLoginInput = {
+  clinicId: string
+  email: string
+  password: string
+}
+
+async function passwordLogin(input: PasswordLoginInput): Promise<void> {
+  await AuthService.passwordLogin({
+    headers: { "X-Clinic-ID": input.clinicId },
+    body: {
+      username: input.email,
+      password: input.password,
+    },
+  })
+}
+
 async function me(): Promise<MePublic> {
   return (await AuthService.me()).data
 }
@@ -418,7 +434,13 @@ export async function streamDomainEvents(
   }
 }
 
-export const authApi = { demoLogin, me, logout, acceptInvitation }
+export const authApi = {
+  demoLogin,
+  passwordLogin,
+  me,
+  logout,
+  acceptInvitation,
+}
 export const adminApi = {
   memberships,
   createMembership,

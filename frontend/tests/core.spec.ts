@@ -13,68 +13,84 @@ async function seedQueuedVoiceChunk(
     includeChunk?: boolean
   },
 ): Promise<void> {
-  await page.evaluate(async (fixture) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("nightingale-voice-v1", 2)
-      request.onupgradeneeded = () => {
-        const opened = request.result
-        if (!opened.objectStoreNames.contains("captures")) {
-          opened.createObjectStore("captures", { keyPath: "id" })
+  const owner = await page.evaluate(async () => {
+    const response = await fetch("/api/v1/auth/me")
+    if (!response.ok)
+      throw new Error("Authenticated capture owner is unavailable")
+    return (await response.json()) as {
+      user_id: string
+      membership_id: string
+      clinic_id: string
+    }
+  })
+  await page.evaluate(
+    async (fixture) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("nightingale-voice-v1", 2)
+        request.onupgradeneeded = () => {
+          const opened = request.result
+          if (!opened.objectStoreNames.contains("captures")) {
+            opened.createObjectStore("captures", { keyPath: "id" })
+          }
+          if (!opened.objectStoreNames.contains("chunks")) {
+            const chunks = opened.createObjectStore("chunks", { keyPath: "id" })
+            chunks.createIndex("by-capture", "captureId")
+            chunks.createIndex("by-capture-index", ["captureId", "chunkIndex"])
+          }
         }
-        if (!opened.objectStoreNames.contains("chunks")) {
-          const chunks = opened.createObjectStore("chunks", { keyPath: "id" })
-          chunks.createIndex("by-capture", "captureId")
-          chunks.createIndex("by-capture-index", ["captureId", "chunkIndex"])
-        }
-      }
-      request.onerror = () => reject(request.error)
-      request.onsuccess = () => resolve(request.result)
-    })
-    const key = await crypto.subtle.generateKey(
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["encrypt", "decrypt"],
-    )
-    const iv = crypto.getRandomValues(new Uint8Array(12))
-    const plaintext = new TextEncoder().encode("auth-fetch-voice-fixture")
-    const ciphertext = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      plaintext,
-    )
-    const transaction = db.transaction(["captures", "chunks"], "readwrite")
-    transaction.objectStore("captures").put({
-      id: fixture.captureId,
-      serverSessionId: fixture.captureId,
-      serverDeviceId: fixture.deviceId,
-      patientId: fixture.patientId,
-      mediaType: "audio/webm",
-      key,
-      nextChunkIndex: 1,
-      createdAt: new Date().toISOString(),
-    })
-    if (fixture.includeChunk !== false) {
-      transaction.objectStore("chunks").put({
-        id: `${fixture.captureId}:0`,
-        captureId: fixture.captureId,
-        chunkIndex: 0,
-        iv,
-        ciphertext,
-        sha256: "fixture",
-        byteLength: plaintext.byteLength,
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => resolve(request.result)
+      })
+      const key = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"],
+      )
+      const iv = crypto.getRandomValues(new Uint8Array(12))
+      const plaintext = new TextEncoder().encode("auth-fetch-voice-fixture")
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        key,
+        plaintext,
+      )
+      const transaction = db.transaction(["captures", "chunks"], "readwrite")
+      transaction.objectStore("captures").put({
+        id: fixture.captureId,
+        serverSessionId: fixture.captureId,
+        serverDeviceId: fixture.deviceId,
+        patientId: fixture.patientId,
+        userId: fixture.owner.user_id,
+        membershipId: fixture.owner.membership_id,
+        clinicId: fixture.owner.clinic_id,
         mediaType: "audio/webm",
-        startMs: 0,
-        endMs: 1_000,
+        key,
+        nextChunkIndex: 1,
         createdAt: new Date().toISOString(),
       })
-    }
-    await new Promise<void>((resolve, reject) => {
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error)
-      transaction.onabort = () => reject(transaction.error)
-    })
-    db.close()
-  }, input)
+      if (fixture.includeChunk !== false) {
+        transaction.objectStore("chunks").put({
+          id: `${fixture.captureId}:0`,
+          captureId: fixture.captureId,
+          chunkIndex: 0,
+          iv,
+          ciphertext,
+          sha256: "fixture",
+          byteLength: plaintext.byteLength,
+          mediaType: "audio/webm",
+          startMs: 0,
+          endMs: 1_000,
+          createdAt: new Date().toISOString(),
+        })
+      }
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error)
+        transaction.onabort = () => reject(transaction.error)
+      })
+      db.close()
+    },
+    { ...input, owner },
+  )
 }
 
 test("staff opens the real synthetic care note", async ({ page }) => {
@@ -99,6 +115,38 @@ test("staff opens the real synthetic care note", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "What matters now" }),
   ).toBeVisible()
+})
+
+test("production-capable password form signs in with the secure cookie path", async ({
+  page,
+}) => {
+  await page.goto("/login")
+  await page
+    .getByLabel("Clinic ID")
+    .fill("b8d64f9f-fb9e-59ce-b160-4da99922c124")
+  await page.getByLabel("Email").fill("staff@nightingale.synthetic")
+  await page.getByLabel("Password").fill("synthetic-demo-only")
+  await page.getByRole("button", { name: "Sign in to clinic" }).click()
+
+  await expect(page).toHaveURL(/\/patients\/?$/)
+  await expect(
+    page.getByRole("heading", { name: "Clinical care notes" }),
+  ).toBeVisible()
+  const sessionCookie = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "nightingale_session",
+  )
+  expect(sessionCookie).toMatchObject({
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+  })
+  expect(
+    await page.evaluate(() =>
+      Object.entries(localStorage).some(([key, value]) =>
+        /token|bearer|session/i.test(`${key}:${value}`),
+      ),
+    ),
+  ).toBe(false)
 })
 
 test("patient view exposes only My Care navigation", async ({ page }) => {
@@ -271,7 +319,7 @@ test("confirmed logout masks a second tab and closes its held voice database", a
   await second.close()
 })
 
-test("a revoked session masks every tab and deletes old encrypted voice before another persona", async ({
+test("a removed membership marker masks every tab and deletes its owned voice before another persona", async ({
   page,
 }) => {
   await page.goto("/login")
@@ -287,63 +335,81 @@ test("a revoked session masks every tab and deletes old encrypted voice before a
 
   const second = await page.context().newPage()
   await second.goto("/patients")
-  await second.evaluate(async (fixturePatientId) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("nightingale-voice-v1", 2)
-      request.onupgradeneeded = () => {
-        const opened = request.result
-        const captures = opened.createObjectStore("captures", { keyPath: "id" })
-        void captures
-        const chunks = opened.createObjectStore("chunks", { keyPath: "id" })
-        chunks.createIndex("by-capture", "captureId")
-        chunks.createIndex("by-capture-index", ["captureId", "chunkIndex"])
-      }
-      request.onerror = () => reject(request.error)
-      request.onsuccess = () => resolve(request.result)
-    })
-    const key = await crypto.subtle.generateKey(
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["encrypt", "decrypt"],
-    )
-    const iv = crypto.getRandomValues(new Uint8Array(12))
-    const plaintext = new TextEncoder().encode("old-persona-voice-fixture")
-    const ciphertext = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      plaintext,
-    )
-    const transaction = db.transaction(["captures", "chunks"], "readwrite")
-    transaction.objectStore("captures").add({
-      id: "expired-session-fixture",
-      serverSessionId: "expired-session-fixture",
-      serverDeviceId: "expired-device-fixture",
-      patientId: fixturePatientId,
-      mediaType: "audio/webm",
-      key,
-      nextChunkIndex: 1,
-      createdAt: new Date().toISOString(),
-    })
-    transaction.objectStore("chunks").add({
-      id: "expired-session-fixture:0",
-      captureId: "expired-session-fixture",
-      chunkIndex: 0,
-      iv,
-      ciphertext,
-      sha256: "fixture",
-      byteLength: plaintext.byteLength,
-      mediaType: "audio/webm",
-      startMs: 0,
-      endMs: 1_000,
-      createdAt: new Date().toISOString(),
-    })
-    await new Promise<void>((resolve, reject) => {
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error)
-      transaction.onabort = () => reject(transaction.error)
-    })
-    db.close()
-  }, patientId)
+  const owner = await second.evaluate(async () => {
+    const response = await fetch("/api/v1/auth/me")
+    if (!response.ok)
+      throw new Error("Authenticated capture owner is unavailable")
+    return (await response.json()) as {
+      user_id: string
+      membership_id: string
+      clinic_id: string
+    }
+  })
+  await second.evaluate(
+    async ({ fixturePatientId, owner }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("nightingale-voice-v1", 2)
+        request.onupgradeneeded = () => {
+          const opened = request.result
+          const captures = opened.createObjectStore("captures", {
+            keyPath: "id",
+          })
+          void captures
+          const chunks = opened.createObjectStore("chunks", { keyPath: "id" })
+          chunks.createIndex("by-capture", "captureId")
+          chunks.createIndex("by-capture-index", ["captureId", "chunkIndex"])
+        }
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => resolve(request.result)
+      })
+      const key = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"],
+      )
+      const iv = crypto.getRandomValues(new Uint8Array(12))
+      const plaintext = new TextEncoder().encode("old-persona-voice-fixture")
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        key,
+        plaintext,
+      )
+      const transaction = db.transaction(["captures", "chunks"], "readwrite")
+      transaction.objectStore("captures").add({
+        id: "expired-session-fixture",
+        serverSessionId: "expired-session-fixture",
+        serverDeviceId: "expired-device-fixture",
+        patientId: fixturePatientId,
+        userId: owner.user_id,
+        membershipId: owner.membership_id,
+        clinicId: owner.clinic_id,
+        mediaType: "audio/webm",
+        key,
+        nextChunkIndex: 1,
+        createdAt: new Date().toISOString(),
+      })
+      transaction.objectStore("chunks").add({
+        id: "expired-session-fixture:0",
+        captureId: "expired-session-fixture",
+        chunkIndex: 0,
+        iv,
+        ciphertext,
+        sha256: "fixture",
+        byteLength: plaintext.byteLength,
+        mediaType: "audio/webm",
+        startMs: 0,
+        endMs: 1_000,
+        createdAt: new Date().toISOString(),
+      })
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error)
+        transaction.onabort = () => reject(transaction.error)
+      })
+      db.close()
+    },
+    { fixturePatientId: patientId, owner },
+  )
   await second.goto(`${patientHref}/voice/capture`)
   await expect(
     second.getByRole("heading", { name: "Encrypted uploads to recover" }),
@@ -363,9 +429,10 @@ test("a revoked session masks every tab and deletes old encrypted voice before a
     if (revokeOnce) {
       revokeOnce = false
       await route.fulfill({
-        status: 401,
+        status: 403,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "Synthetic session revoked" }),
+        headers: { "X-Nightingale-Session-Invalid": "1" },
+        body: JSON.stringify({ detail: "Invalid membership context" }),
       })
       return
     }

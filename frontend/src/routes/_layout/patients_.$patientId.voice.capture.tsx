@@ -32,6 +32,11 @@ function ClinicalVoiceCaptureRoute() {
       patientId={patientId}
       captureKind="clinical"
       role={user.role}
+      owner={{
+        userId: user.user_id,
+        membershipId: user.membership_id,
+        clinicId: user.clinic_id,
+      }}
       onFinalized={(sessionId) =>
         void navigate({
           to: "/voice/$sessionId/review",

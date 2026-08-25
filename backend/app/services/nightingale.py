@@ -419,6 +419,7 @@ def patch_entry(
     )
     if context.role == "patient":
         effective_patient_facing = True
+    sharing_changed = effective_patient_facing != entry.patient_facing
     next_version = _new_version(
         entry=entry,
         version_no=current.version_no + 1,
@@ -434,6 +435,10 @@ def patch_entry(
     entry.patient_facing = effective_patient_facing
     session.add(entry)
     affected_patients: set[uuid.UUID] = set()
+    if sharing_changed:
+        # Patient-facing Glance is precomputed. A sharing withdrawal must
+        # invalidate that projection even when the entry has no feedback rows.
+        affected_patients.add(entry.patient_id)
     if context.role in {"staff", "clinician"}:
         related_highlights = session.exec(
             select(Highlight).where(
@@ -675,6 +680,27 @@ def rebuild_glance(
             continue
         if pointer.anchor_state != "resolved" or pointer.review_required:
             continue
+        source_entry = session.exec(
+            select(Entry).where(
+                Entry.id == highlight.entry_id,
+                Entry.clinic_id == context.clinic_id,
+                Entry.patient_id == patient_id,
+            )
+        ).first()
+        source_version = session.exec(
+            select(EntryVersion).where(
+                EntryVersion.id == highlight.source_entry_version_id,
+                EntryVersion.entry_id == highlight.entry_id,
+                EntryVersion.clinic_id == context.clinic_id,
+            )
+        ).first()
+        currently_patient_facing = bool(
+            highlight.patient_facing
+            and source_entry is not None
+            and source_entry.patient_facing
+            and source_version is not None
+            and source_version.patient_facing
+        )
         cards.append(
             {
                 "highlight_id": str(highlight.id),
@@ -686,7 +712,10 @@ def rebuild_glance(
                 ),
                 "critical": highlight.critical,
                 "pinned": highlight.pinned,
-                "patient_facing": highlight.patient_facing,
+                # This is an effective projection, not a copy of the original
+                # highlight flag. Withdrawing the current Entry immediately
+                # makes its otherwise immutable source unsuitable for patients.
+                "patient_facing": currently_patient_facing,
                 "risk_reason": highlight.risk_reason,
                 "score_components": score_components.get(highlight.id, {}),
                 "provenance_pointer_id": str(pointer.id),

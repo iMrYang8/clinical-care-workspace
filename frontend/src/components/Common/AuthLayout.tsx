@@ -55,7 +55,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
           <div className="w-full max-w-lg">{children}</div>
         </div>
         <p className="text-center text-xs text-slate-500">
-          Demo access only · No production patient data
+          Secure clinic access · Local demos use synthetic records only
         </p>
       </div>
     </div>

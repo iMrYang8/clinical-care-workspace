@@ -24,6 +24,53 @@ def _capture_invitation(monkeypatch) -> dict[str, str]:  # type: ignore[no-untyp
     return delivered
 
 
+def test_invitation_is_committed_before_delivery_and_failed_token_is_revoked(
+    client: TestClient, auth_headers, monkeypatch, owner_session
+) -> None:  # type: ignore[no-untyped-def]
+    recipient = "delivery-failure@nightingale.synthetic"
+
+    def fail_after_observing_commit(*, recipient: str, token: str) -> None:
+        invitation = owner_session.exec(
+            select(ClinicInvitation).where(
+                ClinicInvitation.clinic_id == demo_id("clinic-primary"),
+                ClinicInvitation.email == recipient,
+            )
+        ).first()
+        assert invitation is not None
+        assert invitation.revoked_at is None
+        assert invitation.token_hash
+        assert token.startswith(f"{demo_id('clinic-primary')}.")
+        raise RuntimeError("synthetic delivery failure")
+
+    monkeypatch.setattr(
+        "app.api.routes.admin.deliver_membership_invitation",
+        fail_after_observing_commit,
+    )
+    response = client.post(
+        "/api/v1/admin/memberships",
+        headers=auth_headers("admin"),
+        json={"email": recipient, "role": "staff"},
+    )
+    assert response.status_code == 503, response.text
+    owner_session.expire_all()
+    failed = owner_session.exec(
+        select(ClinicInvitation).where(
+            ClinicInvitation.clinic_id == demo_id("clinic-primary"),
+            ClinicInvitation.email == recipient,
+        )
+    ).one()
+    assert failed.revoked_at is not None
+
+    delivered = _capture_invitation(monkeypatch)
+    retried = client.post(
+        "/api/v1/admin/memberships",
+        headers=auth_headers("admin"),
+        json={"email": recipient, "role": "staff"},
+    )
+    assert retried.status_code == 201, retried.text
+    assert delivered["recipient"] == recipient
+
+
 def test_admin_invites_then_recipient_accepts_before_membership_exists(
     client: TestClient, auth_headers, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]

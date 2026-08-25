@@ -43,6 +43,11 @@ function PatientVoiceCaptureRoute() {
       patientId={patients.data[0].id}
       captureKind="patient"
       role={user.role}
+      owner={{
+        userId: user.user_id,
+        membershipId: user.membership_id,
+        clinicId: user.clinic_id,
+      }}
       onFinalized={(sessionId) =>
         void navigate({
           to: "/my-care/voice/$sessionId",

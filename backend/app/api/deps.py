@@ -82,7 +82,15 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
         or membership.user_id != user_id
         or membership.clinic_id != token_clinic_id
     ):
-        raise HTTPException(status_code=404, detail="Membership not found")
+        # A signed token whose live membership disappeared or moved is an
+        # invalid authentication context, not a record-level 404. Browsers use
+        # this marker to mask every tab and purge the prior member's encrypted
+        # offline audio before another identity can sign in.
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid membership context",
+            headers=SESSION_INVALID_HEADERS,
+        )
     if not user.is_active or not membership.is_active:
         raise HTTPException(
             status_code=403,

@@ -107,7 +107,9 @@ def test_signed_clinic_claim_is_verified_against_live_membership(
     response = client.get(
         "/api/v1/auth/me", headers={"Authorization": f"Bearer {mismatched}"}
     )
-    assert response.status_code == 404
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Invalid membership context"
+    assert response.headers["X-Nightingale-Session-Invalid"] == "1"
 
 
 def test_patient_dto_and_query_exclude_internal_and_raw_ai(

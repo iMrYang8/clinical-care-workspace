@@ -7,12 +7,15 @@ import {
   Stethoscope,
   UserRound,
 } from "lucide-react"
+import { useState } from "react"
 
 import { AuthLayout } from "@/components/Common/AuthLayout"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import type { DemoPersona } from "@/features/api"
 import useAuth, { isLoggedIn } from "@/hooks/useAuth"
 
@@ -20,9 +23,9 @@ export const Route = createFileRoute("/login")({
   beforeLoad: async () => {
     if (await isLoggedIn()) throw redirect({ to: "/" })
   },
-  component: DemoLogin,
+  component: Login,
   head: () => ({
-    meta: [{ title: "Demo access · Nightingale" }],
+    meta: [{ title: "Sign in · Nightingale" }],
   }),
 })
 
@@ -61,10 +64,15 @@ const personas = [
   },
 ]
 
-function DemoLogin() {
+function Login() {
   // The route guard already performed the anonymous /me probe and secure
   // cleanup. Do not launch a second unauthenticated /me query from the form.
-  const { loginMutation } = useAuth({ loadSession: false })
+  const { loginMutation, passwordLoginMutation } = useAuth({
+    loadSession: false,
+  })
+  const [clinicId, setClinicId] = useState("")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
 
   const signIn = (persona: DemoPersona) => loginMutation.mutate(persona)
 
@@ -84,15 +92,91 @@ function DemoLogin() {
           </p>
         </div>
 
-        {loginMutation.isError && (
+        {(loginMutation.isError || passwordLoginMutation.isError) && (
           <Alert className="border-red-200 bg-red-50 text-red-900" role="alert">
-            <AlertTitle>Demo login did not complete</AlertTitle>
-            <AlertDescription>{loginMutation.error.message}</AlertDescription>
+            <AlertTitle>Sign-in did not complete</AlertTitle>
+            <AlertDescription>
+              {(passwordLoginMutation.error ?? loginMutation.error)?.message}
+            </AlertDescription>
           </Alert>
         )}
 
+        <form
+          className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+          onSubmit={(event) => {
+            event.preventDefault()
+            passwordLoginMutation.mutate({
+              clinicId: clinicId.trim(),
+              email: email.trim(),
+              password,
+            })
+          }}
+        >
+          <div>
+            <h3 className="font-serif text-xl font-semibold text-slate-950">
+              Clinic account
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              Use the clinic identifier supplied by your administrator. Your
+              browser session is held only in a secure HttpOnly cookie.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="clinic-id">Clinic ID</Label>
+            <Input
+              autoComplete="organization"
+              id="clinic-id"
+              onChange={(event) => setClinicId(event.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000"
+              required
+              spellCheck={false}
+              value={clinicId}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="login-email">Email</Label>
+            <Input
+              autoComplete="username"
+              id="login-email"
+              onChange={(event) => setEmail(event.target.value)}
+              required
+              type="email"
+              value={email}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="login-password">Password</Label>
+            <Input
+              autoComplete="current-password"
+              id="login-password"
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              type="password"
+              value={password}
+            />
+          </div>
+          <Button
+            className="w-full"
+            disabled={passwordLoginMutation.isPending}
+            type="submit"
+          >
+            {passwordLoginMutation.isPending && (
+              <LoaderCircle aria-hidden="true" className="animate-spin" />
+            )}
+            Sign in to clinic
+          </Button>
+        </form>
+
+        <div className="flex items-center gap-3">
+          <span className="h-px flex-1 bg-slate-200" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Development demo
+          </span>
+          <span className="h-px flex-1 bg-slate-200" />
+        </div>
+
         <fieldset className="grid gap-3">
-          <legend className="sr-only">Demo personas</legend>
+          <legend className="sr-only">Development demo personas</legend>
           {personas.map(
             ({ persona, title, description, icon: Icon, color, iconColor }) => (
               <Card

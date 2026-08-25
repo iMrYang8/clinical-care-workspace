@@ -154,6 +154,12 @@ def create_membership(
         resource_id=invitation.id,
         metadata={"role": body.role},
     )
+    # Commit the invitation and audit record before any external delivery.
+    # A recipient must never receive a token for a transaction that can still
+    # roll back. Delivery failure revokes this committed token so an admin can
+    # safely create and send a replacement.
+    session.commit()
+    session.refresh(invitation)
     try:
         deliver_membership_invitation(
             recipient=normalized_email,
@@ -161,13 +167,21 @@ def create_membership(
         )
     except Exception:
         # No token, existing-user fact, or SMTP detail is returned to the admin.
-        session.rollback()
+        invitation.revoked_at = get_datetime_utc()
+        session.add(invitation)
+        emit_change(
+            session,
+            context,
+            action="membership.invitation_delivery_failed",
+            resource_type="clinic_invitation",
+            resource_id=invitation.id,
+            metadata={"role": body.role},
+        )
+        session.commit()
         raise HTTPException(
             status_code=503,
             detail="Invitation delivery did not complete",
         )
-    session.commit()
-    session.refresh(invitation)
     return MembershipInvitationPublic(
         id=invitation.id,
         email=invitation.email,

@@ -5,11 +5,19 @@ export type LocalCapture = {
   serverSessionId: string
   serverDeviceId: string
   patientId: string
+  userId: string
+  membershipId: string
+  clinicId: string
   mediaType: string
   key: CryptoKey
   nextChunkIndex: number
   createdAt: string
 }
+
+export type VoiceCaptureOwner = Pick<
+  LocalCapture,
+  "userId" | "membershipId" | "clinicId"
+>
 
 export type EncryptedVoiceChunk = {
   id: string
@@ -121,11 +129,21 @@ export async function createLocalCapture(input: {
   serverSessionId: string
   serverDeviceId: string
   patientId: string
+  userId: string
+  membershipId: string
+  clinicId: string
   mediaType: string
 }): Promise<LocalCapture> {
   const db = await database()
   const existing = await db.get("captures", input.serverSessionId)
-  if (existing) return existing
+  if (existing) {
+    if (!captureBelongsTo(existing, input)) {
+      throw new Error(
+        "Local voice capture belongs to another signed-in context",
+      )
+    }
+    return existing
+  }
   const key = await crypto.subtle.generateKey(
     { name: "AES-GCM", length: 256 },
     false,
@@ -241,14 +259,27 @@ export async function localCapture(
   return (await database()).get("captures", captureId)
 }
 
-export async function recoverableCaptures(): Promise<LocalCapture[]> {
+export async function recoverableCaptures(
+  owner: VoiceCaptureOwner,
+): Promise<LocalCapture[]> {
   const db = await database()
   const captures = await db.getAll("captures")
   // Zero-chunk captures remain visible so a crash between server join and the
   // first MediaRecorder event can explicitly abandon that empty server device.
   // Non-empty captures remain until finalization itself is acknowledged.
-  return captures.sort((left, right) =>
-    left.createdAt.localeCompare(right.createdAt),
+  return captures
+    .filter((capture) => captureBelongsTo(capture, owner))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+}
+
+function captureBelongsTo(
+  capture: LocalCapture,
+  owner: VoiceCaptureOwner,
+): boolean {
+  return (
+    capture.userId === owner.userId &&
+    capture.membershipId === owner.membershipId &&
+    capture.clinicId === owner.clinicId
   )
 }
 

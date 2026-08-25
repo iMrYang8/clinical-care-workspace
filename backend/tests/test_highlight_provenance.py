@@ -176,6 +176,75 @@ def test_patient_only_resolves_reviewed_patient_facing_provenance(
     assert visible.json()["entry_version_id"] == entry["version_id"]
 
 
+def test_withdrawing_entry_removes_accepted_highlight_from_patient_glance(
+    client: TestClient, auth_headers
+) -> None:
+    """A cached card must not outlive the current entry's sharing decision."""
+
+    clinician_headers = auth_headers("clinician")
+    patient_headers = auth_headers("patient")
+    entry = _entry(client, clinician_headers)
+    created = client.post(
+        f"/api/v1/entries/{entry['id']}/highlights",
+        headers=clinician_headers,
+        json={
+            "entry_version_id": entry["version_id"],
+            "start_offset": 7,
+            "end_offset": 16,
+            "exact_quote": "IMPORTANT",
+            "prefix": "prefix ",
+            "suffix": " suffix",
+            "label": "WITHDRAW-ME",
+            "patient_facing": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    pointer_id = created.json()["provenance_pointer_id"]
+    accepted = client.post(
+        f"/api/v1/highlights/{created.json()['id']}/accept",
+        headers=clinician_headers,
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    before = client.get(
+        f"/api/v1/patients/{entry['patient_id']}/glance",
+        headers=patient_headers,
+    )
+    assert before.status_code == 200, before.text
+    assert "WITHDRAW-ME" in {card["label"] for card in before.json()["cards"]}
+    assert (
+        client.get(
+            f"/api/v1/provenance/{pointer_id}/resolve", headers=patient_headers
+        ).status_code
+        == 200
+    )
+
+    withdrawn = client.patch(
+        f"/api/v1/entries/{entry['id']}",
+        headers=clinician_headers | {"If-Match": entry["version_id"]},
+        json={"patient_facing": False},
+    )
+    assert withdrawn.status_code == 200, withdrawn.text
+
+    after = client.get(
+        f"/api/v1/patients/{entry['patient_id']}/glance",
+        headers=patient_headers,
+    )
+    assert after.status_code == 200, after.text
+    assert "WITHDRAW-ME" not in {card["label"] for card in after.json()["cards"]}
+    assert (
+        client.get(
+            f"/api/v1/provenance/{pointer_id}/resolve", headers=patient_headers
+        ).status_code
+        == 404
+    )
+    timeline = client.get(
+        f"/api/v1/patients/{entry['patient_id']}/timeline",
+        headers=patient_headers,
+    )
+    assert entry["id"] not in {row["id"] for row in timeline.json()["data"]}
+
+
 def test_accept_and_pin_rebuild_precomputed_glance_with_max_five_cards(
     client: TestClient, auth_headers
 ) -> None:

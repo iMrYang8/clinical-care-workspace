@@ -21,6 +21,7 @@ import {
   createLocalCapture,
   enqueueEncryptedChunk,
   recoverableCaptures,
+  type VoiceCaptureOwner,
 } from "@/features/voice/offlineQueue"
 import {
   analyzeInputLevel,
@@ -39,6 +40,7 @@ type VoiceCaptureProps = {
   patientId: string
   captureKind: CaptureKind
   role: MePublic["role"]
+  owner: VoiceCaptureOwner
   onFinalized?: (sessionId: string) => void
 }
 
@@ -61,8 +63,10 @@ export function VoiceCapture({
   patientId,
   captureKind,
   role,
+  owner,
   onFinalized,
 }: VoiceCaptureProps) {
+  const { userId, membershipId, clinicId } = owner
   const [state, setState] = useState<
     "idle" | "requesting" | "recording" | "uploading" | "finalizing" | "queued"
   >("idle")
@@ -97,7 +101,11 @@ export function VoiceCapture({
 
   const refreshRecovery = useCallback(
     async (excludeCaptureId?: string) => {
-      const captures = await recoverableCaptures()
+      const captures = await recoverableCaptures({
+        userId,
+        membershipId,
+        clinicId,
+      })
       if (!mountedRef.current) return
       setRecoverable(
         captures
@@ -112,7 +120,7 @@ export function VoiceCapture({
           })),
       )
     },
-    [patientId],
+    [clinicId, membershipId, patientId, userId],
   )
 
   const flush = useCallback(
@@ -342,6 +350,9 @@ export function VoiceCapture({
         serverSessionId,
         serverDeviceId: joined.id,
         patientId,
+        userId,
+        membershipId,
+        clinicId,
         mediaType: recorder.mimeType || mediaType || "audio/webm",
       })
       localCapturePersisted = true
