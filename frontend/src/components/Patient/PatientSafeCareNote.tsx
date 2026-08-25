@@ -3,6 +3,7 @@ import {
   HeartHandshake,
   Link2,
   LoaderCircle,
+  Mic,
   Plus,
   ShieldCheck,
   UserRound,
@@ -153,9 +154,16 @@ export function PatientSafeCareNote({
               </p>
             </div>
           </div>
-          <Badge className="w-fit bg-emerald-100 text-emerald-800">
-            <ShieldCheck /> Patient-facing
-          </Badge>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild className="min-h-11 bg-amber-700">
+              <a href="/my-care/voice/capture">
+                <Mic /> Add a recording
+              </a>
+            </Button>
+            <Badge className="w-fit bg-emerald-100 text-emerald-800">
+              <ShieldCheck /> Patient-facing
+            </Badge>
+          </div>
         </div>
       </header>
 

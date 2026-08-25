@@ -36,6 +36,8 @@ def reset_synthetic_fixture(session: Session) -> None:
         text(
             """
             TRUNCATE TABLE
+              clinical_facts, transcript_segments, transcript_revisions,
+              audio_assets, audio_chunks, voice_devices, voice_sessions,
               domain_events, audit_events, job_attempts, ai_runs, redaction_runs,
               importance_feedback_events, importance_feature_stats, decay_runs,
               retention_locks, archive_blobs, provenance_pointers, conflict_cases,

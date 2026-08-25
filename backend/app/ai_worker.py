@@ -27,19 +27,30 @@ from app.models import (
     DomainEvent,
     Job,
     JobAttempt,
+    VoiceSession,
     get_datetime_utc,
 )
 from app.services.ai_jobs import process_job, worker_context_for_job
 from app.services.redaction import assert_presidio_runtime
+from app.services.voice.worker import process_voice_job
 
 logger = logging.getLogger(__name__)
-_AI_JOB_KINDS = ("ai_ingest", "ai_reanalyze")
+_AI_JOB_KINDS = ("ai_ingest", "ai_reanalyze", "voice_process", "voice_reanalyze")
 _SAFE_CONTROL_CODES = {
     "JOB_ATTEMPTS_EXHAUSTED",
     "JOB_CLAIM_LOST",
     "JOB_NOT_CLAIMABLE",
     "WORKER_UNAVAILABLE",
 }
+_VOICE_PROCESSING_STATES = {
+    "finalizing",
+    "assembling",
+    "preprocessing",
+    "transcribing",
+    "redacting",
+    "extracting",
+}
+_VOICE_EXHAUSTED_CODE = "VOICE_WORKER_ATTEMPTS_EXHAUSTED"
 
 
 def _next_job(session: Session, clinic_id: uuid.UUID) -> Job | None:
@@ -116,6 +127,29 @@ def _finalize_exhausted_expired_leases(session: Session, clinic_id: uuid.UUID) -
             "error_code": "JOB_ATTEMPTS_EXHAUSTED",
             "attempt_count": job.attempt_count,
         }
+        if job.kind in {"voice_process", "voice_reanalyze"}:
+            voice_session = session.exec(
+                select(VoiceSession)
+                .where(
+                    VoiceSession.clinic_id == clinic_id,
+                    VoiceSession.processing_job_id == job.id,
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).first()
+            if (
+                voice_session is not None
+                and voice_session.state in _VOICE_PROCESSING_STATES
+            ):
+                voice_session.state = "needs_review"
+                voice_session.error_code = _VOICE_EXHAUSTED_CODE
+                voice_session.warning_codes_json = sorted(
+                    {*voice_session.warning_codes_json, _VOICE_EXHAUSTED_CODE}
+                )
+                voice_session.updated_at = now
+                session.add(voice_session)
+                metadata["voice_session_id"] = str(voice_session.id)
+                metadata["voice_error_code"] = _VOICE_EXHAUSTED_CODE
         session.add(
             AuditEvent(
                 clinic_id=clinic_id,
@@ -183,7 +217,10 @@ async def run_once() -> int:
                 )
                 continue
             try:
-                await process_job(session, context, job.id)
+                if job.kind in {"voice_process", "voice_reanalyze"}:
+                    await process_voice_job(session, context, job.id)
+                else:
+                    await process_job(session, context, job.id)
                 processed += 1
             except HTTPException as exc:
                 session.rollback()

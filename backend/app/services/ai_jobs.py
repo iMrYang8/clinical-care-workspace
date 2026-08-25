@@ -549,9 +549,11 @@ class _JobClaimLost(Exception):
     pass
 
 
-def _active_worker(
+def active_worker_for_context(
     session: Session, context: RequestContext, *, lock: bool = False
 ) -> tuple[ClinicMembership, User] | None:
+    """Reload and validate the complete trusted worker identity from the database."""
+
     membership_statement = (
         select(ClinicMembership)
         .where(
@@ -595,7 +597,7 @@ def claim_job(
     ):
         raise HTTPException(status_code=403, detail="Worker job binding required")
     set_rls_clinic(session, context.clinic_id)
-    if _active_worker(session, context, lock=True) is None:
+    if active_worker_for_context(session, context, lock=True) is None:
         raise HTTPException(status_code=403, detail="Active worker required")
     now = get_datetime_utc()
     claimable = (
@@ -633,7 +635,10 @@ def claim_job(
             session.add(expired_attempt)
     job.state = "running"
     job.locked_by = str(claim_token or uuid.uuid4())
-    job.locked_until = now + timedelta(seconds=max(30, settings.AI_JOB_LEASE_SECONDS))
+    lease_seconds = settings.AI_JOB_LEASE_SECONDS
+    if job.kind in {"voice_process", "voice_reanalyze"}:
+        lease_seconds = max(lease_seconds, settings.VOICE_JOB_LEASE_SECONDS)
+    job.locked_until = now + timedelta(seconds=max(30, lease_seconds))
     job.error_code = None
     job.updated_at = now
     session.add(job)
@@ -676,7 +681,7 @@ def _lock_current_claim(
         or job.locked_until <= now
         or attempt.status != "started"
         or attempt.worker_membership_id != context.membership.id
-        or _active_worker(session, context, lock=True) is None
+        or active_worker_for_context(session, context, lock=True) is None
     ):
         raise _JobClaimLost
     return job, attempt

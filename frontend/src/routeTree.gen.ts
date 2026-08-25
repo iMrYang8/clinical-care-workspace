@@ -16,6 +16,10 @@ import { Route as LayoutAdminRouteImport } from './routes/_layout/admin'
 import { Route as LayoutMyCareRouteImport } from './routes/_layout/my-care'
 import { Route as LayoutPatientsIndexRouteImport } from './routes/_layout/patients.index'
 import { Route as LayoutPatientsPatientIdRouteImport } from './routes/_layout/patients.$patientId'
+import { Route as LayoutMyCareVoiceSessionIdRouteImport } from './routes/_layout/my-care_.voice.$sessionId'
+import { Route as LayoutMyCareVoiceCaptureRouteImport } from './routes/_layout/my-care_.voice.capture'
+import { Route as LayoutVoiceSessionIdReviewRouteImport } from './routes/_layout/voice.$sessionId.review'
+import { Route as LayoutPatientsPatientIdVoiceCaptureRouteImport } from './routes/_layout/patients_.$patientId.voice.capture'
 
 const LayoutRoute = LayoutRouteImport.update({
   id: '/_layout',
@@ -51,6 +55,30 @@ const LayoutPatientsPatientIdRoute = LayoutPatientsPatientIdRouteImport.update({
   path: '/patients/$patientId',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutMyCareVoiceSessionIdRoute =
+  LayoutMyCareVoiceSessionIdRouteImport.update({
+    id: '/my-care_/voice/$sessionId',
+    path: '/my-care/voice/$sessionId',
+    getParentRoute: () => LayoutRoute,
+  } as any)
+const LayoutMyCareVoiceCaptureRoute =
+  LayoutMyCareVoiceCaptureRouteImport.update({
+    id: '/my-care_/voice/capture',
+    path: '/my-care/voice/capture',
+    getParentRoute: () => LayoutRoute,
+  } as any)
+const LayoutVoiceSessionIdReviewRoute =
+  LayoutVoiceSessionIdReviewRouteImport.update({
+    id: '/voice/$sessionId/review',
+    path: '/voice/$sessionId/review',
+    getParentRoute: () => LayoutRoute,
+  } as any)
+const LayoutPatientsPatientIdVoiceCaptureRoute =
+  LayoutPatientsPatientIdVoiceCaptureRouteImport.update({
+    id: '/patients_/$patientId/voice/capture',
+    path: '/patients/$patientId/voice/capture',
+    getParentRoute: () => LayoutRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof LayoutIndexRoute
@@ -59,6 +87,10 @@ export interface FileRoutesByFullPath {
   '/my-care': typeof LayoutMyCareRoute
   '/patients/$patientId': typeof LayoutPatientsPatientIdRoute
   '/patients/': typeof LayoutPatientsIndexRoute
+  '/my-care/voice/$sessionId': typeof LayoutMyCareVoiceSessionIdRoute
+  '/my-care/voice/capture': typeof LayoutMyCareVoiceCaptureRoute
+  '/voice/$sessionId/review': typeof LayoutVoiceSessionIdReviewRoute
+  '/patients/$patientId/voice/capture': typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -67,6 +99,10 @@ export interface FileRoutesByTo {
   '/': typeof LayoutIndexRoute
   '/patients/$patientId': typeof LayoutPatientsPatientIdRoute
   '/patients': typeof LayoutPatientsIndexRoute
+  '/my-care/voice/$sessionId': typeof LayoutMyCareVoiceSessionIdRoute
+  '/my-care/voice/capture': typeof LayoutMyCareVoiceCaptureRoute
+  '/voice/$sessionId/review': typeof LayoutVoiceSessionIdReviewRoute
+  '/patients/$patientId/voice/capture': typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -77,6 +113,10 @@ export interface FileRoutesById {
   '/_layout/': typeof LayoutIndexRoute
   '/_layout/patients/$patientId': typeof LayoutPatientsPatientIdRoute
   '/_layout/patients/': typeof LayoutPatientsIndexRoute
+  '/_layout/my-care_/voice/$sessionId': typeof LayoutMyCareVoiceSessionIdRoute
+  '/_layout/my-care_/voice/capture': typeof LayoutMyCareVoiceCaptureRoute
+  '/_layout/voice/$sessionId/review': typeof LayoutVoiceSessionIdReviewRoute
+  '/_layout/patients_/$patientId/voice/capture': typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -87,6 +127,10 @@ export interface FileRouteTypes {
     | '/my-care'
     | '/patients/$patientId'
     | '/patients/'
+    | '/my-care/voice/$sessionId'
+    | '/my-care/voice/capture'
+    | '/voice/$sessionId/review'
+    | '/patients/$patientId/voice/capture'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -95,6 +139,10 @@ export interface FileRouteTypes {
     | '/'
     | '/patients/$patientId'
     | '/patients'
+    | '/my-care/voice/$sessionId'
+    | '/my-care/voice/capture'
+    | '/voice/$sessionId/review'
+    | '/patients/$patientId/voice/capture'
   id:
     | '__root__'
     | '/_layout'
@@ -104,6 +152,10 @@ export interface FileRouteTypes {
     | '/_layout/'
     | '/_layout/patients/$patientId'
     | '/_layout/patients/'
+    | '/_layout/my-care_/voice/$sessionId'
+    | '/_layout/my-care_/voice/capture'
+    | '/_layout/voice/$sessionId/review'
+    | '/_layout/patients_/$patientId/voice/capture'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -162,6 +214,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutPatientsPatientIdRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/my-care_/voice/$sessionId': {
+      id: '/_layout/my-care_/voice/$sessionId'
+      path: '/my-care/voice/$sessionId'
+      fullPath: '/my-care/voice/$sessionId'
+      preLoaderRoute: typeof LayoutMyCareVoiceSessionIdRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/my-care_/voice/capture': {
+      id: '/_layout/my-care_/voice/capture'
+      path: '/my-care/voice/capture'
+      fullPath: '/my-care/voice/capture'
+      preLoaderRoute: typeof LayoutMyCareVoiceCaptureRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/voice/$sessionId/review': {
+      id: '/_layout/voice/$sessionId/review'
+      path: '/voice/$sessionId/review'
+      fullPath: '/voice/$sessionId/review'
+      preLoaderRoute: typeof LayoutVoiceSessionIdReviewRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/patients_/$patientId/voice/capture': {
+      id: '/_layout/patients_/$patientId/voice/capture'
+      path: '/patients/$patientId/voice/capture'
+      fullPath: '/patients/$patientId/voice/capture'
+      preLoaderRoute: typeof LayoutPatientsPatientIdVoiceCaptureRouteImport
+      parentRoute: typeof LayoutRoute
+    }
   }
 }
 
@@ -171,6 +251,10 @@ interface LayoutRouteChildren {
   LayoutIndexRoute: typeof LayoutIndexRoute
   LayoutPatientsPatientIdRoute: typeof LayoutPatientsPatientIdRoute
   LayoutPatientsIndexRoute: typeof LayoutPatientsIndexRoute
+  LayoutMyCareVoiceSessionIdRoute: typeof LayoutMyCareVoiceSessionIdRoute
+  LayoutMyCareVoiceCaptureRoute: typeof LayoutMyCareVoiceCaptureRoute
+  LayoutVoiceSessionIdReviewRoute: typeof LayoutVoiceSessionIdReviewRoute
+  LayoutPatientsPatientIdVoiceCaptureRoute: typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 
 const LayoutRouteChildren: LayoutRouteChildren = {
@@ -179,6 +263,11 @@ const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutIndexRoute: LayoutIndexRoute,
   LayoutPatientsPatientIdRoute: LayoutPatientsPatientIdRoute,
   LayoutPatientsIndexRoute: LayoutPatientsIndexRoute,
+  LayoutMyCareVoiceSessionIdRoute: LayoutMyCareVoiceSessionIdRoute,
+  LayoutMyCareVoiceCaptureRoute: LayoutMyCareVoiceCaptureRoute,
+  LayoutVoiceSessionIdReviewRoute: LayoutVoiceSessionIdReviewRoute,
+  LayoutPatientsPatientIdVoiceCaptureRoute:
+    LayoutPatientsPatientIdVoiceCaptureRoute,
 }
 
 const LayoutRouteWithChildren =

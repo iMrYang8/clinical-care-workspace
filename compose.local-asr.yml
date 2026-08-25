@@ -1,0 +1,31 @@
+# Optional no-audio-egress overlay. The model directory must already contain a
+# compatible faster-whisper/CTranslate2 model; the application never downloads it.
+services:
+  # prestart/backend/worker intentionally share one image tag; keep build args
+  # identical so Compose cannot overwrite the runtime tag with a lean variant.
+  prestart:
+    build:
+      args:
+        INSTALL_LOCAL_ASR: "true"
+
+  backend:
+    build:
+      args:
+        INSTALL_LOCAL_ASR: "true"
+    environment:
+      VOICE_TRANSCRIPTION_PROVIDER: local
+      STRICT_NO_AUDIO_EGRESS: "true"
+      LOCAL_ASR_MODEL_DIR: /models/asr
+    volumes:
+      - ${LOCAL_ASR_MODEL_DIR:?Set LOCAL_ASR_MODEL_DIR to a cached model}:/models/asr:ro
+
+  ai-worker:
+    build:
+      args:
+        INSTALL_LOCAL_ASR: "true"
+    environment:
+      VOICE_TRANSCRIPTION_PROVIDER: local
+      STRICT_NO_AUDIO_EGRESS: "true"
+      LOCAL_ASR_MODEL_DIR: /models/asr
+    volumes:
+      - ${LOCAL_ASR_MODEL_DIR:?Set LOCAL_ASR_MODEL_DIR to a cached model}:/models/asr:ro

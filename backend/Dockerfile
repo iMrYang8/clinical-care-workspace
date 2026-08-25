@@ -20,6 +20,15 @@ FROM python:3.12
 
 ENV PYTHONUNBUFFERED=1
 
+# FFmpeg is invoked as a bounded subprocess for voice normalization. Preserve
+# the exact package build/configuration inside every image for release notices.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ffmpeg \
+    && mkdir -p /usr/share/doc/nightingale \
+    && ffmpeg -version > /usr/share/doc/nightingale/ffmpeg-build.txt \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete
+
 # Install uv
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#installing-uv
 COPY --from=ghcr.io/astral-sh/uv:0.9.26 /uv /uvx /bin/
@@ -35,6 +44,8 @@ ENV UV_LINK_MODE=copy
 # The default synthetic demo stays model-free. Production remote egress opts
 # into the locked local Presidio model at image build time.
 ARG INSTALL_PRESIDIO_NLP=false
+ARG INSTALL_LOCAL_ASR=false
+ARG INSTALL_DIARIZATION=false
 
 WORKDIR /app/
 
@@ -47,11 +58,12 @@ ENV PATH="/app/.venv/bin:$PATH"
 # do not ship the optional buildx/BuildKit plugin.
 COPY ./pyproject.toml ./uv.lock /app/
 COPY ./backend/pyproject.toml /app/backend/pyproject.toml
-RUN if [ "$INSTALL_PRESIDIO_NLP" = "true" ]; then \
-      uv sync --frozen --no-install-workspace --package app --group presidio-nlp; \
-    else \
-      uv sync --frozen --no-install-workspace --package app; \
-    fi
+RUN set -eu; \
+    set -- uv sync --frozen --no-install-workspace --package app; \
+    if [ "$INSTALL_PRESIDIO_NLP" = "true" ]; then set -- "$@" --group presidio-nlp; fi; \
+    if [ "$INSTALL_LOCAL_ASR" = "true" ]; then set -- "$@" --group local-asr; fi; \
+    if [ "$INSTALL_DIARIZATION" = "true" ]; then set -- "$@" --group diarization; fi; \
+    "$@"
 
 COPY ./backend/scripts /app/backend/scripts
 
@@ -63,11 +75,12 @@ COPY --from=frontend-build /app/backend/app/frontend /app/backend/app/frontend
 
 # Sync the project itself after source is present. Dependencies are already in
 # the preceding layer and uv still verifies the same frozen lock.
-RUN if [ "$INSTALL_PRESIDIO_NLP" = "true" ]; then \
-      uv sync --frozen --package app --group presidio-nlp; \
-    else \
-      uv sync --frozen --package app; \
-    fi
+RUN set -eu; \
+    set -- uv sync --frozen --package app; \
+    if [ "$INSTALL_PRESIDIO_NLP" = "true" ]; then set -- "$@" --group presidio-nlp; fi; \
+    if [ "$INSTALL_LOCAL_ASR" = "true" ]; then set -- "$@" --group local-asr; fi; \
+    if [ "$INSTALL_DIARIZATION" = "true" ]; then set -- "$@" --group diarization; fi; \
+    "$@"
 
 WORKDIR /app/backend/
 

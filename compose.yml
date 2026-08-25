@@ -57,6 +57,8 @@ services:
       dockerfile: backend/Dockerfile
       args:
         INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
+        INSTALL_LOCAL_ASR: ${INSTALL_LOCAL_ASR:-false}
+        INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}
     command: ["bash", "scripts/prestart.sh"]
     restart: "no"
 
@@ -92,6 +94,14 @@ services:
       IMPORTANCE_LEARNING_ENABLED: ${IMPORTANCE_LEARNING_ENABLED:-true}
       DATA_DECAY_ENABLED: ${DATA_DECAY_ENABLED:-true}
       DATA_DECAY_DRY_RUN: ${DATA_DECAY_DRY_RUN:-true}
+      VOICE_TRANSCRIPTION_PROVIDER: ${VOICE_TRANSCRIPTION_PROVIDER:-disabled}
+      REMOTE_AUDIO_EGRESS_ENABLED: ${REMOTE_AUDIO_EGRESS_ENABLED:-false}
+      STRICT_NO_AUDIO_EGRESS: ${STRICT_NO_AUDIO_EGRESS:-false}
+      OPENAI_TRANSCRIBE_MODEL: ${OPENAI_TRANSCRIBE_MODEL:-}
+      LOCAL_ASR_MODEL_DIR: ${LOCAL_ASR_MODEL_DIR:-}
+      PYANNOTE_ENABLED: ${PYANNOTE_ENABLED:-false}
+      PYANNOTE_MODEL_DIR: ${PYANNOTE_MODEL_DIR:-}
+      LIVE_TRANSCRIPT_ENABLED: ${LIVE_TRANSCRIPT_ENABLED:-false}
       SENTRY_DSN: ${SENTRY_DSN:-}
 
     healthcheck:
@@ -105,6 +115,8 @@ services:
       dockerfile: backend/Dockerfile
       args:
         INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
+        INSTALL_LOCAL_ASR: ${INSTALL_LOCAL_ASR:-false}
+        INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}
     labels:
       # Enable Traefik for this service
       - traefik.enable=true
@@ -147,12 +159,22 @@ services:
       IMPORTANCE_LEARNING_ENABLED: ${IMPORTANCE_LEARNING_ENABLED:-true}
       DATA_DECAY_ENABLED: ${DATA_DECAY_ENABLED:-true}
       DATA_DECAY_DRY_RUN: ${DATA_DECAY_DRY_RUN:-true}
+      VOICE_TRANSCRIPTION_PROVIDER: ${VOICE_TRANSCRIPTION_PROVIDER:-disabled}
+      REMOTE_AUDIO_EGRESS_ENABLED: ${REMOTE_AUDIO_EGRESS_ENABLED:-false}
+      STRICT_NO_AUDIO_EGRESS: ${STRICT_NO_AUDIO_EGRESS:-false}
+      OPENAI_TRANSCRIBE_MODEL: ${OPENAI_TRANSCRIBE_MODEL:-}
+      LOCAL_ASR_MODEL_DIR: ${LOCAL_ASR_MODEL_DIR:-}
+      PYANNOTE_ENABLED: ${PYANNOTE_ENABLED:-false}
+      PYANNOTE_MODEL_DIR: ${PYANNOTE_MODEL_DIR:-}
+      LIVE_TRANSCRIPT_ENABLED: ${LIVE_TRANSCRIPT_ENABLED:-false}
       SENTRY_DSN: ${SENTRY_DSN:-}
     build:
       context: .
       dockerfile: backend/Dockerfile
       args:
         INSTALL_PRESIDIO_NLP: ${INSTALL_PRESIDIO_NLP:-false}
+        INSTALL_LOCAL_ASR: ${INSTALL_LOCAL_ASR:-false}
+        INSTALL_DIARIZATION: ${INSTALL_DIARIZATION:-false}
     command: ["python", "-m", "app.ai_worker"]
     restart: unless-stopped
 

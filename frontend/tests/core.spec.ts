@@ -18,7 +18,9 @@ test("staff opens the real synthetic care note", async ({ page }) => {
     page.getByRole("heading", { name: "Alex Synthetic" }),
   ).toBeVisible()
   await expect(page.getByText("Synthetic data").first()).toBeVisible()
-  await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Timeline", exact: true }),
+  ).toBeVisible()
   await expect(
     page.getByRole("heading", { name: "What matters now" }),
   ).toBeVisible()

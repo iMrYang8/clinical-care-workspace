@@ -10,6 +10,7 @@ from app.api.routes import (
     patients,
     trust,
     utils,
+    voice,
 )
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(collaboration.router)
 api_router.include_router(trust.router)
 api_router.include_router(events.router)
 api_router.include_router(decay.router)
+api_router.include_router(voice.router)
