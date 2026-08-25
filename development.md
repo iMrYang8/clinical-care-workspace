@@ -1,4 +1,4 @@
-# FastAPI Project - Development
+# Nightingale - Development
 
 ## Local Development
 

@@ -1,0 +1,17 @@
+Nightingale attribution
+=======================
+
+This repository began as an adaptation of the FastAPI Full Stack FastAPI
+Template at upstream commit 68adb40d:
+https://github.com/fastapi/full-stack-fastapi-template/commit/68adb40d
+
+Upstream copyright: Copyright (c) 2019 Sebastián Ramírez and FastAPI
+contributors.
+Upstream license: MIT. The MIT license text is retained in LICENSE.
+
+The Nightingale name and the baseline configuration changes in this repository
+do not remove the upstream attribution or its MIT notice.
+
+THIRD_PARTY_NOTICES.md records the status of planned integrations and design
+references. Entries marked planned, optional, or design reference are not
+bundled dependencies, vendored source, or shipped assets in this baseline.

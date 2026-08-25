@@ -1,4 +1,4 @@
-# FastAPI Project - Docker Compose Deployment
+# Nightingale - Docker Compose Deployment
 
 You can deploy the project to your own remote server with Docker Compose. The deployment configuration includes Traefik to handle HTTPS and route incoming traffic to the application.
 
@@ -24,7 +24,7 @@ Set the application domain, project name, and first superuser email:
 
 ```bash
 export DOMAIN=fastapi-project.example.com
-export PROJECT_NAME="Full Stack FastAPI Project"
+export PROJECT_NAME="Nightingale"
 export FIRST_SUPERUSER=admin@example.com
 ```
 

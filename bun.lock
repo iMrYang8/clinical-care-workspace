@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "fastapi-cloud",
+      "name": "nightingale",
     },
     "frontend": {
       "name": "frontend",

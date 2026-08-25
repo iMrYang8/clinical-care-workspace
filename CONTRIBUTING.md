@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in contributing to the Full Stack FastAPI Template! 🙇
+Thank you for your interest in contributing to Nightingale! 🙇
 
 ## Discussions First
 

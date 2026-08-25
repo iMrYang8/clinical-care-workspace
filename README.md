@@ -1,4 +1,4 @@
-# Full Stack FastAPI Template
+# Nightingale
 
 [![Test Docker Compose](../../actions/workflows/test-docker-compose.yml/badge.svg)](../../actions/workflows/test-docker-compose.yml)
 [![Test Backend](../../actions/workflows/test-backend.yml/badge.svg)](../../actions/workflows/test-backend.yml)
@@ -57,7 +57,7 @@
 
 ## How to Use It
 
-Click the **Use this template** button at the top of this page to create a new repository.
+Nightingale currently preserves the FastAPI template baseline, including its Item examples, while product-specific functionality is developed separately.
 
 ## Backend Development
 
@@ -85,4 +85,4 @@ Check the file [release-notes.md](./release-notes.md).
 
 ## License
 
-The Full Stack FastAPI Template is licensed under the terms of the MIT license.
+Nightingale is licensed under the MIT License. See [ATTRIBUTION.txt](./ATTRIBUTION.txt) and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for baseline and planned-component notices.
