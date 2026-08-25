@@ -10,6 +10,7 @@ from app.core.security import get_password_hash
 from app.models import (
     Clinic,
     ClinicMembership,
+    Job,
     Patient,
     PatientGlanceSnapshot,
     PatientUserLink,
@@ -105,6 +106,22 @@ def seed_demo_data(session: Session) -> None:
         )
     )
     session.flush()
+    worker_job_id = demo_id("job-worker-demo")
+    session.add(
+        Job(
+            id=worker_job_id,
+            clinic_id=primary.id,
+            patient_id=primary_patient_id,
+            kind="synthetic_worker_fixture",
+            state="running",
+            idempotency_key=hashlib.sha256(b"synthetic-worker-fixture-key").hexdigest(),
+            request_sha256=hashlib.sha256(b"synthetic-worker-fixture").hexdigest(),
+            payload_ciphertext=field_codec.encrypt_json(
+                primary.id, "job.payload", worker_job_id, {"synthetic": True}
+            ),
+            created_by_id=personas["worker"].id,
+        )
+    )
     session.add(
         PatientUserLink(
             id=demo_id("patient-user-link-primary"),

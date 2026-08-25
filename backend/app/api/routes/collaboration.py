@@ -14,13 +14,16 @@ from app.models import (
     CommentCreate,
     CommentMention,
     CommentPublic,
+    Highlight,
     ProvenancePointer,
 )
+from app.services.importance import record_feedback
 from app.services.nightingale import (
     decrypt_version,
     emit_change,
     get_scoped_entry,
     get_scoped_version,
+    rebuild_glance,
     validate_anchor,
 )
 
@@ -202,6 +205,23 @@ def _create_comment(
                 mentioned_user_id=user_id,
             )
         )
+    affected_patients: set[uuid.UUID] = set()
+    if anchor_state == "resolved":
+        related_highlights = session.exec(
+            select(Highlight).where(
+                Highlight.clinic_id == context.clinic_id,
+                Highlight.source_entry_version_id == version.id,
+            )
+        ).all()
+        for highlight in related_highlights:
+            _, affected = record_feedback(
+                session,
+                context,
+                highlight,
+                signal="comment",
+                idempotency_key=f"comment:{comment.id}:highlight:{highlight.id}",
+            )
+            affected_patients.update(affected)
     emit_change(
         session,
         context,
@@ -210,6 +230,8 @@ def _create_comment(
         resource_id=comment.id,
         metadata={"entry_id": str(entry.id), "anchor_state": anchor_state},
     )
+    for patient_id in affected_patients:
+        rebuild_glance(session, context, patient_id)
     session.commit()
     session.refresh(comment)
     return _comment_public(session, comment)

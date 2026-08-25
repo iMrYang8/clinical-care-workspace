@@ -29,6 +29,7 @@ from app.models import (
     ProvenancePointer,
     get_datetime_utc,
 )
+from app.services.importance import record_feedback, refresh_highlight_score
 
 
 class VersionConflictError(Exception):
@@ -374,6 +375,23 @@ def patch_entry(
     entry.current_version_id = next_version.id
     entry.patient_facing = effective_patient_facing
     session.add(entry)
+    affected_patients: set[uuid.UUID] = set()
+    if context.role in {"staff", "clinician"}:
+        related_highlights = session.exec(
+            select(Highlight).where(
+                Highlight.clinic_id == context.clinic_id,
+                Highlight.entry_id == entry.id,
+            )
+        ).all()
+        for highlight in related_highlights:
+            _, affected = record_feedback(
+                session,
+                context,
+                highlight,
+                signal="edit",
+                idempotency_key=f"edit:{next_version.id}:highlight:{highlight.id}",
+            )
+            affected_patients.update(affected)
     metadata = {
         "previous_version_id": str(current.id),
         "version_id": str(next_version.id),
@@ -388,6 +406,8 @@ def patch_entry(
         resource_id=entry.id,
         metadata=metadata,
     )
+    for patient_id in affected_patients:
+        rebuild_glance(session, context, patient_id)
     session.commit()
     session.refresh(entry)
     return entry_public(session, entry)
@@ -547,6 +567,20 @@ def rebuild_glance(
     session: Session, context: RequestContext, patient_id: uuid.UUID
 ) -> PatientGlanceSnapshot:
     get_patient(session, context, patient_id)
+    eligible = session.exec(
+        select(Highlight).where(
+            Highlight.clinic_id == context.clinic_id,
+            Highlight.patient_id == patient_id,
+            (col(Highlight.status) == "accepted") | col(Highlight.pinned).is_(True),
+            Highlight.anchor_state == "resolved",
+            col(Highlight.review_required).is_(False),
+        )
+    ).all()
+    score_components = {
+        highlight.id: refresh_highlight_score(session, highlight).components
+        for highlight in eligible
+    }
+    session.flush()
     highlights = session.exec(
         select(Highlight)
         .where(
@@ -559,6 +593,9 @@ def rebuild_glance(
         .order_by(
             desc(col(Highlight.pinned)),
             desc(col(Highlight.critical)),
+            desc(col(Highlight.unresolved)),
+            desc(col(Highlight.clinician_confirmed)),
+            desc(col(Highlight.final_score)),
             desc(col(Highlight.created_at)),
         )
         .limit(5)
@@ -587,13 +624,8 @@ def rebuild_glance(
                 "critical": highlight.critical,
                 "pinned": highlight.pinned,
                 "patient_facing": highlight.patient_facing,
-                "risk_reason": (
-                    "critical"
-                    if highlight.critical
-                    else "pinned"
-                    if highlight.pinned
-                    else "clinician_accepted"
-                ),
+                "risk_reason": highlight.risk_reason,
+                "score_components": score_components.get(highlight.id, {}),
                 "provenance_pointer_id": str(pointer.id),
             }
         )

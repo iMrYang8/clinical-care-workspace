@@ -26,6 +26,15 @@ TENANT_TABLES = {
     "audit_events",
     "patient_glance_snapshots",
     "domain_events",
+    "jobs",
+    "job_attempts",
+    "redaction_runs",
+    "ai_runs",
+    "importance_feedback_events",
+    "importance_feature_stats",
+    "archive_blobs",
+    "decay_runs",
+    "retention_locks",
 }
 
 
@@ -103,6 +112,8 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
     }
     assert "uq_membership_clinic_id" in membership_uniques
     expected_fks = {
+        "entries": {"fk_entry_source_job_tenant"},
+        "entry_versions": {"fk_version_archive_blob_tenant"},
         "comments": {"fk_comment_parent_tenant", "fk_comment_assignment_tenant"},
         "comment_mentions": {"fk_comment_mention_tenant"},
         "care_tasks": {"fk_task_comment_tenant", "fk_task_assignee_tenant"},
