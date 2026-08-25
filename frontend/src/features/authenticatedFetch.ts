@@ -1,8 +1,22 @@
+import { AxiosError, type AxiosInstance } from "axios"
+
 export const SESSION_INVALID_RESPONSE_HEADER = "X-Nightingale-Session-Invalid"
 
 type AuthenticationRejectionHandler = () => void
 
 let authenticationRejectionHandler: AuthenticationRejectionHandler | undefined
+
+function axiosResponseHeader(headers: unknown, name: string): string | null {
+  if (!headers || typeof headers !== "object") return null
+  const getter = (headers as { get?: unknown }).get
+  if (typeof getter === "function") {
+    const value = getter.call(headers, name) as unknown
+    return typeof value === "string" ? value : null
+  }
+  const values = headers as Record<string, unknown>
+  const value = values[name.toLowerCase()] ?? values[name]
+  return typeof value === "string" ? value : null
+}
 
 /**
  * Register the application-owned response to an invalid browser session.
@@ -51,4 +65,31 @@ export async function authenticatedFetch(
     authenticationRejectionHandler?.()
   }
   return response
+}
+
+/**
+ * Apply the same session classification to every generated Axios SDK call.
+ * Direct VoiceService calls do not necessarily pass through React Query, so
+ * this interceptor belongs on the generated client's shared instance rather
+ * than in a query or mutation callback.
+ */
+export function installAxiosAuthenticationRejectionInterceptor(
+  instance: AxiosInstance,
+): number {
+  return instance.interceptors.response.use(undefined, (error: unknown) => {
+    if (error instanceof AxiosError) {
+      const status = error.response?.status
+      const marker = axiosResponseHeader(
+        error.response?.headers,
+        SESSION_INVALID_RESPONSE_HEADER,
+      )
+      if (
+        status !== undefined &&
+        isAuthenticationRejectionStatus(status, marker)
+      ) {
+        authenticationRejectionHandler?.()
+      }
+    }
+    return Promise.reject(error)
+  })
 }

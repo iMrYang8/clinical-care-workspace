@@ -6,7 +6,12 @@ test.use({ storageState: { cookies: [], origins: [] } })
 
 async function seedQueuedVoiceChunk(
   page: Page,
-  input: { captureId: string; deviceId: string; patientId: string },
+  input: {
+    captureId: string
+    deviceId: string
+    patientId: string
+    includeChunk?: boolean
+  },
 ): Promise<void> {
   await page.evaluate(async (fixture) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -48,19 +53,21 @@ async function seedQueuedVoiceChunk(
       nextChunkIndex: 1,
       createdAt: new Date().toISOString(),
     })
-    transaction.objectStore("chunks").put({
-      id: `${fixture.captureId}:0`,
-      captureId: fixture.captureId,
-      chunkIndex: 0,
-      iv,
-      ciphertext,
-      sha256: "fixture",
-      byteLength: plaintext.byteLength,
-      mediaType: "audio/webm",
-      startMs: 0,
-      endMs: 1_000,
-      createdAt: new Date().toISOString(),
-    })
+    if (fixture.includeChunk !== false) {
+      transaction.objectStore("chunks").put({
+        id: `${fixture.captureId}:0`,
+        captureId: fixture.captureId,
+        chunkIndex: 0,
+        iv,
+        ciphertext,
+        sha256: "fixture",
+        byteLength: plaintext.byteLength,
+        mediaType: "audio/webm",
+        startMs: 0,
+        endMs: 1_000,
+        createdAt: new Date().toISOString(),
+      })
+    }
     await new Promise<void>((resolve, reject) => {
       transaction.oncomplete = () => resolve()
       transaction.onerror = () => reject(transaction.error)
@@ -471,6 +478,150 @@ test("a native voice chunk 401 terminates every tab and purges encrypted recover
     )
     .toBe(false)
   await second.close()
+})
+
+test("an authentication-marked seal response terminates direct VoiceService calls", async ({
+  page,
+}) => {
+  await page.goto("/login")
+  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  const patientHref = await page
+    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getAttribute("href")
+  expect(patientHref).toBeTruthy()
+  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
+    "/",
+  )[2]
+  expect(patientId).toBeTruthy()
+
+  const second = await page.context().newPage()
+  await second.goto(patientHref!)
+  await expect(
+    second.getByRole("heading", { name: "Alex Synthetic" }),
+  ).toBeVisible()
+
+  const captureId = `sealed-403-${randomUUID()}`
+  const deviceId = `device-${randomUUID()}`
+  await seedQueuedVoiceChunk(page, {
+    captureId,
+    deviceId,
+    patientId,
+    includeChunk: false,
+  })
+  await page.goto(`${patientHref}/voice/capture`)
+  await expect(page.getByText(captureId)).toBeVisible()
+  let pendingChunkPuts = 0
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      request
+        .url()
+        .includes(`/voice/sessions/${captureId}/devices/${deviceId}/chunks/`)
+    ) {
+      pendingChunkPuts += 1
+    }
+  })
+
+  let releaseLogout!: () => void
+  const logoutGate = new Promise<void>((resolve) => {
+    releaseLogout = resolve
+  })
+  await page.route("**/api/v1/auth/logout", async (route) => {
+    await logoutGate
+    await route.continue()
+  })
+  let rejectedSeals = 0
+  await page.route(
+    `**/api/v1/voice/sessions/${captureId}/devices/${deviceId}/seal`,
+    async (route) => {
+      rejectedSeals += 1
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        headers: { "X-Nightingale-Session-Invalid": "1" },
+        body: JSON.stringify({ detail: "Inactive membership" }),
+      })
+    },
+  )
+
+  await page.getByRole("button", { name: "Resume upload" }).click()
+
+  await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
+  await expect(second.getByTestId("session-termination-boundary")).toBeVisible()
+  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  expect(rejectedSeals).toBe(1)
+  expect(pendingChunkPuts).toBe(0)
+
+  releaseLogout()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(second).toHaveURL(/\/login$/)
+  await expect
+    .poll(() =>
+      second.evaluate(async () =>
+        (await indexedDB.databases()).some(
+          (database) => database.name === "nightingale-voice-v1",
+        ),
+      ),
+    )
+    .toBe(false)
+  await second.close()
+})
+
+test("a markerless seal permission 403 keeps the current session and recovery", async ({
+  page,
+}) => {
+  await page.goto("/login")
+  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  const patientHref = await page
+    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getAttribute("href")
+  expect(patientHref).toBeTruthy()
+  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
+    "/",
+  )[2]
+  expect(patientId).toBeTruthy()
+
+  const captureId = `seal-rbac-${randomUUID()}`
+  const deviceId = `device-${randomUUID()}`
+  await seedQueuedVoiceChunk(page, {
+    captureId,
+    deviceId,
+    patientId,
+    includeChunk: false,
+  })
+  await page.goto(`${patientHref}/voice/capture`)
+  await expect(page.getByText(captureId)).toBeVisible()
+
+  let rejectedSeals = 0
+  await page.route(
+    `**/api/v1/voice/sessions/${captureId}/devices/${deviceId}/seal`,
+    async (route) => {
+      rejectedSeals += 1
+      await route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "Device belongs to another member" }),
+      })
+    },
+  )
+
+  await page.getByRole("button", { name: "Resume upload" }).click()
+
+  await expect.poll(() => rejectedSeals).toBe(1)
+  await expect(page.getByTestId("session-termination-boundary")).toHaveCount(0)
+  await expect(page.getByText(captureId)).toBeVisible()
+  expect(
+    (await page.context().cookies()).some(
+      (cookie) => cookie.name === "nightingale_session",
+    ),
+  ).toBe(true)
+  expect(
+    await page.evaluate(async () =>
+      (await indexedDB.databases()).some(
+        (database) => database.name === "nightingale-voice-v1",
+      ),
+    ),
+  ).toBe(true)
 })
 
 test("an authentication-marked native 403 masks all tabs and clears IndexedDB", async ({

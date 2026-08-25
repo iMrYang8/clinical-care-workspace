@@ -1,10 +1,42 @@
+import axios, {
+  AxiosError,
+  AxiosHeaders,
+  type AxiosInstance,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from "axios"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
   authenticatedFetch,
+  installAxiosAuthenticationRejectionInterceptor,
   SESSION_INVALID_RESPONSE_HEADER,
   setAuthenticationRejectionHandler,
 } from "./authenticatedFetch"
+
+function rejectingAxios(
+  status: number,
+  headers: Record<string, string> = {},
+): AxiosInstance {
+  return axios.create({
+    adapter: async (config: InternalAxiosRequestConfig) => {
+      const response: AxiosResponse = {
+        config,
+        data: { detail: "fixture" },
+        headers: new AxiosHeaders(headers),
+        status,
+        statusText: status === 403 ? "Forbidden" : "Unauthorized",
+      }
+      throw new AxiosError(
+        `Request failed with status code ${status}`,
+        "ERR_BAD_REQUEST",
+        config,
+        undefined,
+        response,
+      )
+    },
+  })
+}
 
 afterEach(() => {
   setAuthenticationRejectionHandler(undefined)
@@ -63,6 +95,34 @@ describe("authenticated browser fetch", () => {
     )
 
     expect(returned).toBe(response)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it("terminates direct generated Axios calls on an authentication 403", async () => {
+    const handler = vi.fn()
+    const instance = rejectingAxios(403, {
+      [SESSION_INVALID_RESPONSE_HEADER]: "1",
+    })
+    setAuthenticationRejectionHandler(handler)
+    installAxiosAuthenticationRejectionInterceptor(instance)
+
+    await expect(instance.post("/voice/seal")).rejects.toBeInstanceOf(
+      AxiosError,
+    )
+
+    expect(handler).toHaveBeenCalledOnce()
+  })
+
+  it("does not terminate a direct Axios call for a markerless RBAC 403", async () => {
+    const handler = vi.fn()
+    const instance = rejectingAxios(403)
+    setAuthenticationRejectionHandler(handler)
+    installAxiosAuthenticationRejectionInterceptor(instance)
+
+    await expect(instance.post("/voice/seal")).rejects.toBeInstanceOf(
+      AxiosError,
+    )
+
     expect(handler).not.toHaveBeenCalled()
   })
 })

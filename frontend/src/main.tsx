@@ -1,19 +1,12 @@
-import {
-  MutationCache,
-  QueryCache,
-  QueryClient,
-  QueryClientProvider,
-} from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRouter, RouterProvider } from "@tanstack/react-router"
-import { AxiosError } from "axios"
 import { StrictMode } from "react"
 import ReactDOM from "react-dom/client"
 import { client } from "./client/client.gen"
 import { ThemeProvider } from "./components/theme-provider"
 import { Toaster } from "./components/ui/sonner"
 import {
-  isAuthenticationRejectionStatus,
-  SESSION_INVALID_RESPONSE_HEADER,
+  installAxiosAuthenticationRejectionInterceptor,
   setAuthenticationRejectionHandler,
 } from "./features/authenticatedFetch"
 import { terminateUnauthorizedSession } from "./hooks/useAuth"
@@ -25,33 +18,13 @@ client.setConfig({
   withCredentials: true,
 })
 
-const handleApiError = (error: Error) => {
-  if (!(error instanceof AxiosError)) return
-  const status = error.response?.status
-  const sessionInvalid =
-    error.response?.headers[SESSION_INVALID_RESPONSE_HEADER.toLowerCase()] ===
-    "1"
-  const authContextRejected =
-    status !== undefined &&
-    isAuthenticationRejectionStatus(status, sessionInvalid ? "1" : null)
-  if (authContextRejected) {
-    queryClient.clear()
-    void terminateUnauthorizedSession()
-  }
-}
-export const queryClient = new QueryClient({
-  queryCache: new QueryCache({
-    onError: handleApiError,
-  }),
-  mutationCache: new MutationCache({
-    onError: handleApiError,
-  }),
-})
+export const queryClient = new QueryClient()
 
 setAuthenticationRejectionHandler(() => {
   queryClient.clear()
   void terminateUnauthorizedSession()
 })
+installAxiosAuthenticationRejectionInterceptor(client.instance)
 
 const router = createRouter({ routeTree })
 declare module "@tanstack/react-router" {
