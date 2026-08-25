@@ -101,7 +101,7 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test("voice capture keeps encrypted chunks across offline reload", async ({
+test("[Scenario F] multi-step voice recovery reaches review and provenance", async ({
   page,
 }) => {
   await page.goto("/login")
@@ -135,6 +135,13 @@ test("voice capture keeps encrypted chunks across offline reload", async ({
   await page.getByRole("button", { name: "Resume upload" }).click()
   await expect(page).toHaveURL(/\/voice\/.+\/review/)
   await expect(page.getByTestId("voice-review-mode")).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Transcript, summary & evidence" }),
+  ).toBeVisible()
+  await expect(
+    page.getByText("Structured facts", { exact: true }),
+  ).toBeVisible()
+  await expect(page.getByLabel("Low confidence / overlap only")).toBeVisible()
 })
 
 test("local storage failure stops capture without poisoning recovery", async ({
