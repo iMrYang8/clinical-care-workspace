@@ -92,7 +92,7 @@ async def put_chunk(
     chunk_start_ms: int | None = Header(default=None, alias="X-Chunk-Start-Ms", ge=0),
     chunk_end_ms: int | None = Header(default=None, alias="X-Chunk-End-Ms", ge=0),
 ) -> AudioChunkAck:
-    voice_session = get_voice_session(session, context, session_id)
+    voice_session = get_voice_session(session, context, session_id, lock=True)
     payload = await request.body()
     result = upload_audio_chunk(
         session,

@@ -119,11 +119,32 @@ def _claim_is_current(
     return job, attempt
 
 
-def _set_state(db: Session, voice_session: VoiceSession, state: str) -> None:
-    voice_session.state = state
+def _transition_state(
+    db: Session,
+    context: RequestContext,
+    session_id: uuid.UUID,
+    *,
+    expected: set[str],
+    target: str,
+) -> VoiceSession:
+    voice_session = db.exec(
+        select(VoiceSession)
+        .where(
+            VoiceSession.clinic_id == context.clinic_id,
+            VoiceSession.id == session_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one()
+    if voice_session.state == target:
+        return voice_session
+    if voice_session.state not in expected:
+        raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
+    voice_session.state = target
     voice_session.updated_at = get_datetime_utc()
     db.add(voice_session)
     db.flush()
+    return voice_session
 
 
 def _device_audio(
@@ -485,6 +506,12 @@ def _complete_attempt(
     *,
     needs_review: bool,
 ) -> Job:
+    target_state = "needs_review" if needs_review else "ready"
+    if voice_session.state != target_state and voice_session.state not in {
+        "transcribing",
+        "extracting",
+    }:
+        raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
     attempt.status = "completed"
     attempt.completed_at = get_datetime_utc()
     job.state = "needs_review" if needs_review else "completed"
@@ -492,7 +519,7 @@ def _complete_attempt(
     job.locked_until = None
     job.error_code = None
     job.updated_at = get_datetime_utc()
-    voice_session.state = "needs_review" if needs_review else "ready"
+    voice_session.state = target_state
     if not needs_review:
         voice_session.error_code = None
     voice_session.updated_at = get_datetime_utc()
@@ -556,18 +583,36 @@ async def process_voice_job(
                     voice_session,
                     needs_review=existing_revision.needs_review,
                 )
-            _set_state(db, voice_session, "assembling")
+            voice_session = _transition_state(
+                db,
+                context,
+                voice_session.id,
+                expected={"finalizing"},
+                target="assembling",
+            )
             db.commit()
             job, attempt = _claim_is_current(db, context, job_id, token)
             voice_session = _session_from_payload(db, context, job, payload)
-            _set_state(db, voice_session, "preprocessing")
+            voice_session = _transition_state(
+                db,
+                context,
+                voice_session.id,
+                expected={"assembling"},
+                target="preprocessing",
+            )
             db.commit()
             if asset is None:
                 job, attempt = _claim_is_current(db, context, job_id, token)
                 voice_session = _session_from_payload(db, context, job, payload)
                 asset = _store_asset(db, context, voice_session)
                 db.commit()
-            _set_state(db, voice_session, "transcribing")
+            voice_session = _transition_state(
+                db,
+                context,
+                voice_session.id,
+                expected={"preprocessing"},
+                target="transcribing",
+            )
             db.commit()
             asset_payload = field_codec.decrypt(
                 asset.clinic_id,
@@ -579,7 +624,6 @@ async def process_voice_job(
             job, attempt = _claim_is_current(db, context, job_id, token)
             voice_session = _session_from_payload(db, context, job, payload)
             if result is None:
-                voice_session.state = "needs_review"
                 voice_session.error_code = (
                     unavailable_reason or "ASR_PROVIDER_UNAVAILABLE"
                 )
@@ -594,11 +638,23 @@ async def process_voice_job(
                     voice_session,
                     needs_review=True,
                 )
-            _set_state(db, voice_session, "redacting")
+            voice_session = _transition_state(
+                db,
+                context,
+                voice_session.id,
+                expected={"transcribing"},
+                target="redacting",
+            )
             db.commit()
             job, attempt = _claim_is_current(db, context, job_id, token)
             voice_session = _session_from_payload(db, context, job, payload)
-            _set_state(db, voice_session, "extracting")
+            voice_session = _transition_state(
+                db,
+                context,
+                voice_session.id,
+                expected={"redacting"},
+                target="extracting",
+            )
             revision = _create_revision(db, context, voice_session, asset, result)
         else:
             if voice_session.current_transcript_revision_id is None or asset is None:

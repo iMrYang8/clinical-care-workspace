@@ -378,6 +378,26 @@ def finalize_voice_session(
         raise HTTPException(status_code=409, detail={"code": "VOICE_NOT_FINALIZABLE"})
     if len({item.device_id for item in body.devices}) != len(body.devices):
         raise HTTPException(status_code=422, detail={"code": "DUPLICATE_DEVICE"})
+    declared_ids = {item.device_id for item in body.devices}
+    devices_with_audio = set(
+        db.exec(
+            select(AudioChunk.device_id)
+            .where(
+                AudioChunk.clinic_id == context.clinic_id,
+                AudioChunk.session_id == voice_session.id,
+            )
+            .distinct()
+        ).all()
+    )
+    undeclared = sorted(str(item) for item in devices_with_audio - declared_ids)
+    if undeclared:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "VOICE_DEVICE_DECLARATIONS_INCOMPLETE",
+                "missing_device_ids": undeclared,
+            },
+        )
     missing: dict[str, list[int]] = {}
     trusted_devices: list[dict[str, object]] = []
     for declaration in body.devices:
