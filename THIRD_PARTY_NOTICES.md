@@ -25,7 +25,8 @@ applicable license and model terms to the release notice.
 | --- | --- | --- | --- |
 | [Presidio Analyzer](https://github.com/data-privacy-stack/presidio) | `2.2.364` | Embedded PII/PHI analysis behind Nightingale's deterministic SG recognizers and fail-closed residual scan. | MIT. No standalone unauthenticated Presidio service is deployed. |
 | [Presidio Anonymizer](https://github.com/data-privacy-stack/presidio) | `2.2.362` | Locked anonymization dependency; Nightingale currently uses stable project-owned placeholders so immutable evidence mapping remains auditable. | MIT. |
-| [spaCy](https://github.com/explosion/spaCy) | `3.8.16` (transitive through Presidio) | NLP engine interface for configured Presidio language models. | MIT. `en_core_web_sm` or any other language model is **not** locked, bundled, downloaded by application code, or claimed as validated. Missing models produce `fallback/needs_review` and block remote egress. |
+| [spaCy](https://github.com/explosion/spaCy) | `3.8.16` (transitive through Presidio) | NLP engine interface for configured Presidio language models. | MIT. Missing or broken configured models fail closed before remote egress. |
+| [spaCy `en_core_web_sm`](https://github.com/explosion/spacy-models/releases/tag/en_core_web_sm-3.8.0) | `3.8.0` — locked optional `presidio-nlp` group, omitted from the default image. | Local English PERSON/PHONE/EMAIL/ID analysis for the Presidio remote-text boundary. | MIT model package. Application code never downloads it. CI installs the frozen lock and requires a load/remote-boundary smoke; release images include it only when built with `INSTALL_PRESIDIO_NLP=true`. This does not validate clinical recall or other language models. |
 | [python-zstandard](https://github.com/indygreg/python-zstandard) | `0.25.0` | Bounded zstd compression before AES-256-GCM cold archive encryption. | BSD 3-Clause; the installed wheel includes its license text. |
 
 ## Optional integrations

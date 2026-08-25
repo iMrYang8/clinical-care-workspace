@@ -20,12 +20,11 @@ The `--filter=":- .gitignore"` option tells `rsync` to use the same ignore rules
 
 ### Environment Variables
 
-Set the application domain, project name, and first superuser email:
+Set the application domain and project name:
 
 ```bash
 export DOMAIN=fastapi-project.example.com
 export PROJECT_NAME="Nightingale"
-export FIRST_SUPERUSER=admin@example.com
 ```
 
 You can also configure these environment variables as needed:
@@ -37,14 +36,38 @@ You can also configure these environment variables as needed:
 
 ### Secrets
 
-Generate and set secure values for the database password, token signing key, and first superuser password:
+Generate and set secure values for the database passwords, token signing key,
+and independent field-encryption key:
 
 ```bash
 export POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export POSTGRES_APP_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export FIRST_SUPERUSER_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export FIELD_ENCRYPTION_MASTER_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
 ```
+
+`FIELD_ENCRYPTION_MASTER_KEY` is an independent persisted 32-byte key. Back it
+up separately and do not rotate it as part of JWT `SECRET_KEY` rotation; losing
+it makes existing clinical ciphertext unreadable.
+
+The default image is model-free and uses the deterministic provider. To enable
+remote OpenAI text egress, build the locked local Presidio profile and configure
+all provider values explicitly:
+
+```bash
+export INSTALL_PRESIDIO_NLP=true
+export PRESIDIO_NLP_MODEL=en_core_web_sm
+export AI_PROVIDER=openai
+export REMOTE_TEXT_EGRESS_ENABLED=true
+export OPENAI_API_KEY="$(security find-generic-password -w -s NIGHTINGALE_OPENAI_KEY)"
+export OPENAI_EXTRACT_MODEL="YOUR_CONFIGURED_MODEL_ID"
+export OPENAI_REVIEW_MODEL="YOUR_CONFIGURED_REVIEW_MODEL_ID"
+```
+
+No model ID is hard-coded as an external API contract. A production API or
+worker configured for remote egress exits at startup if the Presidio model is
+not installed and loadable. Keep the provider deterministic if this profile is
+not built.
 
 To use an authenticated email provider, also set `SMTP_PASSWORD`.
 
@@ -61,6 +84,30 @@ The `compose.deploy.yml` file adds HTTPS and automatic certificate handling to t
 
 The backend Docker image builds the frontend, so the server does not need Bun or prebuilt frontend files.
 
+Production prestart runs migrations and role bootstrap but deliberately does
+not seed demo data. Provision the first clinic explicitly after prestart. The
+command is idempotent for identical inputs and prints the clinic ID required by
+clinic-scoped login requests:
+
+```bash
+export NIGHTINGALE_PROVISION_CLINIC_SLUG=YOUR_CLINIC_SLUG
+export NIGHTINGALE_PROVISION_CLINIC_NAME="YOUR_CLINIC_NAME"
+export NIGHTINGALE_PROVISION_ADMIN_EMAIL=ADMIN_EMAIL
+export NIGHTINGALE_PROVISION_ADMIN_PASSWORD="$(security find-generic-password -w -s NIGHTINGALE_ADMIN_PASSWORD)"
+export NIGHTINGALE_PROVISION_WORKER_EMAIL=WORKER_EMAIL
+docker compose -f compose.yml -f compose.deploy.yml run --rm \
+  -e NIGHTINGALE_PROVISION_CLINIC_SLUG \
+  -e NIGHTINGALE_PROVISION_CLINIC_NAME \
+  -e NIGHTINGALE_PROVISION_ADMIN_EMAIL \
+  -e NIGHTINGALE_PROVISION_ADMIN_PASSWORD \
+  -e NIGHTINGALE_PROVISION_WORKER_EMAIL \
+  prestart bash scripts/provision-clinic-admin.sh
+```
+
+The owner URL exists only in that one-shot container. The backend and
+`ai-worker` receive only the restricted `nightingale_app` URL and verify it is
+`NOBYPASSRLS`, non-owner, and non-superuser before serving work.
+
 ## Deploy with GitHub Actions
 
 The included `.github/workflows/deploy-docker-compose.yml` workflow runs the deployment commands on the server when manually triggered from GitHub Actions.
@@ -73,7 +120,6 @@ In the repository, go to **Settings** > **Secrets and variables** > **Actions** 
 
 * `DOMAIN`
 * `PROJECT_NAME`
-* `FIRST_SUPERUSER`
 
 To enable emails, add these optional repository variables:
 
@@ -83,12 +129,20 @@ To enable emails, add these optional repository variables:
 
 To enable Sentry, add the optional `SENTRY_DSN` repository variable.
 
+For remote text egress, add `INSTALL_PRESIDIO_NLP=true`,
+`PRESIDIO_NLP_MODEL=en_core_web_sm`, `AI_PROVIDER=openai`,
+`REMOTE_TEXT_EGRESS_ENABLED=true`, `OPENAI_EXTRACT_MODEL`, and
+`OPENAI_REVIEW_MODEL` as repository variables. Add `OPENAI_API_KEY` as a
+repository secret. The default/blank values keep the provider deterministic
+and omit the NLP model.
+
 Add these repository secrets:
 
 * `POSTGRES_PASSWORD`
 * `POSTGRES_APP_PASSWORD` (an independent runtime-role password)
 * `SECRET_KEY`
-* `FIRST_SUPERUSER_PASSWORD`
+* `FIELD_ENCRYPTION_MASTER_KEY` (an independent persisted 32-byte hex key)
+* `OPENAI_API_KEY` (only when remote text egress is enabled)
 
 To use an authenticated email provider, add the optional `SMTP_PASSWORD` repository secret.
 

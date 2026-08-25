@@ -90,7 +90,10 @@ performs NFC normalization, server-decrypted patient-name and Singapore
 identifier/contact redaction, embedded Presidio analysis, and a residual scan.
 Missing Presidio NLP models, analyzer errors, or residual findings block remote
 egress and produce explicit `fallback/needs_review` state. Application code
-never downloads a language model.
+never downloads a language model. The default image intentionally omits the
+model; a remote-egress Docker build must set `INSTALL_PRESIDIO_NLP=true` and
+leave `PRESIDIO_NLP_MODEL=en_core_web_sm`. Startup fails closed if the locked
+model cannot be loaded.
 
 Client-supplied name dictionaries and risk flags are not part of the ingest
 contract. Risk is derived from server conflict/highlight state, deterministic
@@ -105,8 +108,25 @@ The API database login is `nightingale_app`, a non-owner
 `NOSUPERUSER NOBYPASSRLS` role. The one-shot prestart/Alembic path alone receives
 the owner URL. Tenant RLS context is transaction-local and is restored from the
 already-verified server membership after a request-side commit.
+Long-running production API and worker processes verify the effective database
+role at startup and health/worker boundaries. They terminate rather than run as
+an owner, superuser, `BYPASSRLS` role, or owner of an RLS table.
 Production Compose does not include Adminer or expose a database UI. The
 optional local-only Adminer profile binds to `127.0.0.1` with Traefik disabled.
+
+Production does not seed a demo clinic or synthetic personas. After migrations,
+an operator explicitly provisions the first clinic, Admin membership, and
+server-owned Worker membership with the idempotent owner-only command documented
+in the deployment guides. The admin password is environment-only and is never
+accepted as a process argument. Development Compose remains one-command and
+seeds synthetic fixtures only because `compose.override.yml` explicitly sets
+`FASTAPI_ENV=development` and `ENABLE_DEMO_AUTH=true`.
+
+Encrypted clinical fields use a dedicated persisted
+`FIELD_ENCRYPTION_MASTER_KEY`, independent of the JWT `SECRET_KEY`. Production
+requires both. Back up the field key separately: changing or losing it makes
+existing ciphertext unreadable; JWT rotation alone does not affect encrypted
+fields.
 
 Importance features are bounded taxonomy keys rather than free text. Weights
 are clinic-scoped, use diminishing updates, and clamp to `[-0.20, 0.20]`.
@@ -120,9 +140,12 @@ Optional dependency groups are not installed by the default demo:
 ```bash
 uv sync --project backend --group local-asr
 uv sync --project backend --group diarization
+uv sync --project backend --group presidio-nlp
 ```
 
-Neither group downloads or validates model weights automatically.
+`local-asr` and `diarization` do not download or validate model weights
+automatically. `presidio-nlp` installs the locked `en_core_web_sm` package for
+the fail-closed remote-text boundary; it is omitted by the default demo.
 
 ## Backend Development
 
