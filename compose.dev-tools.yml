@@ -1,0 +1,34 @@
+services:
+  # Explicit opt-in only: add this file to a normal Compose command.
+  proxy:
+    ports:
+      - "127.0.0.1:8090:8080"
+    command:
+      - --providers.docker
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.http.address=:80
+      - --entrypoints.http.http.redirections.entrypoint.to=https
+      - --entrypoints.http.http.redirections.entrypoint.scheme=https
+      - --entrypoints.https.address=:443
+      - --entrypoints.traefik.address=:8080
+      - --api.insecure=true
+      - --accesslog
+      - --log
+      - --log.level=DEBUG
+
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  mailpit:
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
+
+  playwright:
+    ports:
+      - "127.0.0.1:9323:9323"

@@ -4,28 +4,7 @@ services:
     image: traefik:3.6
     ports:
       - "80:80"
-      - "8090:8080"
-    # Duplicate the command from compose.yml to add --api.insecure=true
-    command:
-      # Enable Docker in Traefik, so that it reads labels from Docker services
-      - --providers.docker
-      # Do not expose all Docker services, only the ones explicitly exposed
-      - --providers.docker.exposedbydefault=false
-      # Create an entrypoint "http" listening on port 80
-      - --entrypoints.http.address=:80
-      # Enable the access log, with HTTP requests
-      - --accesslog
-      # Enable the Traefik log, for configurations and errors
-      - --log
-      # Enable debug logging for local development
-      - --log.level=DEBUG
-      # Enable the Dashboard and API
-      - --api
-      # Enable the Dashboard and API in insecure mode for local development
-      - --api.insecure=true
-  db:
-    ports:
-      - "5432:5432"
+      - "443:443"
 
   adminer:
     profiles: ["dev-tools"]
@@ -45,8 +24,6 @@ services:
       ENABLE_DEMO_AUTH: "true"
 
   backend:
-    ports:
-      - "8000:8000"
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -80,6 +57,7 @@ services:
       # Synthetic persona auth is an explicit local-development boundary.
       # Production compose leaves ENABLE_DEMO_AUTH unset/false.
       ENABLE_DEMO_AUTH: "true"
+      FRONTEND_HOST: https://${DOMAIN:-localhost}
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
@@ -91,9 +69,6 @@ services:
 
   mailpit:
     image: axllent/mailpit
-    ports:
-      - "8025:8025"
-      - "1025:1025"
 
   playwright:
     build:
@@ -103,13 +78,14 @@ services:
         - NODE_ENV=production
     ipc: host
     depends_on:
+      - proxy
       - backend
       - mailpit
     environment:
       - FIRST_SUPERUSER=${FIRST_SUPERUSER:?Variable not set}
       - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD:?Variable not set}
-      - PLAYWRIGHT_BASE_URL=http://backend:8000
-      - VITE_API_URL=http://backend:8000
+      - PLAYWRIGHT_BASE_URL=https://proxy
+      - VITE_API_URL=
       - MAILPIT_HOST=http://mailpit:8025
       # For the reports when run locally
       - PLAYWRIGHT_HTML_HOST=0.0.0.0
@@ -117,5 +93,3 @@ services:
     volumes:
       - ./frontend/blob-report:/app/frontend/blob-report
       - ./frontend/test-results:/app/frontend/test-results
-    ports:
-      - 9323:9323

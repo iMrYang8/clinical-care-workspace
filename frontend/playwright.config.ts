@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test"
 import "dotenv/config"
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173"
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://localhost"
 
 export default defineConfig({
   testDir: "./tests",
@@ -12,6 +12,7 @@ export default defineConfig({
   reporter: process.env.CI ? "blob" : "list",
   use: {
     baseURL,
+    ignoreHTTPSErrors: true,
     trace: "on-first-retry",
   },
   projects: [

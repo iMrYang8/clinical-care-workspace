@@ -12,6 +12,10 @@ services:
       - --providers.docker.exposedbydefault=false
       # Create an entrypoint "http" listening on port 80
       - --entrypoints.http.address=:80
+      - --entrypoints.http.http.redirections.entrypoint.to=https
+      - --entrypoints.http.http.redirections.entrypoint.scheme=https
+      # With no resolver configured Traefik generates a local self-signed cert.
+      - --entrypoints.https.address=:443
       # Enable the access log, with HTTP requests
       - --accesslog
       # Enable the Traefik log, for configurations and errors
@@ -124,9 +128,10 @@ services:
       # Define the port inside of the Docker service to use
       - traefik.http.services.backend.loadbalancer.server.port=8000
 
-      # Route HTTP traffic for this domain
-      - traefik.http.routers.backend-http.rule=Host(`${DOMAIN:-localhost}`)
-      - traefik.http.routers.backend-http.entrypoints=http
+      # External localhost and the internal Playwright hostname are same-origin TLS.
+      - traefik.http.routers.backend-https.rule=Host(`${DOMAIN:-localhost}`) || Host(`proxy`)
+      - traefik.http.routers.backend-https.entrypoints=https
+      - traefik.http.routers.backend-https.tls=true
 
   ai-worker:
     image: backend:latest
