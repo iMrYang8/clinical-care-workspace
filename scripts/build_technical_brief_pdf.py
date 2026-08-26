@@ -656,7 +656,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
         truth_w,
         105,
         "CONTRACT-TESTED",
-        "OpenAI text, review, and audio adapters use mocked transport and explicit error states. This validates contracts, not model quality.",
+        "OpenAI text, review, final-audio, and provisional live-transcription adapters use mocked transport and explicit error states. This validates contracts, not model quality.",
         VIOLET,
         VIOLET_SOFT,
     )
@@ -687,7 +687,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
     c.drawString(MARGIN + 12, 129, "DELIVERY CONTENTS")
     draw_paragraph(
         c,
-        "Runnable source + synthetic seed + Scenario A-F runbook + editable architecture/schema diagrams + machine-readable evidence + full notices + this brief. Remote publication remains an operator action because no authenticated GitHub session was available.",
+        "Runnable source + synthetic seed + Scenario A-F runbook + 64-second silent demo recording + editable architecture/schema diagrams + machine-readable evidence + full notices + this brief. Remote publication remains an operator action because no authenticated GitHub session was available.",
         MARGIN + 12,
         120,
         PAGE_W - 2 * MARGIN - 24,
