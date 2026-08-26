@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -21,19 +22,25 @@ from reportlab.platypus import Paragraph, Table, TableStyle
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "output" / "pdf" / "Nightingale_Technical_Brief.pdf"
+OUTPUT = Path(
+    os.environ.get(
+        "NIGHTINGALE_PDF_OUTPUT",
+        ROOT / "output" / "pdf" / "Nightingale_Technical_Brief.pdf",
+    )
+)
 TMP = ROOT / "tmp" / "pdfs"
+EVIDENCE_ROOT = Path(
+    os.environ.get("NIGHTINGALE_EVIDENCE_DIR", ROOT / "docs" / "evidence")
+)
 
 
 def load_release_evidence() -> tuple[dict[str, str], dict[str, object]]:
     manifest: dict[str, str] = {}
-    for line in (ROOT / "docs" / "evidence" / "release-candidate.txt").read_text().splitlines():
+    for line in (EVIDENCE_ROOT / "release-candidate.txt").read_text().splitlines():
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             manifest[key] = value
-    benchmark = json.loads(
-        (ROOT / "docs" / "evidence" / "glance-benchmark.json").read_text()
-    )
+    benchmark = json.loads((EVIDENCE_ROOT / "glance-benchmark.json").read_text())
     return manifest, benchmark
 
 
@@ -208,7 +215,9 @@ def render_svg(svg: Path, png: Path) -> None:
         candidate = Path("/Users/shc/anaconda3/bin/rsvg-convert")
         converter = str(candidate) if candidate.exists() else None
     if not converter:
-        raise RuntimeError("rsvg-convert is required to rasterize the checked-in SVG diagrams")
+        raise RuntimeError(
+            "rsvg-convert is required to rasterize the checked-in SVG diagrams"
+        )
     png.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [converter, "-w", "2400", str(svg), "-o", str(png)],
@@ -283,7 +292,15 @@ def draw_page_one(c: canvas.Canvas, architecture_png: Path) -> None:
         card_w - 24,
         BODY_9,
     )
-    rounded_card(c, MARGIN + card_w + gap, 586, card_w, 102, VIOLET_SOFT, colors.HexColor("#D2C8F6"))
+    rounded_card(
+        c,
+        MARGIN + card_w + gap,
+        586,
+        card_w,
+        102,
+        VIOLET_SOFT,
+        colors.HexColor("#D2C8F6"),
+    )
     label(c, "THE RESPONSE", MARGIN + card_w + gap + 12, 659, VIOLET)
     draw_paragraph(
         c,
@@ -477,7 +494,9 @@ def draw_page_two(c: canvas.Canvas, schema_png: Path) -> None:
 def table_paragraph(text: str, bold: bool = False, white: bool = False) -> Paragraph:
     return Paragraph(
         text,
-        TABLE_HEAD if bold and white else style(7.1, 8.6, INK, "BodyBold" if bold else "Body"),
+        TABLE_HEAD
+        if bold and white
+        else style(7.1, 8.6, INK, "BodyBold" if bold else "Body"),
     )
 
 
@@ -550,7 +569,9 @@ def draw_page_three(c: canvas.Canvas) -> None:
     for row_index, row in enumerate(evidence_rows):
         table_data.append(
             [
-                table_paragraph(cell, bold=(row_index == 0 or col_index < 2), white=row_index == 0)
+                table_paragraph(
+                    cell, bold=(row_index == 0 or col_index < 2), white=row_index == 0
+                )
                 for col_index, cell in enumerate(row)
             ]
         )
@@ -588,7 +609,12 @@ def draw_page_three(c: canvas.Canvas) -> None:
         ("B", "Collaboration", "comment, mention, task, diff, revert, audit", BLUE),
         ("C", "Retention", "preview > archive > checksum-verified rehydrate", AMBER),
         ("D", "Concurrency", "deterministic 409 plus tenant-boundary checks", RED),
-        ("E", "Patient safety", "network payload excludes raw AI and internal data", VIOLET),
+        (
+            "E",
+            "Patient safety",
+            "network payload excludes raw AI and internal data",
+            VIOLET,
+        ),
         ("F", "Voice review", "encrypted recovery > fact > audio > publication", TEAL),
     ]
     scenario_gap_x = 8
@@ -646,7 +672,16 @@ def draw_page_three(c: canvas.Canvas) -> None:
         RED_SOFT,
     )
 
-    rounded_card(c, MARGIN, 78, PAGE_W - 2 * MARGIN, 69, AMBER_SOFT, colors.HexColor("#E4C78C"), 9)
+    rounded_card(
+        c,
+        MARGIN,
+        78,
+        PAGE_W - 2 * MARGIN,
+        69,
+        AMBER_SOFT,
+        colors.HexColor("#E4C78C"),
+        9,
+    )
     c.setFillColor(AMBER)
     c.setFont("BodyBold", 8.8)
     c.drawString(MARGIN + 12, 129, "DELIVERY CONTENTS")
@@ -682,8 +717,12 @@ def build() -> Path:
     pdf = canvas.Canvas(str(OUTPUT), pagesize=A4, pageCompression=1)
     pdf.setTitle("Nightingale Technical Brief")
     pdf.setAuthor("Nightingale contributors")
-    pdf.setSubject("Synthetic healthcare collaboration candidate architecture and evidence")
-    pdf.setKeywords("Nightingale, FastAPI, clinical collaboration, provenance, synthetic data")
+    pdf.setSubject(
+        "Synthetic healthcare collaboration candidate architecture and evidence"
+    )
+    pdf.setKeywords(
+        "Nightingale, FastAPI, clinical collaboration, provenance, synthetic data"
+    )
     draw_page_one(pdf, architecture_png)
     draw_page_two(pdf, schema_png)
     draw_page_three(pdf)
