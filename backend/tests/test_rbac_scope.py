@@ -214,6 +214,42 @@ def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
         ).status_code
         == 403
     )
+    clinician_headers = auth_headers("clinician")
+    created = client.post(
+        "/api/v1/entries",
+        headers=clinician_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Admin oversight fixture",
+            "content": "prefix IMPORTANT suffix",
+            "patient_facing": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    observed_entry = created.json()
+    highlight = client.post(
+        f"/api/v1/entries/{observed_entry['id']}/highlights",
+        headers=clinician_headers,
+        json={
+            "entry_version_id": observed_entry["version_id"],
+            "start_offset": 7,
+            "end_offset": 16,
+            "exact_quote": "IMPORTANT",
+            "prefix": "prefix ",
+            "suffix": " suffix",
+            "label": "Reviewed source",
+            "patient_facing": True,
+        },
+    )
+    assert highlight.status_code == 201, highlight.text
+    assert (
+        client.post(
+            f"/api/v1/highlights/{highlight.json()['id']}/accept",
+            headers=clinician_headers,
+        ).status_code
+        == 200
+    )
     admin_headers = auth_headers("admin")
     admin_patients = client.get("/api/v1/patients", headers=admin_headers)
     assert admin_patients.status_code == 200
@@ -222,7 +258,9 @@ def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
         f"/api/v1/patients/{patient_id}/timeline", headers=admin_headers
     )
     assert admin_timeline.status_code == 200
-    observed_entry = admin_timeline.json()["data"][0]
+    assert observed_entry["id"] in {
+        item["id"] for item in admin_timeline.json()["data"]
+    }
     entry_read = client.get(
         f"/api/v1/entries/{observed_entry['id']}", headers=admin_headers
     )
