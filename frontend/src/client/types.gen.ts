@@ -928,11 +928,23 @@ export type LiveTranscriptAvailability = {
     /**
      * Status
      */
-    status: 'available' | 'unavailable';
+    status: 'available' | 'unavailable' | 'needs_review' | 'replaced';
     /**
      * Reason Code
      */
     reason_code?: string | null;
+    /**
+     * Provider
+     */
+    provider?: string | null;
+    /**
+     * Model
+     */
+    model?: string | null;
+    /**
+     * Provisional
+     */
+    provisional?: true;
 };
 
 /**
@@ -1761,6 +1773,14 @@ export type VoiceSessionPublic = {
      * Error Code
      */
     error_code?: string | null;
+    /**
+     * Live Transcript Status
+     */
+    live_transcript_status?: 'not_started' | 'available' | 'unavailable' | 'needs_review' | 'replaced';
+    /**
+     * Live Transcript Reason Code
+     */
+    live_transcript_reason_code?: string | null;
     /**
      * Current Transcript Revision Id
      */

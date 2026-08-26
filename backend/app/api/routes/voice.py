@@ -8,7 +8,6 @@ from app.api.deps import CurrentContext, SessionDep
 from app.core.config import settings
 from app.models import (
     AudioChunkAck,
-    LiveTranscriptAvailability,
     TranscriptCorrection,
     TranscriptRevisionPublic,
     VoiceChunkStatus,
@@ -331,28 +330,4 @@ def audio(
         content=payload,
         media_type=media_type,
         headers={"Cache-Control": "private, no-store", "Accept-Ranges": "none"},
-    )
-
-
-@router.get("/sessions/{session_id}/live", response_model=LiveTranscriptAvailability)
-def live_status(
-    session_id: uuid.UUID, session: SessionDep, context: CurrentContext
-) -> LiveTranscriptAvailability:
-    get_voice_session(session, context, session_id)
-    if context.role not in {"patient", "staff", "clinician"}:
-        return LiveTranscriptAvailability(
-            available=False, status="unavailable", reason_code="ROLE_NOT_PERMITTED"
-        )
-    if not settings.LIVE_TRANSCRIPT_ENABLED:
-        return LiveTranscriptAvailability(
-            available=False,
-            status="unavailable",
-            reason_code="LIVE_TRANSCRIPT_NOT_CONFIGURED",
-        )
-    # No live provider/transport is shipped in this build.  The feature flag is
-    # a deployment gate, not evidence that provisional captions exist.
-    return LiveTranscriptAvailability(
-        available=False,
-        status="unavailable",
-        reason_code="LIVE_TRANSCRIPT_TRANSPORT_UNAVAILABLE",
     )

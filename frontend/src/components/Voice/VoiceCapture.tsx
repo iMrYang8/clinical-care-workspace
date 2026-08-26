@@ -18,6 +18,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
+  connectLiveTranscript,
+  type LiveCaptionStatus,
+  type LiveTranscriptControl,
+} from "@/features/voice/liveTranscript"
+import {
   createLocalCapture,
   enqueueEncryptedChunk,
   recoverableCaptures,
@@ -88,6 +93,10 @@ export function VoiceCapture({
     Array<{ id: string; empty: boolean }>
   >([])
   const [message, setMessage] = useState<string>()
+  const [liveStatus, setLiveStatus] = useState<LiveCaptionStatus>("not_started")
+  const [liveReasonCode, setLiveReasonCode] = useState<string>()
+  const [liveProvider, setLiveProvider] = useState<string>()
+  const [provisionalTranscript, setProvisionalTranscript] = useState("")
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -98,6 +107,7 @@ export function VoiceCapture({
   const uploadChainRef = useRef<Promise<void>>(Promise.resolve())
   const mountedRef = useRef(true)
   const startGenerationRef = useRef(0)
+  const liveTranscriptRef = useRef<LiveTranscriptControl | null>(null)
 
   const refreshRecovery = useCallback(
     async (excludeCaptureId?: string) => {
@@ -181,6 +191,12 @@ export function VoiceCapture({
     if (context) await context.close().catch(() => undefined)
   }, [])
 
+  const closeLiveTranscript = useCallback(async () => {
+    const live = liveTranscriptRef.current
+    liveTranscriptRef.current = null
+    await live?.close()
+  }, [])
+
   const failLocalWrite = useCallback(
     (error: unknown) => {
       if (writeErrorRef.current) return
@@ -197,6 +213,7 @@ export function VoiceCapture({
           // Hardware cleanup and the durable-error UI below remain authoritative.
         }
       }
+      void closeLiveTranscript()
       void releaseCaptureHardware()
       if (!mountedRef.current) return
       setState("queued")
@@ -205,7 +222,7 @@ export function VoiceCapture({
       )
       void refreshRecovery()
     },
-    [refreshRecovery, releaseCaptureHardware],
+    [closeLiveTranscript, refreshRecovery, releaseCaptureHardware],
   )
 
   useEffect(() => {
@@ -237,9 +254,10 @@ export function VoiceCapture({
           // The stream is still stopped synchronously below.
         }
       }
+      void closeLiveTranscript()
       void releaseCaptureHardware()
     }
-  }, [releaseCaptureHardware])
+  }, [closeLiveTranscript, releaseCaptureHardware])
 
   const startLevelMeter = (stream: MediaStream) => {
     const context = new AudioContext()
@@ -267,6 +285,10 @@ export function VoiceCapture({
       !mountedRef.current || startGenerationRef.current !== startGeneration
     setState("requesting")
     setMessage(undefined)
+    setLiveStatus("not_started")
+    setLiveReasonCode(undefined)
+    setLiveProvider(undefined)
+    setProvisionalTranscript("")
     let joinedSessionId: string | undefined
     let joinedDeviceId: string | undefined
     let localCapturePersisted = false
@@ -387,11 +409,38 @@ export function VoiceCapture({
       recorder.start(VOICE_CHUNK_INTERVAL_MS)
       startLevelMeter(stream)
       setState("recording")
+      void connectLiveTranscript({
+        sessionId: serverSessionId,
+        stream,
+        onStatus: (event) => {
+          if (isStale()) return
+          setLiveStatus(event.status)
+          setLiveReasonCode(event.reasonCode)
+          setLiveProvider(
+            event.provider && event.model
+              ? `${event.provider} · ${event.model}`
+              : event.provider,
+          )
+        },
+        onDelta: (text) => {
+          if (!isStale()) setProvisionalTranscript((current) => current + text)
+        },
+        onCompleted: (text) => {
+          if (!isStale()) setProvisionalTranscript(text)
+        },
+      }).then((control) => {
+        if (isStale()) {
+          void control?.close()
+          return
+        }
+        liveTranscriptRef.current = control ?? null
+      })
     } catch (error) {
       // Release the microphone synchronously before any compensating network
       // request. Cleanup may be slow or offline, but capture hardware must not
       // remain live while it is attempted.
       await releaseCaptureHardware()
+      await closeLiveTranscript()
       recorderRef.current = null
       // Joining creates a server-side track that participates in the
       // multi-device seal barrier. If recorder construction or the first
@@ -421,7 +470,16 @@ export function VoiceCapture({
   const stop = async () => {
     const recorder = recorderRef.current
     if (!recorder || !captureId) return
-    if (mountedRef.current) setState("finalizing")
+    startGenerationRef.current += 1
+    if (mountedRef.current) {
+      setState("finalizing")
+      // Provisional text is intentionally ephemeral. Stop displaying it as
+      // soon as the durable finalize path takes ownership of the recording.
+      setLiveStatus("not_started")
+      setLiveReasonCode(undefined)
+      setLiveProvider(undefined)
+      setProvisionalTranscript("")
+    }
     try {
       if (recorder.state === "recording") {
         await new Promise<void>((resolve) => {
@@ -429,6 +487,9 @@ export function VoiceCapture({
           recorder.stop()
         })
       }
+      const live = liveTranscriptRef.current
+      liveTranscriptRef.current = null
+      await live?.commit()
       await releaseCaptureHardware()
       await writeChainRef.current
       if (writeErrorRef.current) throw writeErrorRef.current
@@ -439,7 +500,7 @@ export function VoiceCapture({
         setCaptureId(undefined)
         setState("idle")
         setMessage(
-          `Recording accepted. Processing is ${result.state}; live captions are unavailable in this build.`,
+          `Recording accepted. Processing is ${result.state}; any live captions were provisional and the final transcript will replace them.`,
         )
       }
       await refreshRecovery()
@@ -458,6 +519,7 @@ export function VoiceCapture({
       }
       await refreshRecovery()
     } finally {
+      await closeLiveTranscript()
       await releaseCaptureHardware()
       recorderRef.current = null
     }
@@ -601,6 +663,21 @@ export function VoiceCapture({
                     <Radio className="mr-1 size-3 animate-pulse" /> Recording
                   </Badge>
                 )}
+                {liveStatus === "available" && (
+                  <Badge className="bg-sky-100 text-sky-900">
+                    Live captions · provisional
+                  </Badge>
+                )}
+                {liveStatus === "unavailable" && (
+                  <Badge className="bg-slate-200 text-slate-800">
+                    Live captions unavailable
+                  </Badge>
+                )}
+                {liveStatus === "needs_review" && (
+                  <Badge className="bg-amber-100 text-amber-900">
+                    Live captions interrupted · review
+                  </Badge>
+                )}
               </div>
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded bg-slate-200">
@@ -610,6 +687,41 @@ export function VoiceCapture({
               />
             </div>
           </div>
+
+          {liveStatus !== "not_started" && (
+            <div
+              className="rounded-lg border border-sky-100 bg-sky-50/60 p-4"
+              aria-live="polite"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-sky-950">
+                  Temporary live transcript
+                </p>
+                <span className="text-xs text-sky-800">
+                  Not the clinical record · finalization replaces this view
+                </span>
+              </div>
+              {provisionalTranscript ? (
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">
+                  {provisionalTranscript}
+                </p>
+              ) : (
+                <p className="mt-2 text-sm text-slate-600">
+                  {liveStatus === "connecting"
+                    ? "Connecting to the clinic-scoped caption channel…"
+                    : liveStatus === "available"
+                      ? "Listening for provisional speech text…"
+                      : "Recording continues securely without live text."}
+                </p>
+              )}
+              {(liveProvider || liveReasonCode) && (
+                <p className="mt-2 text-xs text-slate-500">
+                  {liveProvider ?? "live transport"}
+                  {liveReasonCode ? ` · ${liveReasonCode}` : ""}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             {state === "recording" ? (

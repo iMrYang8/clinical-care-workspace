@@ -126,6 +126,12 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
     )
 
 
+def resolve_request_context_token(session: Session, token: str) -> RequestContext:
+    """Resolve a signed credential for non-HTTP transports such as WebSocket."""
+
+    return _resolve_request_context(session, token)
+
+
 def _trusted_token(bearer: str | None, cookie: str | None) -> str:
     token = bearer or cookie
     if token is None:

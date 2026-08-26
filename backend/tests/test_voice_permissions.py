@@ -90,7 +90,7 @@ def test_cross_clinic_voice_session_is_hidden(client: TestClient, auth_headers) 
     assert hidden.status_code == 404
 
 
-def test_live_capability_never_claims_an_unimplemented_transport(
+def test_live_capability_is_explicitly_disabled_by_default(
     client: TestClient, auth_headers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clinician = auth_headers("clinician")
@@ -109,11 +109,17 @@ def test_live_capability_never_claims_an_unimplemented_transport(
         "available": False,
         "status": "unavailable",
         "reason_code": "LIVE_TRANSCRIPT_NOT_CONFIGURED",
+        "provider": None,
+        "model": None,
+        "provisional": True,
     }
     monkeypatch.setattr(settings, "LIVE_TRANSCRIPT_ENABLED", True)
     gated = client.get(f"/api/v1/voice/sessions/{session_id}/live", headers=clinician)
     assert gated.json() == {
         "available": False,
         "status": "unavailable",
-        "reason_code": "LIVE_TRANSCRIPT_TRANSPORT_UNAVAILABLE",
+        "reason_code": "LIVE_TRANSCRIPT_PROVIDER_DISABLED",
+        "provider": None,
+        "model": None,
+        "provisional": True,
     }

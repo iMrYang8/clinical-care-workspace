@@ -899,6 +899,11 @@ async def process_voice_job(
         voice_session.current_transcript_revision_id = revision.id
         voice_session.warning_codes_json = revision.warning_codes_json
         voice_session.error_code = None
+        # Provisional captions are never the clinical record. Once the
+        # immutable final revision exists, advertise that it has replaced the
+        # transient live view regardless of whether that view was available.
+        voice_session.live_transcript_status = "replaced"
+        voice_session.live_transcript_error_code = None
         db.add(voice_session)
         db.flush()
         return _complete_attempt(

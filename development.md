@@ -45,6 +45,20 @@ then run `backend/scripts/prestart.sh` and the FastAPI development server from
 the cookie/TLS release boundary; use the Compose application for authentication
 and browser acceptance tests.
 
+To exercise provisional captions without network or an ASR claim, opt into the
+fixed synthetic fixture for development only:
+
+```bash
+LIVE_TRANSCRIPT_ENABLED=true LIVE_TRANSCRIPT_PROVIDER=deterministic \
+  ./scripts/demo-up.sh
+```
+
+Create the voice session with the existing synthetic-fixture checkbox. Ordinary
+sessions remain unavailable. The provisional text is replaced by the finalize
+result. OpenAI live transcription is a separate explicit audio-egress profile;
+see [`docs/VOICE_PIPELINE.md`](./docs/VOICE_PIPELINE.md) and never use fixture or
+mock output as model-quality evidence.
+
 ## Optional development tools
 
 The following ports exist only when `compose.dev-tools.yml` is selected:

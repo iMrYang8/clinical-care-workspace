@@ -113,6 +113,12 @@ It performs all of the following against the running TLS application:
 5. The `/live` capability response is explicit:
    `LIVE_TRANSCRIPT_NOT_CONFIGURED`. No provisional caption is fabricated.
 
+The default Scenario E remains provider-off. An optional development-only
+synthetic live-caption run may set `LIVE_TRANSCRIPT_ENABLED=true` and
+`LIVE_TRANSCRIPT_PROVIDER=deterministic`, but only for a session explicitly
+created with the synthetic fixture. That run demonstrates the WebSocket/UI
+contract; it is not an OpenAI call or ASR-quality evidence.
+
 Remote text remains disabled in the default demo. Provider-contract and
 redaction tests cover fail-closed handling; the UI does not imply that a live
 model ran.

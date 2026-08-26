@@ -246,6 +246,8 @@ def test_synthetic_worker_persists_normalized_review_and_is_idempotent(
     status = client.get(f"/api/v1/voice/sessions/{session_id}", headers=headers)
     assert status.status_code == 200
     assert status.json()["state"] == "needs_review"
+    assert status.json()["live_transcript_status"] == "replaced"
+    assert status.json()["live_transcript_reason_code"] is None
     transcript = client.get(
         f"/api/v1/voice/sessions/{session_id}/transcript", headers=headers
     )

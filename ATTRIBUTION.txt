@@ -27,6 +27,10 @@ test-only fake-indexeddb 6.2.5 package is Apache-2.0. FFmpeg is installed as a
 separate executable in the backend container and records the exact distributed
 build configuration in /usr/share/doc/nightingale/ffmpeg-build.txt.
 
+The optional, explicitly gated OpenAI Realtime transcription transport directly
+uses websockets 16.0 under the BSD 3-Clause license. No OpenAI model weights or
+API responses are bundled with this repository.
+
 THIRD_PARTY_NOTICES.md records direct dependencies, planned integrations, and
 design references. Entries marked planned, optional, or design reference are
 not bundled dependencies, vendored source, or shipped assets in this baseline.

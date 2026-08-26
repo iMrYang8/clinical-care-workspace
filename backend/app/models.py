@@ -30,6 +30,9 @@ def get_datetime_utc() -> datetime:
 
 
 Role = Literal["patient", "staff", "clinician", "admin", "worker"]
+LiveTranscriptStatus = Literal[
+    "not_started", "available", "unavailable", "needs_review", "replaced"
+]
 # Clinic invitations provision care-team access only. Patient identities require
 # an explicit PatientUserLink onboarding flow so an admin cannot accidentally
 # create an unlinked patient account from the membership screen.
@@ -960,6 +963,11 @@ class VoiceSession(TenantRow, table=True):
             "'ready','needs_review','published')",
             name="ck_voice_session_state",
         ),
+        CheckConstraint(
+            "live_transcript_status IN "
+            "('not_started','available','unavailable','needs_review','replaced')",
+            name="ck_voice_session_live_transcript_status",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -1008,6 +1016,8 @@ class VoiceSession(TenantRow, table=True):
         default_factory=list, sa_column=Column(JSONB, nullable=False)
     )
     error_code: str | None = Field(default=None, max_length=80)
+    live_transcript_status: str = Field(default="not_started", max_length=30)
+    live_transcript_error_code: str | None = Field(default=None, max_length=80)
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -1704,6 +1714,8 @@ class VoiceSessionPublic(SQLModel):
     patient_summary: str | None = None
     warning_codes: list[str] = Field(default_factory=list)
     error_code: str | None = None
+    live_transcript_status: LiveTranscriptStatus = "not_started"
+    live_transcript_reason_code: str | None = None
     current_transcript_revision_id: uuid.UUID | None = None
     published_entry_id: uuid.UUID | None = None
     created_at: datetime
@@ -1856,5 +1868,8 @@ class VoicePublishPublic(SQLModel):
 
 class LiveTranscriptAvailability(SQLModel):
     available: bool
-    status: Literal["available", "unavailable"]
+    status: Literal["available", "unavailable", "needs_review", "replaced"]
     reason_code: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    provisional: Literal[True] = True
