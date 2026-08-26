@@ -619,7 +619,20 @@ test("[Scenario D] stale ETag conflicts while independent entries and tenant bou
   const adminContext = await browser.newContext({ ignoreHTTPSErrors: true })
   const admin = await adminContext.newPage()
   await login(admin, "Clinic admin")
-  expect((await api(admin, `/api/v1/entries/${original?.id}`)).status).toBe(403)
+  const adminRead = await api<TimelineEntry>(
+    admin,
+    `/api/v1/entries/${original?.id}`,
+  )
+  expect(adminRead.status).toBe(200)
+  expect(
+    (
+      await api(admin, `/api/v1/entries/${original?.id}`, {
+        body: { content: "Admin clinical mutation must be rejected." },
+        headers: { "If-Match": `"${adminRead.body.version_id}"` },
+        method: "PATCH",
+      })
+    ).status,
+  ).toBe(403)
 
   const otherContext = await browser.newContext({ ignoreHTTPSErrors: true })
   const other = await otherContext.newPage()
