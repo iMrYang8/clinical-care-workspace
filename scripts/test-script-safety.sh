@@ -19,4 +19,9 @@ if grep -R -n -E 'sudo[[:space:]]+find|rm[[:space:]]+-rf|docker(-compose| compos
 fi
 
 "$root/scripts/test-project-isolation.sh"
+grep -q 'git status --porcelain --untracked-files=all' \
+  "$root/scripts/verify-release.sh"
+grep -q 'release-verification-complete.txt' "$root/scripts/verify-release.sh"
+grep -q 'validate_release_evidence.py' "$root/scripts/package-release.sh"
+python3 "$root/scripts/test_release_evidence.py"
 echo "Test entrypoints use isolated release verification without host cleanup."

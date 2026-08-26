@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -20,6 +19,11 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph, Table, TableStyle
 
+from validate_release_evidence import (
+    validate_release_evidence,
+    write_pdf_binding,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = Path(
@@ -34,17 +38,9 @@ EVIDENCE_ROOT = Path(
 )
 
 
-def load_release_evidence() -> tuple[dict[str, str], dict[str, object]]:
-    manifest: dict[str, str] = {}
-    for line in (EVIDENCE_ROOT / "release-candidate.txt").read_text().splitlines():
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            manifest[key] = value
-    benchmark = json.loads((EVIDENCE_ROOT / "glance-benchmark.json").read_text())
-    return manifest, benchmark
-
-
-RELEASE, BENCHMARK = load_release_evidence()
+VALIDATED_EVIDENCE = validate_release_evidence(EVIDENCE_ROOT)
+RELEASE = VALIDATED_EVIDENCE["release"]
+BENCHMARK = VALIDATED_EVIDENCE["benchmark"]
 CANDIDATE_SHA = RELEASE["source_commit"]
 CANDIDATE_SHORT = CANDIDATE_SHA[:9]
 IMAGE_ID = RELEASE["verified_backend_image_id"]
@@ -210,14 +206,14 @@ def page_title(c: canvas.Canvas, eyebrow: str, title: str, subtitle: str) -> Non
 
 
 def render_svg(svg: Path, png: Path) -> None:
-    converter = shutil.which("rsvg-convert")
-    if not converter:
-        candidate = Path("/Users/shc/anaconda3/bin/rsvg-convert")
-        converter = str(candidate) if candidate.exists() else None
+    configured_converter = os.environ.get("RSVG_CONVERT_BIN")
+    converter = shutil.which(configured_converter or "rsvg-convert")
     if not converter:
         raise RuntimeError(
-            "rsvg-convert is required to rasterize the checked-in SVG diagrams"
+            "rsvg-convert is required; install librsvg or set RSVG_CONVERT_BIN"
         )
+    if not Path(converter).is_file() or not os.access(converter, os.X_OK):
+        raise RuntimeError(f"rsvg-convert is not executable: {converter}")
     png.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [converter, "-w", "2400", str(svg), "-o", str(png)],
@@ -727,6 +723,7 @@ def build() -> Path:
     draw_page_two(pdf, schema_png)
     draw_page_three(pdf)
     pdf.save()
+    write_pdf_binding(OUTPUT, EVIDENCE_ROOT, VALIDATED_EVIDENCE)
     return OUTPUT
 
 

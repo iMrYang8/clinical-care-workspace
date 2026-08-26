@@ -32,6 +32,13 @@ applicable license and model terms to the release notice.
 | [python-zstandard](https://github.com/indygreg/python-zstandard) | `0.25.0` | Bounded zstd compression before AES-256-GCM cold archive encryption. | BSD 3-Clause; the installed wheel includes its license text. |
 | [websockets](https://github.com/python-websockets/websockets) | `16.0` | Server-to-server transport for the explicitly gated OpenAI Realtime transcription adapter. Browser audio remains behind Nightingale authentication and tenant authorization. | BSD 3-Clause; the installed distribution includes its license text. |
 
+## Release-document build dependencies
+
+| Component | Version | Role | License / notice |
+| --- | --- | --- | --- |
+| [ReportLab](https://www.reportlab.com/opensource/) | `4.4.9` | Generates the evidence-bound three-page technical brief; not installed in the application image. | BSD. Full text retained at `THIRD_PARTY_LICENSES/ReportLab-BSD.txt`. |
+| [librsvg `rsvg-convert`](https://gitlab.gnome.org/GNOME/librsvg) | Operator-provided executable | Rasterizes the checked-in SVG architecture/schema diagrams during PDF generation; not bundled in the source or application image. | LGPL-2.1-or-later for current librsvg releases; the operator's installed build and notices govern the executable. |
+
 ## Optional integrations
 
 | Component | Status | Intended role | Licensing note |

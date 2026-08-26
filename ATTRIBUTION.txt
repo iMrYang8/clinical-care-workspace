@@ -31,6 +31,11 @@ The optional, explicitly gated OpenAI Realtime transcription transport directly
 uses websockets 16.0 under the BSD 3-Clause license. No OpenAI model weights or
 API responses are bundled with this repository.
 
+The release-document builder uses ReportLab 4.4.9 under the BSD license. Its
+license is retained in THIRD_PARTY_LICENSES/ReportLab-BSD.txt. The builder calls
+the operator-provided rsvg-convert executable from librsvg to rasterize the
+checked-in diagrams; librsvg is a build prerequisite and is not bundled here.
+
 THIRD_PARTY_NOTICES.md records direct dependencies, planned integrations, and
 design references. Entries marked planned, optional, or design reference are
 not bundled dependencies, vendored source, or shipped assets in this baseline.

@@ -5,6 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 evidence_dir="${NIGHTINGALE_RELEASE_EVIDENCE_DIR:-}"
 pdf="${NIGHTINGALE_PDF_OUTPUT:-$root/output/pdf/Nightingale_Technical_Brief.pdf}"
+pdf_binding="$pdf.binding.json"
 video="${NIGHTINGALE_DEMO_VIDEO:-$root/output/demo/Nightingale_Demo.mp4}"
 delivery_root="${NIGHTINGALE_DELIVERY_ROOT:-$(dirname "$root")/release}"
 
@@ -33,14 +34,22 @@ for required in \
   "$evidence_dir/glance-benchmark.json" \
   "$evidence_dir/ffmpeg-container-version.txt" \
   "$evidence_dir/verified-backend-image-id.txt" \
+  "$evidence_dir/release-verification-complete.txt" \
+  "$evidence_dir/verify-release.log" \
   "$evidence_dir/release-candidate.txt" \
   "$pdf" \
+  "$pdf_binding" \
   "$video"; do
   if [[ ! -s "$required" ]]; then
     echo "Required release artifact is missing or empty: $required" >&2
     exit 1
   fi
 done
+
+python3 scripts/validate_release_evidence.py \
+  --evidence-dir "$evidence_dir" \
+  --expected-commit "$commit" \
+  --pdf "$pdf"
 
 stage="$delivery_root/Nightingale-72h-$short"
 bundle="$delivery_root/Nightingale-72h-$short.zip"
@@ -54,6 +63,8 @@ git archive --format=zip --prefix=nightingale/ \
   --output="$stage/nightingale-source-$short.zip" HEAD
 cp "$evidence_dir"/* "$stage/release-evidence/"
 cp "$pdf" "$stage/artifacts/Nightingale_Technical_Brief.pdf"
+cp "$pdf_binding" \
+  "$stage/artifacts/Nightingale_Technical_Brief.pdf.binding.json"
 cp "$video" "$stage/artifacts/Nightingale_Demo.mp4"
 
 cat > "$stage/RELEASE_MANIFEST.txt" <<EOF
@@ -62,6 +73,7 @@ source_commit=$commit
 source_archive=nightingale-source-$short.zip
 release_evidence=release-evidence/
 technical_brief=artifacts/Nightingale_Technical_Brief.pdf
+technical_brief_evidence_binding=artifacts/Nightingale_Technical_Brief.pdf.binding.json
 demo_video=artifacts/Nightingale_Demo.mp4
 data_boundary=synthetic_only
 remote_publication=not_included
@@ -72,6 +84,7 @@ EOF
   shasum -a 256 \
     "nightingale-source-$short.zip" \
     artifacts/Nightingale_Technical_Brief.pdf \
+    artifacts/Nightingale_Technical_Brief.pdf.binding.json \
     artifacts/Nightingale_Demo.mp4 \
     release-evidence/* > SHA256SUMS.txt
 )

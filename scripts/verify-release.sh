@@ -87,11 +87,29 @@ export BUN_BIN="$bun_bin"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${TMPDIR:-/tmp}/nightingale-uv-cache}"
 
 cd "$root"
+if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+  echo "Release verification requires a clean Git worktree." >&2
+  git status --short >&2
+  exit 1
+fi
 export NIGHTINGALE_SOURCE_COMMIT="$(git rev-parse HEAD)"
 export NIGHTINGALE_CHECKOUT_FINGERPRINT="$(./scripts/demo-project-name.sh --fingerprint)"
 if [[ -n "$evidence_dir" ]]; then
+  if [[ -e "$evidence_dir" && ! -d "$evidence_dir" ]]; then
+    echo "NIGHTINGALE_RELEASE_EVIDENCE_DIR is not a directory: $evidence_dir" >&2
+    exit 2
+  fi
   mkdir -p "$evidence_dir"
   evidence_dir="$(cd "$evidence_dir" && pwd -P)"
+  if [[ "$evidence_dir" == "$root" || "$evidence_dir" == "$root/"* ]]; then
+    echo "Release evidence must be outside the Git worktree: $evidence_dir" >&2
+    exit 2
+  fi
+  if [[ -n "$(command ls -A "$evidence_dir")" ]]; then
+    echo "Release evidence directory must be empty: $evidence_dir" >&2
+    exit 2
+  fi
+  exec > >(tee "$evidence_dir/verify-release.log") 2>&1
   printf '%s\n' "$NIGHTINGALE_SOURCE_COMMIT" > "$evidence_dir/release-commit.txt"
 fi
 
@@ -508,4 +526,26 @@ if [[ "$run_e2e" == true || "$run_benchmark" == true || "$run_ffmpeg" == true ]]
   production_project=""
 fi
 
+if [[ "$(git rev-parse HEAD)" != "$NIGHTINGALE_SOURCE_COMMIT" \
+      || -n "$(git status --porcelain --untracked-files=all)" ]]; then
+  echo "Source commit or worktree changed during release verification." >&2
+  git status --short >&2
+  exit 1
+fi
+
 section "Release verification complete"
+if [[ -n "$evidence_dir" ]]; then
+  gates=()
+  [[ "$run_e2e" == true ]] && gates+=(e2e)
+  [[ "$run_benchmark" == true ]] && gates+=(benchmark)
+  [[ "$run_ffmpeg" == true ]] && gates+=(ffmpeg)
+  gates_csv="$(IFS=,; printf '%s' "${gates[*]}")"
+  completed_at_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  cat > "$evidence_dir/release-verification-complete.txt" <<EOF
+status=complete
+source_commit=$NIGHTINGALE_SOURCE_COMMIT
+verified_backend_image_id=$verified_backend_image_id
+gates=$gates_csv
+completed_at_utc=$completed_at_utc
+EOF
+fi

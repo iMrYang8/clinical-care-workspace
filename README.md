@@ -77,8 +77,9 @@ already-running synthetic state.
   clinician-only publication.
 - **Provisional live captions:** an authenticated, clinic-scoped WebSocket
   carries 100 ms application frames as bounded 24 kHz PCM16 to an explicitly
-  configured live provider. Per-connection byte/rate caps plus global,
-  clinic, user, and session leases bound concurrency. Captions are ephemeral
+  configured live provider. Per-connection byte/rate caps, a per-process
+  provider semaphore, and cross-worker clinic/user/session leases bound
+  concurrency. Captions are ephemeral
   and are replaced by the immutable finalize result; disconnects and provider
   errors remain visible as review states.
 - **Patient-safe view:** patient DTOs omit raw AI, internal comments, scoring
@@ -212,7 +213,8 @@ hardware target.
 To produce a commit-bound delivery after a successful full gate, keep the
 evidence outside the worktree, add a `release-candidate.txt` summary to that
 directory, generate the three-page brief from the same evidence, and package
-only while Git is clean:
+only while Git is clean. The PDF-only prerequisites are the pinned
+`docs/pdf-requirements.txt` plus the `rsvg-convert` executable from librsvg:
 
 ```bash
 release_evidence="$(mktemp -d /var/tmp/nightingale-release.XXXXXXXX)"
@@ -227,10 +229,15 @@ NIGHTINGALE_RELEASE_EVIDENCE_DIR="$release_evidence" \
   ./scripts/package-release.sh
 ```
 
-`package-release.sh` rejects a dirty worktree, mismatched evidence SHA, missing
-PDF/video/evidence, and an existing output path. It writes a source archive,
-evidence, technical brief, demo video, per-file SHA-256 manifest, final ZIP,
-and ZIP checksum outside the repository.
+`verify-release.sh` rejects a dirty source tree and a reused evidence
+directory, captures its own full log, and writes a completion marker only
+after every requested gate and cleanup succeeds. `package-release.sh`
+cross-checks the commit and image through the completion marker, benchmark,
+FFmpeg record, candidate summary, raw log, and PDF evidence binding. It also
+rejects a dirty worktree, missing PDF/video/evidence, and an existing output
+path. The result contains a source archive, evidence, technical brief, demo
+video, per-file SHA-256 manifest, final ZIP, and ZIP checksum outside the
+repository.
 
 ## Production boundary
 
