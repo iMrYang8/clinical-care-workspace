@@ -203,8 +203,11 @@ def validate_release_evidence(
         raise EvidenceError("frontend unit summary does not match candidate evidence")
     if not re.search(rf"\b{browser_passed}\s+passed\b", browser_log):
         raise EvidenceError("Playwright summary does not match candidate evidence")
-    if f"ffmpeg version {ffmpeg_version}" not in ffmpeg_log:
-        raise EvidenceError("FFmpeg log section does not match candidate evidence")
+    if "Captured container FFmpeg evidence:" not in ffmpeg_log:
+        raise EvidenceError("FFmpeg capture completion is missing from the release log")
+    ffmpeg_digest = _sha256(root / "ffmpeg-container-version.txt")
+    if f"SHA-256: {ffmpeg_digest}" not in ffmpeg_log:
+        raise EvidenceError("FFmpeg log digest does not match its evidence file")
 
     return {
         "root": root,

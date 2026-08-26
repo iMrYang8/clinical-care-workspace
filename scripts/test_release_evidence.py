@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import tempfile
 from pathlib import Path
@@ -60,6 +61,9 @@ def main() -> None:
             "gates=e2e,benchmark,ffmpeg\n"
             f"completed_at_utc={candidate['verification_date_utc']}T12:00:00Z\n"
         )
+        ffmpeg_digest = hashlib.sha256(
+            (evidence / "ffmpeg-container-version.txt").read_bytes()
+        ).hexdigest()
         (evidence / "verify-release.log").write_text(
             "==> Backend PostgreSQL contracts, coverage, and migration roundtrip\n"
             f"{backend[0]} passed, {backend[2]} skipped\n"
@@ -69,7 +73,8 @@ def main() -> None:
             "==> Playwright Scenario A-F\n"
             f"{browser} passed\n"
             "==> Container FFmpeg release evidence\n"
-            f"ffmpeg version {candidate['ffmpeg']} Copyright\n"
+            "Captured container FFmpeg evidence: fixture\n"
+            f"SHA-256: {ffmpeg_digest}\n"
             "==> Release verification complete\n"
         )
 
