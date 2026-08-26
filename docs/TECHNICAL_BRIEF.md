@@ -89,7 +89,7 @@ The complete gate is `./scripts/verify-release.sh --e2e --benchmark --ffmpeg`. I
 | Container media | **FFmpeg 7.1.5-0+deb13u1** | Exact Debian arm64 backend image; GPL-enabled build recorded |
 | Release artifact | Image `sha256:96252cf9d76d89c69884ce0a9c7849d5be28190dd4b82b2603f077b07fba8c6b` | Benchmark, API, worker, FFmpeg, and production-topology smoke use the same OCI image |
 
-Release-specific machine-readable evidence is retained in `/private/tmp/nightingale-release-2e59a9b/`; the tracked `docs/evidence/` files are historical repository records and must be regenerated for a new release SHA. The latency number measures the precomputed snapshot read path, not model inference. The release workflow must repeat these gates against the eventual published commit.
+Candidate machine-readable evidence is shipped with the repository: [`glance-benchmark.json`](./evidence/glance-benchmark.json) records the fixture, response hashes, latency distribution, Compose fingerprint, image digest, and image revision; [`ffmpeg-container-version.txt`](./evidence/ffmpeg-container-version.txt) records the exact container binary and build configuration; and [`release-candidate.txt`](./evidence/release-candidate.txt) is the concise gate summary. The raw console stream was ephemeral and is not represented as an archived artifact. The latency number measures the precomputed snapshot read path, not model inference. Regenerate all release evidence for a new implementation commit or hardware target.
 
 ## 5 · Demonstration path
 
