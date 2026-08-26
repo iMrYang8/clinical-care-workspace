@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +23,38 @@ from reportlab.platypus import Paragraph, Table, TableStyle
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "output" / "pdf" / "Nightingale_Technical_Brief.pdf"
 TMP = ROOT / "tmp" / "pdfs"
+
+
+def load_release_evidence() -> tuple[dict[str, str], dict[str, object]]:
+    manifest: dict[str, str] = {}
+    for line in (ROOT / "docs" / "evidence" / "release-candidate.txt").read_text().splitlines():
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            manifest[key] = value
+    benchmark = json.loads(
+        (ROOT / "docs" / "evidence" / "glance-benchmark.json").read_text()
+    )
+    return manifest, benchmark
+
+
+RELEASE, BENCHMARK = load_release_evidence()
+CANDIDATE_SHA = RELEASE["source_commit"]
+CANDIDATE_SHORT = CANDIDATE_SHA[:9]
+IMAGE_ID = RELEASE["verified_backend_image_id"]
+IMAGE_SHORT = IMAGE_ID.split(":", 1)[-1][:12]
+VERIFY_DATE = RELEASE["verification_date_utc"]
+BACKEND_MATCH = re.fullmatch(
+    r"(\d+)_passed_(\d+)_skipped_coverage_(\d+)_percent",
+    RELEASE["backend"],
+)
+if not BACKEND_MATCH:
+    raise ValueError("release-candidate backend result has an unexpected format")
+BACKEND_PASSED, BACKEND_SKIPPED, BACKEND_COVERAGE = BACKEND_MATCH.groups()
+FRONTEND_PASSED = RELEASE["frontend_unit"].split("_", 1)[0]
+BROWSER_PASSED = RELEASE["playwright_scenarios_a_to_f_repeat_3"].split("_", 1)[0]
+BROWSER_PER_RUN = int(BROWSER_PASSED) // 3
+GLANCE_LATENCY = BENCHMARK["latency_ms"]
+GLANCE_TARGET = BENCHMARK["target"]
 
 PAGE_W, PAGE_H = A4
 MARGIN = 34
@@ -150,7 +184,11 @@ def page_frame(c: canvas.Canvas, section: str, page_number: int) -> None:
     c.line(MARGIN, PAGE_H - 39, PAGE_W - MARGIN, PAGE_H - 39)
     c.setFont("Body", 7.0)
     c.setFillColor(MUTED)
-    c.drawString(MARGIN, 24, "Synthetic data only  |  Candidate snapshot: 2e59a9b  |  26 Aug 2026")
+    c.drawString(
+        MARGIN,
+        24,
+        f"Synthetic data only  |  Candidate snapshot: {CANDIDATE_SHORT}  |  {VERIFY_DATE}",
+    )
     c.drawRightString(PAGE_W - MARGIN, 24, f"{page_number} / 3")
 
 
@@ -259,9 +297,21 @@ def draw_page_one(c: canvas.Canvas, architecture_png: Path) -> None:
     draw_image_contain(c, architecture_png, MARGIN, 222, PAGE_W - 2 * MARGIN, 344, 4)
 
     values = [
-        ("180", "backend tests passed; 1 skipped, 91% coverage", TEAL),
-        ("66 / 66", "Scenario A-F browser checks across three runs", BLUE),
-        ("4.077 ms", "Glance p95; 4/4 expected cards", VIOLET),
+        (
+            BACKEND_PASSED,
+            f"backend tests passed; {BACKEND_SKIPPED} skipped, {BACKEND_COVERAGE}% coverage",
+            TEAL,
+        ),
+        (
+            f"{BROWSER_PASSED} / {BROWSER_PASSED}",
+            "Scenario A-F browser checks across three runs",
+            BLUE,
+        ),
+        (
+            f"{GLANCE_LATENCY['p95']:.3f} ms",
+            f"Glance p95; {GLANCE_TARGET['card_count']}/{GLANCE_TARGET['expected_card_count']} expected cards",
+            VIOLET,
+        ),
         ("1 image", "same OCI artifact through production smoke", AMBER),
     ]
     metric_gap = 8
@@ -465,12 +515,36 @@ def draw_page_three(c: canvas.Canvas) -> None:
 
     evidence_rows = [
         ["Gate", "Result", "What it establishes"],
-        ["Backend", "180 pass / 1 skip", "Ruff, format, mypy, ty, pytest, 91% coverage, Alembic roundtrip"],
-        ["Frontend", "26 / 26", "Typecheck, Biome, Vitest, production build, tracked OpenAPI sync"],
-        ["Browser", "66 / 66", "22 Chromium tests x 3 over HTTPS, including Scenarios A-F"],
-        ["Glance", "p95 4.077 ms", "Alex Synthetic, 4/4 cards, 20 warmups + 100 measured reads"],
-        ["Container", "FFmpeg 7.1.5", "Exact Debian arm64 build/config retained; GPL-enabled build recorded"],
-        ["Artifact", "sha256:96252c...", "The verified image is promoted into a separate production topology"],
+        [
+            "Backend",
+            f"{BACKEND_PASSED} pass / {BACKEND_SKIPPED} skip",
+            f"Ruff, format, mypy, ty, pytest, {BACKEND_COVERAGE}% coverage, Alembic roundtrip",
+        ],
+        [
+            "Frontend",
+            f"{FRONTEND_PASSED} / {FRONTEND_PASSED}",
+            "Typecheck, Biome, Vitest, production build, tracked OpenAPI sync",
+        ],
+        [
+            "Browser",
+            f"{BROWSER_PASSED} / {BROWSER_PASSED}",
+            f"{BROWSER_PER_RUN} Chromium tests x 3 over HTTPS, including Scenarios A-F",
+        ],
+        [
+            "Glance",
+            f"p95 {GLANCE_LATENCY['p95']:.3f} ms",
+            f"Alex Synthetic, {GLANCE_TARGET['card_count']}/{GLANCE_TARGET['expected_card_count']} cards, 20 warmups + 100 measured reads",
+        ],
+        [
+            "Container",
+            f"FFmpeg {RELEASE['ffmpeg'].split('-')[0]}",
+            "Exact Debian arm64 build/config retained; GPL-enabled build recorded",
+        ],
+        [
+            "Artifact",
+            f"sha256:{IMAGE_SHORT}...",
+            "The verified image is promoted into a separate production topology",
+        ],
     ]
     table_data: list[list[Paragraph]] = []
     for row_index, row in enumerate(evidence_rows):
