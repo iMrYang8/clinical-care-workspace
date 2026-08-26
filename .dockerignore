@@ -1,4 +1,7 @@
 .git
+.worktrees
+output
+tmp
 **/__pycache__
 **/.venv
 backend/htmlcov
