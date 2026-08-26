@@ -87,6 +87,7 @@ COPY ./backend/scripts /app/backend/scripts
 COPY ./backend/alembic.ini /app/backend/
 
 COPY ./backend/app /app/backend/app
+COPY ./datasets/manifests /app/datasets/manifests
 
 # The host path is an ignored local build artifact. It must never merge into
 # the image under the commit label; only the current frontend-build stage may

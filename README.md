@@ -39,6 +39,34 @@ RESET_NIGHTINGALE_LOCAL_DEMO="$(./scripts/demo-project-name.sh --fingerprint)" \
 See [`docs/DEMO_RUNBOOK.md`](./docs/DEMO_RUNBOOK.md) for the Scenario A-F
 walkthrough, deterministic reset order, and the exact automated checks.
 
+### Import the optional synthetic evaluation pack
+
+The default two-patient fixture remains the stable Scenario A-F demo. For a
+larger local evaluation set, the pinned importer can add up to 20 Synthea
+patients, 10 ACI-Bench dialogue/note pairs, and 5 PriMock57 mock consultations:
+
+```bash
+./scripts/import-test-datasets.sh
+```
+
+The command verifies every download by SHA-256, keeps raw payloads in the
+Git-ignored `datasets/raw/` directory, imports stable UUIDv5 records
+idempotently, encrypts clinical payloads, records source/version/checksum
+metadata, and restarts the backend and worker. It does not require an API key.
+Only synthetic or mock data is used; benchmark reference notes are explicitly
+labelled as imported references rather than model output. See
+[`datasets/README.md`](./datasets/README.md) for sources, pinned revisions,
+licenses, limits, and caveats.
+
+An OpenAI key is needed only for a separate, explicitly enabled live-model
+quality evaluation. Supply it through the local shell environment, never Git:
+
+```bash
+read -s OPENAI_API_KEY && export OPENAI_API_KEY
+export AI_PROVIDER=openai REMOTE_TEXT_EGRESS_ENABLED=true
+# also set explicit model IDs and a working required Presidio model before use
+```
+
 To regenerate the checked-in, **silent synthetic** UI walkthrough (Scenario A
 Glance/provenance, Scenario E patient-safe My Care, and Scenario F voice Review
 Mode), run:

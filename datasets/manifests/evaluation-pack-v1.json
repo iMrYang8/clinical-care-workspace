@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "pack_id": "nightingale-evaluation-pack-v1",
+  "datasets": [
+    {
+      "name": "synthea",
+      "version": "sample-data@9959d9178ea28f4ec10f17ee238b6fabe6eb0de5",
+      "license": "Synthetic data without patient privacy restrictions; Synthea generator Apache-2.0",
+      "source_url": "https://github.com/synthetichealth/synthea-sample-data",
+      "citation_url": "https://synthea.mitre.org/",
+      "archive": {
+        "filename": "synthea_sample_data_csv_latest.zip",
+        "url": "https://raw.githubusercontent.com/synthetichealth/synthea-sample-data/9959d9178ea28f4ec10f17ee238b6fabe6eb0de5/downloads/latest/synthea_sample_data_csv_latest.zip",
+        "sha256": "d61417b551e5b0997c33851b339c157421751f0ea68c18ea686ceb1850907c35",
+        "format": "zip"
+      }
+    },
+    {
+      "name": "aci_bench",
+      "version": "figshare-file-41498793",
+      "license": "CC-BY-4.0",
+      "source_url": "https://doi.org/10.6084/m9.figshare.22494601",
+      "citation_url": "https://doi.org/10.1038/s41597-023-02487-3",
+      "archive": {
+        "filename": "aci-bench-2023.zip",
+        "url": "https://ndownloader.figshare.com/files/41498793",
+        "sha256": "ed5f7cf5542fe5bfe1e6021613d40bcd7450ffbff561b5afa9c2289049881612",
+        "format": "zip"
+      }
+    },
+    {
+      "name": "primock57",
+      "version": "git@cd2ac707ad03cb4d2531f4ec6b90c659bf4357c5",
+      "license": "CC-BY-4.0",
+      "source_url": "https://github.com/babylonhealth/primock57",
+      "citation_url": "https://doi.org/10.48550/arXiv.2204.00333",
+      "archive": {
+        "filename": "primock57-cd2ac707ad03cb4d2531f4ec6b90c659bf4357c5.tar.gz",
+        "url": "https://github.com/babylonhealth/primock57/archive/cd2ac707ad03cb4d2531f4ec6b90c659bf4357c5.tar.gz",
+        "sha256": "8763902f23c3bbcc59a1a1c0c16d723b92368577cb77b0ed3460aa43a73b6aaa",
+        "format": "tar.gz"
+      },
+      "files": [
+        {
+          "filename": "audio/day1_consultation01_doctor.wav",
+          "url": "https://media.githubusercontent.com/media/babylonhealth/primock57/cd2ac707ad03cb4d2531f4ec6b90c659bf4357c5/audio/day1_consultation01_doctor.wav",
+          "sha256": "a93ca69f49da821b2d10b03f3189fd0d82200a697805c18f316719ba328ff96b"
+        },
+        {
+          "filename": "audio/day1_consultation01_patient.wav",
+          "url": "https://media.githubusercontent.com/media/babylonhealth/primock57/cd2ac707ad03cb4d2531f4ec6b90c659bf4357c5/audio/day1_consultation01_patient.wav",
+          "sha256": "12b0c5c12018cff8399cf95b713eba4b7d2bb9d6581281844057ecab2ea3a414"
+        }
+      ]
+    }
+  ]
+}

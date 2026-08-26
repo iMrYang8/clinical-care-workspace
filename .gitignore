@@ -11,6 +11,7 @@ backend/app/frontend/
 /tmp/
 /output/pdf/
 /output/demo/raw/
+/datasets/raw/
 
 # Local isolated worktrees
 .worktrees/

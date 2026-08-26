@@ -31,6 +31,26 @@ The optional, explicitly gated OpenAI Realtime transcription transport directly
 uses websockets 16.0 under the BSD 3-Clause license. No OpenAI model weights or
 API responses are bundled with this repository.
 
+The optional local evaluation importer downloads but does not commit three
+pinned synthetic/mock datasets:
+
+* MITRE Synthea sample data, sample repository commit
+  9959d9178ea28f4ec10f17ee238b6fabe6eb0de5. The Synthea generator is
+  Apache-2.0 and its generated records are described as free of patient privacy
+  restrictions: https://github.com/synthetichealth/synthea-sample-data
+* ACI-Bench, Figshare file 41498793, CC BY 4.0. Cite Yim et al., "Aci-bench:
+  a novel ambient clinical intelligence dataset for benchmarking automatic
+  visit note generation", Scientific Data (2023):
+  https://doi.org/10.1038/s41597-023-02487-3
+* PriMock57, repository commit
+  cd2ac707ad03cb4d2531f4ec6b90c659bf4357c5, CC BY 4.0. Cite Papadopoulos
+  Korfiatis et al., "PriMock57: A Dataset Of Primary Care Mock
+  Consultations", ACL 2022: https://doi.org/10.48550/arXiv.2204.00333
+
+The raw archives and audio remain Git-ignored. Imported rows are transformed,
+encrypted, source-labelled evaluation fixtures. The applicable CC BY 4.0 and
+Synthea Apache-2.0 texts are retained under THIRD_PARTY_LICENSES/.
+
 The release-document builder uses ReportLab 4.4.9 under the BSD license. Its
 license is retained in THIRD_PARTY_LICENSES/ReportLab-BSD.txt. The builder calls
 the operator-provided rsvg-convert executable from librsvg to rasterize the

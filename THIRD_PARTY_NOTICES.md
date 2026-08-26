@@ -39,6 +39,20 @@ applicable license and model terms to the release notice.
 | [ReportLab](https://www.reportlab.com/opensource/) | `4.4.9` | Generates the evidence-bound three-page technical brief; not installed in the application image. | BSD. Full text retained at `THIRD_PARTY_LICENSES/ReportLab-BSD.txt`. |
 | [librsvg `rsvg-convert`](https://gitlab.gnome.org/GNOME/librsvg) | Operator-provided executable | Rasterizes the checked-in SVG architecture/schema diagrams during PDF generation; not bundled in the source or application image. | LGPL-2.1-or-later for current librsvg releases; the operator's installed build and notices govern the executable. |
 
+## Optional evaluation datasets
+
+These payloads are downloaded only when the operator runs
+`scripts/import-test-datasets.sh`; archives and audio are excluded from Git and
+the Docker build context. The tracked manifest pins source URLs, versions, and
+SHA-256 digests. Imported rows remain synthetic/mock evaluation fixtures, not
+clinical validation or model output.
+
+| Dataset | Pinned source | Imported role | License / notice |
+| --- | --- | --- | --- |
+| [Synthea sample data](https://github.com/synthetichealth/synthea-sample-data) | Commit `9959d9178ea28f4ec10f17ee238b6fabe6eb0de5`; CSV archive SHA-256 in `datasets/manifests/evaluation-pack-v1.json`. | Up to 20 synthetic patients with recent encounters and structured facts. | Synthea describes generated records as free of patient privacy restrictions; the generator is Apache-2.0. Generator license retained at `THIRD_PARTY_LICENSES/Synthea-Apache-2.0.txt`. |
+| [ACI-Bench](https://doi.org/10.6084/m9.figshare.22494601) | Figshare file `41498793`. | Up to 10 synthetic dialogue/reference-note pairs. | CC BY 4.0; license retained at `THIRD_PARTY_LICENSES/CC-BY-4.0.txt`. Cite the linked [Scientific Data paper](https://doi.org/10.1038/s41597-023-02487-3). |
+| [PriMock57](https://github.com/babylonhealth/primock57) | Commit `cd2ac707ad03cb4d2531f4ec6b90c659bf4357c5`; first consultation audio pinned separately. | Up to 5 mock consultation transcripts/reference notes; one two-track audio fixture. | CC BY 4.0; license retained at `THIRD_PARTY_LICENSES/CC-BY-4.0.txt`. Cite the linked [ACL 2022 dataset paper](https://doi.org/10.48550/arXiv.2204.00333). |
+
 ## Optional integrations
 
 | Component | Status | Intended role | Licensing note |
