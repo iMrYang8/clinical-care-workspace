@@ -19,7 +19,7 @@ docker compose --project-name "$project" \
   -f "$root/compose.yml" -f "$root/compose.override.yml" \
   run --rm --no-deps --build \
   -v "$root/datasets/raw:/app/datasets/raw:ro" \
-  backend python -m app.import_evaluation_data "$@"
+  prestart python -m app.import_evaluation_data "$@"
 
 docker compose --project-name "$project" \
   -f "$root/compose.yml" -f "$root/compose.override.yml" \
