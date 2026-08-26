@@ -177,7 +177,12 @@ def test_live_sse_generator_polls_and_emits_heartbeats(monkeypatch) -> None:
 
     async def exercise() -> None:
         frames = events_route._frames(
-            user_id, membership_id, clinic_id, 0, snapshot=False
+            user_id,
+            membership_id,
+            clinic_id,
+            0,
+            expires_at_epoch=float("inf"),
+            snapshot=False,
         )
         assert (await anext(frames)).startswith("id: 42\nevent: entry.updated")
         assert sleeps == [events_route.POLL_INTERVAL_SECONDS]
@@ -191,7 +196,12 @@ def test_live_sse_generator_polls_and_emits_heartbeats(monkeypatch) -> None:
         )
         monkeypatch.setattr(events_route, "monotonic", lambda: next(ticks))
         heartbeats = events_route._frames(
-            user_id, membership_id, clinic_id, 42, snapshot=False
+            user_id,
+            membership_id,
+            clinic_id,
+            42,
+            expires_at_epoch=float("inf"),
+            snapshot=False,
         )
         assert await anext(heartbeats) == ": heartbeat\n\n"
         await heartbeats.aclose()
@@ -206,6 +216,7 @@ def test_sse_auth_and_concurrent_snapshots_release_pool_connections(client) -> N
     baseline = checked_out()
     context = get_detached_request_context(token, None)
     assert context.role == "staff"
+    assert context.token_expires_at_epoch is not None
     assert checked_out() == baseline
 
     async def drain_snapshots() -> None:
@@ -217,6 +228,7 @@ def test_sse_auth_and_concurrent_snapshots_release_pool_connections(client) -> N
                     context.membership.id,
                     context.clinic_id,
                     0,
+                    expires_at_epoch=context.token_expires_at_epoch,
                     snapshot=True,
                 )
             ]
@@ -260,6 +272,7 @@ def test_sse_rechecks_membership_and_ends_before_post_revocation_events(
             context.membership.id,
             context.clinic_id,
             before_revocation.sequence_no - 1,
+            expires_at_epoch=context.token_expires_at_epoch,
             snapshot=False,
         )
         first = await anext(frames)
@@ -292,6 +305,74 @@ def test_sse_rechecks_membership_and_ends_before_post_revocation_events(
     rejected = client.get("/api/v1/auth/me", headers=headers)
     assert rejected.status_code == 403
     assert rejected.headers["X-Nightingale-Session-Invalid"] == "1"
+
+
+@pytest.mark.unit
+def test_sse_ends_at_original_token_expiry_before_loading_later_events(
+    monkeypatch,
+) -> None:
+    user_id = uuid.uuid4()
+    membership_id = uuid.uuid4()
+    clinic_id = uuid.uuid4()
+    before_expiry = DomainEvent(
+        sequence_no=41,
+        clinic_id=clinic_id,
+        event_type="entry.updated",
+        aggregate_type="entry",
+        aggregate_id=uuid.uuid4(),
+        actor_id=user_id,
+        payload_json={"before_expiry": True},
+    )
+    must_not_leak = DomainEvent(
+        sequence_no=42,
+        clinic_id=clinic_id,
+        event_type="entry.updated",
+        aggregate_type="entry",
+        aggregate_id=uuid.uuid4(),
+        actor_id=user_id,
+        payload_json={"must_not_leak_after_expiry": True},
+    )
+    now = [1_000.0]
+    loads: list[int] = []
+
+    def load_page(
+        _user_id: uuid.UUID,
+        _membership_id: uuid.UUID,
+        _clinic_id: uuid.UUID,
+        after: int,
+    ) -> list[DomainEvent]:
+        loads.append(after)
+        return [before_expiry] if after == 0 else [must_not_leak]
+
+    async def cross_expiry(_delay: float) -> None:
+        now[0] = 1_001.0
+
+    monkeypatch.setattr(events_route, "_load_events", load_page)
+    monkeypatch.setattr(events_route, "wall_time", lambda: now[0])
+    monkeypatch.setattr(events_route, "sleep", cross_expiry)
+
+    async def exercise() -> None:
+        frames = events_route._frames(
+            user_id,
+            membership_id,
+            clinic_id,
+            0,
+            expires_at_epoch=1_001.0,
+            snapshot=False,
+        )
+        first = await anext(frames)
+        assert "before_expiry" in first
+
+        terminal = await anext(frames)
+        assert terminal == "event: session.revoked\ndata: {}\n\n"
+        assert "must_not_leak_after_expiry" not in terminal
+        with pytest.raises(StopAsyncIteration):
+            await anext(frames)
+
+    asyncio.run(exercise())
+    # Expiry is checked before the next tenant read, so the post-expiry page is
+    # neither queried nor serialized onto the established connection.
+    assert loads == [0]
 
 
 def test_browser_cookie_flags_cookie_auth_logout_and_csrf() -> None:

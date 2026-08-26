@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
+from math import isfinite
 from typing import Annotated, cast
 
 import jwt
@@ -40,6 +41,10 @@ class RequestContext:
     user: User
     membership: ClinicMembership
     job_id: uuid.UUID | None = None
+    # Retain the original signed credential boundary for long-lived responses.
+    # Ordinary request dependencies finish before this matters, while SSE must
+    # stop authorizing reads when the token that opened the stream expires.
+    token_expires_at_epoch: float | None = None
 
     @property
     def user_id(self) -> uuid.UUID:
@@ -57,8 +62,17 @@ class RequestContext:
 def _resolve_request_context(session: Session, token: str) -> RequestContext:
     try:
         payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[security.ALGORITHM]
+            token,
+            settings.SECRET_KEY,
+            algorithms=[security.ALGORITHM],
+            options={"require": ["exp"]},
         )
+        raw_expiry = payload["exp"]
+        if isinstance(raw_expiry, bool) or not isinstance(raw_expiry, (int, float)):
+            raise InvalidTokenError("exp must be a numeric date")
+        token_expires_at_epoch = float(raw_expiry)
+        if not isfinite(token_expires_at_epoch):
+            raise InvalidTokenError("exp must be finite")
         token_data = TokenPayload(**payload)
         user_id = uuid.UUID(token_data.sub or "")
         membership_id = uuid.UUID(token_data.membership_id or "")
@@ -104,7 +118,12 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
             headers=SESSION_INVALID_HEADERS,
         )
 
-    return RequestContext(user=user, membership=membership, job_id=job_id)
+    return RequestContext(
+        user=user,
+        membership=membership,
+        job_id=job_id,
+        token_expires_at_epoch=token_expires_at_epoch,
+    )
 
 
 def _trusted_token(bearer: str | None, cookie: str | None) -> str:

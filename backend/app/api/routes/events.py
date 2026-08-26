@@ -3,6 +3,7 @@ import uuid
 from asyncio import sleep
 from collections.abc import AsyncIterator
 from time import monotonic
+from time import time as wall_time
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -17,6 +18,7 @@ router = APIRouter(prefix="/events", tags=["events"])
 
 POLL_INTERVAL_SECONDS = 1.0
 HEARTBEAT_INTERVAL_SECONDS = 15.0
+SESSION_REVOKED_FRAME = "event: session.revoked\ndata: {}\n\n"
 
 
 def _load_events(
@@ -87,30 +89,45 @@ async def _frames(
     clinic_id: uuid.UUID,
     after: int,
     *,
+    expires_at_epoch: float,
     snapshot: bool,
 ) -> AsyncIterator[str]:
     cursor = after
     last_heartbeat = monotonic()
     while True:
+        if wall_time() >= expires_at_epoch:
+            yield SESSION_REVOKED_FRAME
+            return
         events = await run_in_threadpool(
             _load_events, user_id, membership_id, clinic_id, cursor
         )
-        if events is None:
+        if events is None or wall_time() >= expires_at_epoch:
             # Do not disclose why the context ended or include resource data.
             # The browser uses this terminal frame to start its cross-tab
             # session cleanup without waiting for a reconnect rejection.
-            yield "event: session.revoked\ndata: {}\n\n"
+            yield SESSION_REVOKED_FRAME
             return
         for event in events:
+            # A page can contain many events, so retain the credential boundary
+            # across serialization rather than only between database polls.
+            if wall_time() >= expires_at_epoch:
+                yield SESSION_REVOKED_FRAME
+                return
             if event.sequence_no is None:
                 continue
             cursor = event.sequence_no
             yield _event_frame(event)
         if snapshot:
+            if wall_time() >= expires_at_epoch:
+                yield SESSION_REVOKED_FRAME
+                return
             yield "event: caught-up\ndata: {}\n\n"
             return
         now = monotonic()
         if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+            if wall_time() >= expires_at_epoch:
+                yield SESSION_REVOKED_FRAME
+                return
             yield ": heartbeat\n\n"
             last_heartbeat = now
         await sleep(POLL_INTERVAL_SECONDS)
@@ -124,6 +141,10 @@ def event_stream(
 ) -> StreamingResponse:
     if context.role not in {"staff", "clinician"}:
         raise HTTPException(status_code=403, detail="Clinical event role required")
+    if context.token_expires_at_epoch is None:
+        # EventContext is always built from a signed token. Fail closed if a
+        # future alternate dependency constructs a context without its expiry.
+        raise HTTPException(status_code=403, detail="Expiring credential required")
     after = max(last_event_id or 0, 0)
     return StreamingResponse(
         _frames(
@@ -131,6 +152,7 @@ def event_stream(
             context.membership.id,
             context.clinic_id,
             after,
+            expires_at_epoch=context.token_expires_at_epoch,
             snapshot=snapshot,
         ),
         media_type="text/event-stream",
