@@ -214,8 +214,58 @@ def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
         ).status_code
         == 403
     )
+    admin_headers = auth_headers("admin")
+    admin_patients = client.get("/api/v1/patients", headers=admin_headers)
+    assert admin_patients.status_code == 200
+    assert patient_id in {item["id"] for item in admin_patients.json()["data"]}
+    admin_timeline = client.get(
+        f"/api/v1/patients/{patient_id}/timeline", headers=admin_headers
+    )
+    assert admin_timeline.status_code == 200
+    observed_entry = admin_timeline.json()["data"][0]
+    entry_read = client.get(
+        f"/api/v1/entries/{observed_entry['id']}", headers=admin_headers
+    )
+    assert entry_read.status_code == 200
     assert (
-        client.get("/api/v1/patients", headers=auth_headers("admin")).status_code == 403
+        client.get(
+            f"/api/v1/entries/{observed_entry['id']}/versions",
+            headers=admin_headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            f"/api/v1/entries/{observed_entry['id']}/comments",
+            headers=admin_headers,
+        ).status_code
+        == 200
+    )
+    admin_glance = client.get(
+        f"/api/v1/patients/{patient_id}/glance", headers=admin_headers
+    )
+    assert admin_glance.status_code == 200
+    pointer_id = admin_glance.json()["cards"][0]["provenance_pointer_id"]
+    assert (
+        client.get(
+            f"/api/v1/provenance/{pointer_id}/resolve", headers=admin_headers
+        ).status_code
+        == 200
+    )
+    assert (
+        client.patch(
+            f"/api/v1/entries/{observed_entry['id']}",
+            headers={**admin_headers, "If-Match": entry_read.headers["etag"]},
+            json={"content": "Admin must remain read-only"},
+        ).status_code
+        == 403
+    )
+    other_patient_id = _patients(client, auth_headers("other_staff"))[0]["id"]
+    assert (
+        client.get(
+            f"/api/v1/patients/{other_patient_id}/timeline", headers=admin_headers
+        ).status_code
+        == 404
     )
     assert (
         client.get("/api/v1/patients", headers=auth_headers("worker")).status_code

@@ -22,7 +22,10 @@ export const Route = createFileRoute("/_layout/patients/")({
 function PatientsIndex() {
   const navigate = useNavigate()
   const { user, meQuery, logout } = useAuth()
-  const allowed = user?.role === "staff" || user?.role === "clinician"
+  const allowed =
+    user?.role === "staff" ||
+    user?.role === "clinician" ||
+    user?.role === "admin"
   const patientsQuery = useQuery({
     queryKey: ["patients"],
     queryFn: clinicalApi.patients,
@@ -59,6 +62,7 @@ function PatientsIndex() {
         </div>
         <Badge className="w-fit bg-teal-100 text-teal-800">
           {user.role} · clinic scoped
+          {user.role === "admin" ? " · read-only" : ""}
         </Badge>
       </header>
 

@@ -30,7 +30,7 @@ def _set_etag(response: Response, version_id: uuid.UUID) -> None:
 
 
 def _require_entry_read_role(context: CurrentContext) -> None:
-    if context.role in {"admin", "worker"}:
+    if context.role == "worker":
         raise HTTPException(status_code=403, detail="Role cannot read clinical entries")
 
 

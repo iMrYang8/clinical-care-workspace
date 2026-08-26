@@ -20,7 +20,16 @@ export function AppSidebar() {
       ? [{ icon: ClipboardList, title: "My care", path: "/my-care" }]
       : currentUser.role === "staff" || currentUser.role === "clinician"
         ? [{ icon: ClipboardList, title: "Care notes", path: "/patients" }]
-        : [{ icon: ShieldCheck, title: "Administration", path: "/admin" }]
+        : currentUser.role === "admin"
+          ? [
+              {
+                icon: ClipboardList,
+                title: "Care notes · read-only",
+                path: "/patients",
+              },
+              { icon: ShieldCheck, title: "Administration", path: "/admin" },
+            ]
+          : []
     : []
 
   return (

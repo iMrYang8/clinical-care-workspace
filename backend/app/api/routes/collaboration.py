@@ -37,6 +37,13 @@ def _require_collaborator(context: RequestContext) -> None:
         )
 
 
+def _require_collaboration_reader(context: RequestContext) -> None:
+    if context.role not in {"staff", "clinician", "admin"}:
+        raise HTTPException(
+            status_code=403, detail="Internal collaboration access required"
+        )
+
+
 def _comment_public(session: Session, comment: Comment) -> CommentPublic:
     mentioned_user_ids = list(
         session.exec(
@@ -241,7 +248,7 @@ def _create_comment(
 def list_comments(
     entry_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> list[CommentPublic]:
-    _require_collaborator(context)
+    _require_collaboration_reader(context)
     get_scoped_entry(session, context, entry_id)
     comments = session.exec(
         select(Comment)

@@ -72,11 +72,11 @@ export function ClinicalCareNote({
   patientId,
   currentUser,
 }: ClinicalCareNoteProps) {
+  const canCollaborate =
+    currentUser.role === "staff" || currentUser.role === "clinician"
+  const readOnlyOversight = currentUser.role === "admin"
   const queryClient = useQueryClient()
-  useDomainEvents(
-    currentUser.role === "staff" || currentUser.role === "clinician",
-    currentUser.clinic_id,
-  )
+  useDomainEvents(canCollaborate, currentUser.clinic_id)
   const [selectedEntry, setSelectedEntry] =
     useState<ClinicalTimelineEntry | null>(null)
   const [versionEntry, setVersionEntry] =
@@ -259,12 +259,17 @@ export function ClinicalCareNote({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className="bg-teal-700 text-white">{currentUser.role}</Badge>
-            <Button asChild className="min-h-11 bg-teal-700">
-              <a href={`/patients/${patientId}/voice/capture`}>
-                <Mic /> Record visit
-              </a>
-            </Button>
+            <Badge className="bg-teal-700 text-white">
+              {currentUser.role}
+              {readOnlyOversight ? " · read-only oversight" : ""}
+            </Badge>
+            {canCollaborate && (
+              <Button asChild className="min-h-11 bg-teal-700">
+                <a href={`/patients/${patientId}/voice/capture`}>
+                  <Mic /> Record visit
+                </a>
+              </Button>
+            )}
             <Button onClick={refreshPatient} variant="outline">
               <RefreshCw /> Refresh
             </Button>
@@ -289,11 +294,13 @@ export function ClinicalCareNote({
                 Timeline
               </h2>
             </div>
-            <EntryComposer
-              currentUser={currentUser}
-              onCreated={refreshPatient}
-              patientId={patientId}
-            />
+            {canCollaborate && (
+              <EntryComposer
+                currentUser={currentUser}
+                onCreated={refreshPatient}
+                patientId={patientId}
+              />
+            )}
           </div>
 
           {timeline.length === 0 ? (
@@ -351,7 +358,7 @@ export function ClinicalCareNote({
                 ? (highlightMutation.variables?.card.highlight_id ?? null)
                 : null
             }
-            canReview
+            canReview={canCollaborate}
             cards={glanceQuery.data?.cards ?? []}
             onAction={(card, action) =>
               highlightMutation.mutate({ card, action })
@@ -376,6 +383,7 @@ export function ClinicalCareNote({
             currentUser={currentUser}
             entryId={selectedEntry?.id ?? null}
             entryVersionId={selectedEntry?.version_id ?? null}
+            readOnly={readOnlyOversight}
           />
         </aside>
       </div>

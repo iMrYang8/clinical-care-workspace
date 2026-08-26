@@ -117,6 +117,48 @@ test("staff opens the real synthetic care note", async ({ page }) => {
   ).toBeVisible()
 })
 
+test("admin has clinic-scoped read-only care-note oversight", async ({
+  page,
+}) => {
+  await page.goto("/login")
+  await page.getByRole("button", { name: "Continue as Clinic admin" }).click()
+
+  await expect(page).toHaveURL(/\/admin$/)
+  await page.getByRole("link", { name: /Care notes · read-only/ }).click()
+  await expect(page).toHaveURL(/\/patients\/?$/)
+  await page
+    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .click()
+
+  await expect(
+    page.getByRole("heading", { name: "Alex Synthetic" }),
+  ).toBeVisible()
+  await expect(page.getByText("admin · read-only oversight")).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: /Add admin entry/ }),
+  ).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Record visit" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0)
+
+  const denied = await page.evaluate(async () => {
+    const patients = await fetch("/api/v1/patients").then((response) =>
+      response.json(),
+    )
+    const response = await fetch("/api/v1/entries", {
+      body: JSON.stringify({
+        content: "Admin write must be rejected",
+        patient_id: patients.data[0].id,
+        section: "staff",
+        title: "Rejected admin write",
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    })
+    return response.status
+  })
+  expect(denied).toBe(403)
+})
+
 test("production-capable password form signs in with the secure cookie path", async ({
   page,
 }) => {

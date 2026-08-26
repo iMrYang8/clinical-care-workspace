@@ -23,7 +23,7 @@ router = APIRouter(prefix="/patients", tags=["patients"])
 
 
 def _require_patient_data_role(context: CurrentContext) -> None:
-    if context.role in {"admin", "worker"}:
+    if context.role == "worker":
         raise HTTPException(status_code=403, detail="Role cannot access clinical data")
 
 

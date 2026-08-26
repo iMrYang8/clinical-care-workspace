@@ -15,7 +15,10 @@ function PatientCareNoteRoute() {
   const { patientId } = Route.useParams()
   const navigate = useNavigate()
   const { user, meQuery, logout } = useAuth()
-  const allowed = user?.role === "staff" || user?.role === "clinician"
+  const allowed =
+    user?.role === "staff" ||
+    user?.role === "clinician" ||
+    user?.role === "admin"
 
   useEffect(() => {
     if (user && !allowed)

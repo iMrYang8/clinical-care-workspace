@@ -385,7 +385,7 @@ def feedback(
 def provenance_resolve(
     pointer_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> ProvenanceResolved:
-    if context.role in {"admin", "worker"}:
+    if context.role == "worker":
         raise HTTPException(
             status_code=403, detail="Role cannot resolve clinical provenance"
         )

@@ -19,12 +19,14 @@ type CommentsRailProps = {
   entryId: string | null
   entryVersionId: string | null
   currentUser: MePublic
+  readOnly?: boolean
 }
 
 export function CommentsRail({
   entryId,
   entryVersionId,
   currentUser,
+  readOnly = false,
 }: CommentsRailProps) {
   const queryClient = useQueryClient()
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
@@ -105,7 +107,7 @@ export function CommentsRail({
       <div className="flex items-center justify-between border-b p-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-700">
-            Internal only
+            {readOnly ? "Internal · read-only oversight" : "Internal only"}
           </p>
           <h2
             className="font-serif text-xl font-semibold"
@@ -162,35 +164,38 @@ export function CommentsRail({
                 Assigned {comment.assigned_membership_id.slice(0, 8)}
               </p>
             )}
-            <div className="mt-3 flex flex-wrap gap-1">
-              <Button
-                onClick={() => setReplyingTo(comment.id)}
-                size="sm"
-                variant="ghost"
-              >
-                <Reply /> Reply
-              </Button>
-              {!comment.resolved_at && (
+            {!readOnly && (
+              <div className="mt-3 flex flex-wrap gap-1">
                 <Button
-                  disabled={resolveMutation.isPending}
-                  onClick={() => resolveMutation.mutate(comment.id)}
+                  onClick={() => setReplyingTo(comment.id)}
                   size="sm"
                   variant="ghost"
                 >
-                  <CheckCircle2 /> Resolve
+                  <Reply /> Reply
                 </Button>
-              )}
-              {comment.assigned_membership_id !== currentUser.membership_id && (
-                <Button
-                  disabled={assignMutation.isPending}
-                  onClick={() => assignMutation.mutate(comment.id)}
-                  size="sm"
-                  variant="ghost"
-                >
-                  <UserCheck /> Assign to me
-                </Button>
-              )}
-            </div>
+                {!comment.resolved_at && (
+                  <Button
+                    disabled={resolveMutation.isPending}
+                    onClick={() => resolveMutation.mutate(comment.id)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <CheckCircle2 /> Resolve
+                  </Button>
+                )}
+                {comment.assigned_membership_id !==
+                  currentUser.membership_id && (
+                  <Button
+                    disabled={assignMutation.isPending}
+                    onClick={() => assignMutation.mutate(comment.id)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <UserCheck /> Assign to me
+                  </Button>
+                )}
+              </div>
+            )}
             {(replies.get(comment.id) ?? []).map((reply) => (
               <div
                 className="ml-4 mt-3 border-l-2 border-violet-200 pl-3"
@@ -203,7 +208,7 @@ export function CommentsRail({
                 <p className="mt-1 text-sm leading-6">{reply.body}</p>
               </div>
             ))}
-            {replyingTo === comment.id && (
+            {!readOnly && replyingTo === comment.id && (
               <div className="mt-3 space-y-2 rounded-lg bg-violet-50 p-3">
                 <Label htmlFor={`reply-${comment.id}`}>Reply</Label>
                 <textarea
