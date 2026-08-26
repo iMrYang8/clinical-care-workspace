@@ -8,6 +8,9 @@ backend/app/frontend/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+/tmp/
+/output/pdf/*.pdf
+/output/demo/raw/
 
 # Local isolated worktrees
 .worktrees/
