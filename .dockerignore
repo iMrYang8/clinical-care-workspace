@@ -5,9 +5,15 @@ tmp
 **/__pycache__
 **/.venv
 backend/htmlcov
+backend/app/frontend
 frontend/blob-report
 frontend/dist
+frontend/dist-ssr
+frontend/logs
 frontend/node_modules
 frontend/playwright-report
 frontend/test-results
+frontend/.env*
+frontend/*.local
+frontend/*.log
 node_modules

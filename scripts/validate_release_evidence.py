@@ -65,6 +65,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _release_log_section(log_text: str, heading: str) -> str:
+    marker = f"==> {heading}"
+    start = log_text.find(marker)
+    if start < 0:
+        raise EvidenceError(f"release log is missing section: {heading}")
+    end = log_text.find("\n==> ", start + len(marker))
+    return log_text[start:] if end < 0 else log_text[start:end]
+
+
 def validate_release_evidence(
     evidence_root: Path | str, expected_commit: str | None = None
 ) -> dict[str, Any]:
@@ -175,21 +184,27 @@ def validate_release_evidence(
     log_text = ANSI_ESCAPE.sub(
         "", (root / "verify-release.log").read_text(encoding="utf-8", errors="replace")
     )
-    required_log_fragments = (
-        "==> Release verification complete",
-        f"{backend_passed} passed",
-        f"{backend_skipped} skipped",
-        f"{frontend_passed} passed",
-        f"{browser_passed} passed",
-        f"ffmpeg version {ffmpeg_version}",
+    backend_log = _release_log_section(
+        log_text, "Backend PostgreSQL contracts, coverage, and migration roundtrip"
     )
-    for fragment in required_log_fragments:
-        if fragment not in log_text:
-            raise EvidenceError(
-                f"release log does not support candidate field: {fragment}"
-            )
-    if not re.search(rf"^TOTAL\s+\d+\s+\d+\s+{coverage}%", log_text, re.MULTILINE):
+    frontend_log = _release_log_section(
+        log_text, "Frontend type, lint, unit, and production build"
+    )
+    browser_log = _release_log_section(log_text, "Playwright Scenario A-F")
+    ffmpeg_log = _release_log_section(log_text, "Container FFmpeg release evidence")
+    _release_log_section(log_text, "Release verification complete")
+    if not re.search(
+        rf"\b{backend_passed} passed,\s+{backend_skipped} skipped\b", backend_log
+    ):
+        raise EvidenceError("backend pytest summary does not match candidate evidence")
+    if not re.search(rf"^TOTAL\s+\d+\s+\d+\s+{coverage}%", backend_log, re.MULTILINE):
         raise EvidenceError("release log does not support candidate coverage field")
+    if not re.search(rf"\bTests\s+{frontend_passed}\s+passed\b", frontend_log):
+        raise EvidenceError("frontend unit summary does not match candidate evidence")
+    if not re.search(rf"\b{browser_passed}\s+passed\b", browser_log):
+        raise EvidenceError("Playwright summary does not match candidate evidence")
+    if f"ffmpeg version {ffmpeg_version}" not in ffmpeg_log:
+        raise EvidenceError("FFmpeg log section does not match candidate evidence")
 
     return {
         "root": root,

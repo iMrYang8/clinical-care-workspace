@@ -88,6 +88,10 @@ COPY ./backend/alembic.ini /app/backend/
 
 COPY ./backend/app /app/backend/app
 
+# The host path is an ignored local build artifact. It must never merge into
+# the image under the commit label; only the current frontend-build stage may
+# create the served tree.
+RUN test ! -e /app/backend/app/frontend
 COPY --from=frontend-build /app/backend/app/frontend /app/backend/app/frontend
 
 # Sync the project itself after source is present. Dependencies are already in

@@ -61,10 +61,14 @@ def main() -> None:
             f"completed_at_utc={candidate['verification_date_utc']}T12:00:00Z\n"
         )
         (evidence / "verify-release.log").write_text(
+            "==> Backend PostgreSQL contracts, coverage, and migration roundtrip\n"
             f"{backend[0]} passed, {backend[2]} skipped\n"
             f"TOTAL 1000 90 {backend[5]}%\n"
+            "==> Frontend type, lint, unit, and production build\n"
             f"Tests {frontend} passed\n"
+            "==> Playwright Scenario A-F\n"
             f"{browser} passed\n"
+            "==> Container FFmpeg release evidence\n"
             f"ffmpeg version {candidate['ffmpeg']} Copyright\n"
             "==> Release verification complete\n"
         )
@@ -77,6 +81,17 @@ def main() -> None:
         benchmark_path.write_text(json.dumps(benchmark))
         expect_invalid(evidence)
         benchmark_path.write_text(original_benchmark)
+
+        candidate_path = evidence / "release-candidate.txt"
+        original_candidate = candidate_path.read_text(encoding="utf-8")
+        candidate_path.write_text(
+            original_candidate.replace(
+                candidate["backend"],
+                f"{browser}_passed_{backend[2]}_skipped_coverage_{backend[5]}_percent",
+            )
+        )
+        expect_invalid(evidence)
+        candidate_path.write_text(original_candidate)
 
         pdf = evidence / "brief.pdf"
         pdf.write_bytes(b"%PDF-1.4\nsynthetic validator fixture\n")
