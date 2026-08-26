@@ -48,7 +48,7 @@ Git commit and records that image ID. A reused global `backend:latest` is
 rejected. The committed record was generated from the local release-candidate
 backend image on 2026-08-26: FFmpeg `7.1.5-0+deb13u1`, Debian arm64, with
 `--enable-gpl`; its file SHA-256 is
-`7c95cebe0302f3a0d7e277f5b59a069964d567422c1057208d0479677ff23501`.
+`b934420d8be52ec97333d79e6714ef2697c05892262602b388aede4d929dc020`.
 This validates that exact local image only. Rebuilds on another platform or
 from a newer base image must regenerate the record; a developer machine's
 FFmpeg output is not interchangeable with the container record.

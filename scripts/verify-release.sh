@@ -75,9 +75,6 @@ if [[ -n "${BUN_BIN:-}" ]]; then
   fi
 elif command -v bun >/dev/null 2>&1; then
   bun_bin="$(command -v bun)"
-elif [[ -x /private/tmp/nightingale-bun/node_modules/.bin/bun ]]; then
-  # Codex/local fallback; clean machines should install Bun normally or set BUN_BIN.
-  bun_bin=/private/tmp/nightingale-bun/node_modules/.bin/bun
 else
   echo "Bun was not found. Install Bun or set BUN_BIN to its executable." >&2
   exit 1

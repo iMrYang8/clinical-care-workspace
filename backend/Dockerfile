@@ -73,8 +73,14 @@ RUN test -s /usr/share/doc/nightingale/LICENSE \
     && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Serene-Comment-Extension-MIT.txt \
     && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Tiptap-MIT.txt \
     && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/idb-ISC.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/FastAPI-Template-MIT.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Nightingale-MIT.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Presidio-MIT.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Presidio-NOTICE.txt \
     && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/CTranslate2-MIT.txt \
-    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/PyAV-BSD-3-Clause.txt
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/PyAV-BSD-3-Clause.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Pyannote-Audio-MIT.txt \
+    && test -s /usr/share/doc/nightingale/THIRD_PARTY_LICENSES/Pyannote-CITATION.bib
 
 COPY ./backend/scripts /app/backend/scripts
 

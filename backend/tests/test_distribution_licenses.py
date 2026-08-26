@@ -13,12 +13,17 @@ def test_required_distribution_license_texts_are_complete_and_versioned() -> Non
     directory = ROOT / "THIRD_PARTY_LICENSES"
     required = {
         "Nightingale-MIT.txt": "MIT License",
+        "FastAPI-Template-MIT.txt": "Copyright (c) 2019 Sebastián Ramírez",
         "ATTRIBUTION.txt": "FastAPI Full Stack FastAPI",
         "Serene-Comment-Extension-MIT.txt": "Copyright (c) 2023 Jeet Mandaliya",
         "Tiptap-MIT.txt": "Copyright (c) 2025, Tiptap GmbH",
         "idb-ISC.txt": "Copyright (c) 2016, Jake Archibald",
         "CTranslate2-MIT.txt": "The OpenNMT Authors",
         "PyAV-BSD-3-Clause.txt": "Copyright retained by original committers",
+        "Presidio-MIT.txt": "Copyright (c) Presidio Contributors",
+        "Presidio-NOTICE.txt": "THIRD-PARTY SOFTWARE NOTICES AND INFORMATION",
+        "Pyannote-Audio-MIT.txt": "Copyright (c) 2020 CNRS",
+        "Pyannote-CITATION.bib": "Powerset multi-class cross entropy loss",
         "DISTRIBUTION_NOTICES.md": "CTranslate2",
         "THIRD_PARTY_NOTICES.md": "PyAV",
     }
@@ -31,6 +36,16 @@ def test_required_distribution_license_texts_are_complete_and_versioned() -> Non
     assert "4.8.1" in notices
     assert "18.1.0" in notices
     assert "not tested" in notices.lower()
+    assert "Presidio-NOTICE.txt" in notices
+    assert "Pyannote-CITATION.bib" in notices
+
+    root_license = (ROOT / "LICENSE").read_text()
+    assert "Copyright (c) 2019 Sebastián Ramírez" in root_license
+    assert "Copyright (c) 2026 Nightingale contributors" in root_license
+
+    packaged_register = (directory / "THIRD_PARTY_NOTICES.md").read_text()
+    assert "`](./LICENSE)" not in packaged_register
+    assert "`](../LICENSE)" in packaged_register
 
 
 def test_backend_image_copies_notices_and_binds_source_commit() -> None:
@@ -39,6 +54,10 @@ def test_backend_image_copies_notices_and_binds_source_commit() -> None:
     assert "/usr/share/doc/nightingale/THIRD_PARTY_LICENSES" in dockerfile
     assert "org.opencontainers.image.revision=$NIGHTINGALE_SOURCE_COMMIT" in dockerfile
     assert "Serene-Comment-Extension-MIT.txt" in dockerfile
+    assert "Presidio-MIT.txt" in dockerfile
+    assert "Presidio-NOTICE.txt" in dockerfile
+    assert "Pyannote-Audio-MIT.txt" in dockerfile
+    assert "Pyannote-CITATION.bib" in dockerfile
     compose = (ROOT / "compose.yml").read_text()
     assert compose.count("\n        NIGHTINGALE_SOURCE_COMMIT:") == 3
     capture = (ROOT / "scripts" / "capture_ffmpeg_inventory.sh").read_text()
