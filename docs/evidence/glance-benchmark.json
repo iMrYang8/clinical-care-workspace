@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "measured_at": "2026-08-25T22:09:55.541554+00:00",
-  "commit": "ced58bf7501182b0b46147ebbe3a189eede3511a",
+  "measured_at": "2026-08-26T00:03:50.823427+00:00",
+  "commit": "2e59a9b89e65c81ac030d943e9f9e7c51cbfcab3",
   "dirty": false,
   "hardware": {
     "platform": "macOS-26.4.1-arm64-arm-64bit",
@@ -10,7 +10,7 @@
     "logical_cpu_count": 10
   },
   "config": {
-    "base_url": "https://localhost:53223",
+    "base_url": "https://localhost:63892",
     "endpoint": "/api/v1/patients/{synthetic_patient_id}/glance",
     "auth_transport": "bearer (benchmark/API compatibility only)",
     "warmup": 20,
@@ -43,19 +43,20 @@
       ]
     },
     "schema_sha256": "04a2bf4000854b8f0fdaaab8e991f8c697fe352c317abc72e046daa4d8c180a5",
-    "body_sha256": "37e6bf3c2905b869793f3b4487936561bbea753faa4f353afb7752cfc46d3723"
+    "body_sha256": "ce20c7a11883df29982ecd1ad2d93a7496d8dcd0e12dcfcc05a654b5490d03b5"
   },
   "compose": {
-    "project": "nightingale-release-520d3ceb074c-f5da1aafb93a7bd0",
-    "config_sha256": "4443594a9eb7721258ecca112705f08c3bec8a633f9f94094952419d6750b3f5",
-    "backend_image_digest": "sha256:964365b2ab2712523c2ebf6693bbc794127bb301b7fed08dfd448382dae7f59a"
+    "project": "nightingale-release-520d3ceb074c-33b608202f78bbb0",
+    "config_sha256": "191339f3cb866158a24aa71d1e95fadcdaa8054e904c803aca077f44cf390666",
+    "backend_image_digest": "sha256:96252cf9d76d89c69884ce0a9c7849d5be28190dd4b82b2603f077b07fba8c6b",
+    "backend_image_revision": "2e59a9b89e65c81ac030d943e9f9e7c51cbfcab3"
   },
   "latency_ms": {
-    "median": 3.124,
-    "p95": 3.508,
-    "p99": 3.707,
-    "min": 2.808,
-    "max": 3.922
+    "median": 3.667,
+    "p95": 4.077,
+    "p99": 4.275,
+    "min": 3.19,
+    "max": 4.473
   },
   "gate": {
     "p95_lte_300ms": true
