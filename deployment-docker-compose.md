@@ -69,6 +69,31 @@ worker configured for remote egress exits at startup if the Presidio model is
 not installed and loadable. Keep the provider deterministic if this profile is
 not built.
 
+Provisional OpenAI live captions are a separate, disabled-by-default audio
+egress path. Enable them only with all of:
+
+```bash
+export LIVE_TRANSCRIPT_ENABLED=true
+export LIVE_TRANSCRIPT_PROVIDER=openai
+export REMOTE_AUDIO_EGRESS_ENABLED=true
+export STRICT_NO_AUDIO_EGRESS=false
+export OPENAI_API_KEY="YOUR_KEY"
+export OPENAI_LIVE_TRANSCRIBE_MODEL="gpt-live-transcribe-YOUR_CONFIGURED_VERSION"
+# Optional capacity overrides (shown with defaults)
+export LIVE_TRANSCRIPT_MAX_BYTES_PER_SECOND=65536
+export LIVE_TRANSCRIPT_MAX_GLOBAL_CONNECTIONS=8
+export LIVE_TRANSCRIPT_MAX_CLINIC_CONNECTIONS=8
+export LIVE_TRANSCRIPT_MAX_USER_CONNECTIONS=2
+```
+
+The application rejects other live model-family IDs. Browser audio travels to
+the same-origin Nightingale WebSocket and only the backend opens the provider
+connection. PostgreSQL advisory leases allow one live connection per voice
+session and enforce the configured clinic/user limits across backend workers;
+the global semaphore is per backend process. Mock-transport tests verify the
+protocol boundary; they are not a production connectivity, quality, or latency
+result.
+
 To use an authenticated email provider, also set `SMTP_PASSWORD`.
 
 ## Deploy

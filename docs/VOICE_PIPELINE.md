@@ -123,6 +123,46 @@ docker compose run --rm backend \
 | faster-whisper | `compose.local-asr.yml`, a pre-cached `LOCAL_ASR_MODEL_DIR` | CPU/int8 and `local_files_only=True`; no runtime model download. Inference runs in a dedicated child process that is killed on timeout/cancellation, so retries cannot stack orphaned CTranslate2 threads. No diarization is claimed. |
 | pyannote experimental | `compose.diarization.yml`, accepted model terms, cached `PYANNOTE_MODEL_DIR` | Default off. Current code exposes a local readiness gate; it does not silently fetch or apply a gated model. |
 
+### Provisional live-caption providers
+
+| Mode | Required configuration | Behavior and boundary |
+| --- | --- | --- |
+| Disabled (default) | `LIVE_TRANSCRIPT_PROVIDER=disabled` | Capability reports `unavailable`; no WebSocket audio egress occurs. |
+| Deterministic fixture | Development demo, `LIVE_TRANSCRIPT_ENABLED=true`, `LIVE_TRANSCRIPT_PROVIDER=deterministic`, and an explicitly synthetic session | Emits fixed provisional text to exercise transport and UI. It is not speech recognition and never handles ordinary audio. |
+| OpenAI Realtime transcription | `LIVE_TRANSCRIPT_ENABLED=true`, `LIVE_TRANSCRIPT_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, `STRICT_NO_AUDIO_EGRESS=false`, `OPENAI_API_KEY`, and `OPENAI_LIVE_TRANSCRIBE_MODEL=gpt-live-transcribe...` | Streams bounded 24 kHz PCM16 frames server-to-server. Tests inject a mock transport; no real-model accuracy, language, latency, cost, or clinical-quality claim is made. |
+
+The adapter event names and 24 kHz PCM session configuration follow the
+[official Realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription)
+and its [server WebSocket transport guide](https://developers.openai.com/api/docs/guides/realtime-websocket).
+The model ID remains deployment configuration rather than a bundled or tested
+model promise.
+
+The browser connects only to Nightingale's same-origin WebSocket. The server
+authenticates the cookie/bearer token, resolves the active membership and
+clinic, checks the voice-session capture permission, and repeats those checks
+for every application audio frame/provider event. Client-supplied clinic, role,
+or author values are ignored. The AudioWorklet coalesces render quanta into
+100 ms frames; a stateful interpolating resampler retains phase across 44.1/48
+kHz input frame boundaries before producing 24 kHz PCM16. Frame bytes,
+per-connection total bytes, and byte rate are bounded. A final partial worklet
+frame shorter than 100 ms is not flushed into the provisional path; the
+independent MediaRecorder/finalize path still retains the durable recording.
+
+Before opening a provider connection, the API acquires PostgreSQL advisory
+leases for clinic, user, and voice session plus a per-process global semaphore.
+The defaults are 8 global, 8 per clinic, 2 per user, and exactly 1 per session;
+all leases are released on close, cancellation, and provider setup failure.
+Origin, frame, rate, lease, provider, timeout, and disconnect failures use
+non-reflective reason codes. Pre-auth/lease refusals do not mutate the session;
+failures after a session/provider attempt persist `unavailable` or
+`needs_review`. Audio and upstream error bodies are not logged.
+
+Live captions are intentionally ephemeral. They are not written as transcript
+revisions or clinical facts. The durable finalize worker creates the immutable
+transcript and sets the live status to `replaced`, so the final Review Mode
+result is always authoritative. `replaced` is terminal: a late socket error or
+disconnect cannot downgrade the finalized state.
+
 Local no-egress overlay:
 
 ```bash
@@ -198,11 +238,13 @@ POST /api/v1/voice/sessions/{id}/reanalyze
 POST /api/v1/voice/sessions/{id}/publish
 GET  /api/v1/voice/sessions/{id}/audio
 GET  /api/v1/voice/sessions/{id}/live
+WS   /api/v1/voice/sessions/{id}/live/ws
 ```
 
-`/live` is a capability endpoint. This build has no live provider/transport and
-therefore returns `unavailable` even when the deployment gate is enabled; it
-never fabricates provisional captions.
+`/live` is the authenticated capability endpoint. `/live/ws` accepts binary
+PCM16 frames plus the single control message `{"type":"commit"}`. Status,
+delta, and completed events are explicitly tagged `provisional: true`; they are
+never represented as the finalized transcript.
 
 ## Verification
 
@@ -210,7 +252,7 @@ never fabricates provisional captions.
 cd backend
 pytest -q tests/test_voice_chunks.py tests/test_voice_permissions.py \
   tests/test_voice_worker.py tests/test_transcript_audio_provenance.py \
-  tests/test_voice_providers.py
+  tests/test_voice_providers.py tests/test_live_transcript.py
 coverage run -m pytest -q && coverage report --fail-under=90
 alembic upgrade head && alembic current && alembic check
 ruff check app tests && ruff format app tests --check

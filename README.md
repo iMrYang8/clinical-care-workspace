@@ -60,6 +60,12 @@ walkthrough, deterministic reset order, and the exact automated checks.
   barriers, bounded FFmpeg normalization, durable processing jobs, immutable
   transcript revisions, fact-to-transcript-to-audio evidence, and
   clinician-only publication.
+- **Provisional live captions:** an authenticated, clinic-scoped WebSocket
+  carries 100 ms application frames as bounded 24 kHz PCM16 to an explicitly
+  configured live provider. Per-connection byte/rate caps plus global,
+  clinic, user, and session leases bound concurrency. Captions are ephemeral
+  and are replaced by the immutable finalize result; disconnects and provider
+  errors remain visible as review states.
 - **Patient-safe view:** patient DTOs omit raw AI, internal comments, scoring
   internals, raw transcript/facts, and audio. Browser tests inspect actual
   patient network responses.
@@ -130,9 +136,13 @@ Provider/model IDs are configuration, never hard-coded promises.
   diarization.
 - The pyannote profile exposes experimental local readiness only. No gated
   model, token, diarization output, or acceptance of model terms is bundled.
-- `/voice/.../live` is an honest capability endpoint. This build has no live
-  caption transport/provider and reports unavailable rather than fabricating
-  captions.
+- `/voice/.../live` reports the configured live-caption capability, and
+  `/voice/.../live/ws` is the same-origin WebSocket transport. The default is
+  disabled. The deterministic provider is restricted to explicitly synthetic
+  development sessions; the OpenAI adapter additionally requires
+  `LIVE_TRANSCRIPT_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, an API
+  key, and an explicit `gpt-live-transcribe` model ID. Fixture/mock tests are
+  transport tests, not evidence of live model accuracy or latency.
 
 The complete, claim-bounded inventory is in
 [`MODEL_INVENTORY.md`](./MODEL_INVENTORY.md). Voice-specific limits and failure

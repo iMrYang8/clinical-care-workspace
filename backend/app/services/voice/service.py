@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from collections.abc import Iterable
+from typing import cast
 
 from fastapi import HTTPException
 from sqlalchemy import func
@@ -21,6 +22,7 @@ from app.models import (
     Entry,
     EntryRelation,
     EntryVersion,
+    LiveTranscriptStatus,
     ProvenancePointer,
     TranscriptCorrection,
     TranscriptRevision,
@@ -92,6 +94,10 @@ def voice_session_public(
         patient_summary=_patient_summary(session_row),
         warning_codes=[] if patient_safe else session_row.warning_codes_json,
         error_code=None if patient_safe else session_row.error_code,
+        live_transcript_status=cast(
+            LiveTranscriptStatus, session_row.live_transcript_status
+        ),
+        live_transcript_reason_code=session_row.live_transcript_error_code,
         current_transcript_revision_id=(
             None if patient_safe else session_row.current_transcript_revision_id
         ),
@@ -138,6 +144,14 @@ def _authorize_session_write(
         raise HTTPException(
             status_code=403, detail="Patient capture belongs to another user"
         )
+
+
+def authorize_voice_session_capture(
+    context: RequestContext, voice_session: VoiceSession
+) -> None:
+    """Public transport boundary for the same server-owned capture policy."""
+
+    _authorize_session_write(context, voice_session)
 
 
 def _require_current_revision(

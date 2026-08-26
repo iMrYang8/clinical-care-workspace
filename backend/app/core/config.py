@@ -73,6 +73,21 @@ class Settings(BaseSettings):
     PYANNOTE_ENABLED: bool = False
     PYANNOTE_MODEL_DIR: str | None = None
     LIVE_TRANSCRIPT_ENABLED: bool = False
+    LIVE_TRANSCRIPT_PROVIDER: Literal["disabled", "deterministic", "openai"] = (
+        "disabled"
+    )
+    OPENAI_LIVE_TRANSCRIBE_MODEL: str | None = None
+    LIVE_TRANSCRIPT_MAX_FRAME_BYTES: int = 96 * 1024
+    LIVE_TRANSCRIPT_MAX_SESSION_BYTES: int = 192 * 1024 * 1024
+    # 24 kHz mono PCM16 is 48,000 bytes/s. The extra headroom absorbs browser
+    # scheduling jitter while bounding malicious accelerated replay.
+    LIVE_TRANSCRIPT_MAX_BYTES_PER_SECOND: int = 64 * 1024
+    LIVE_TRANSCRIPT_FRAME_TIMEOUT_SECONDS: float = 60.0
+    LIVE_TRANSCRIPT_PROVIDER_TIMEOUT_SECONDS: float = 30.0
+    LIVE_TRANSCRIPT_LEASE_TIMEOUT_SECONDS: float = 1.0
+    LIVE_TRANSCRIPT_MAX_GLOBAL_CONNECTIONS: int = 8
+    LIVE_TRANSCRIPT_MAX_CLINIC_CONNECTIONS: int = 8
+    LIVE_TRANSCRIPT_MAX_USER_CONNECTIONS: int = 2
 
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
@@ -157,6 +172,14 @@ class Settings(BaseSettings):
             ):
                 raise ValueError(
                     "PRESIDIO_REQUIRED must remain enabled for remote audio workflows"
+                )
+            if (
+                self.LIVE_TRANSCRIPT_PROVIDER == "openai"
+                and self.REMOTE_AUDIO_EGRESS_ENABLED
+                and not self.PRESIDIO_REQUIRED
+            ):
+                raise ValueError(
+                    "PRESIDIO_REQUIRED must remain enabled for remote live audio workflows"
                 )
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         self._check_default_secret(

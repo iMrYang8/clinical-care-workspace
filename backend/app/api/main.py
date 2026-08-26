@@ -12,6 +12,7 @@ from app.api.routes import (
     trust,
     utils,
     voice,
+    voice_live,
 )
 
 api_router = APIRouter()
@@ -26,3 +27,4 @@ api_router.include_router(trust.router)
 api_router.include_router(events.router)
 api_router.include_router(decay.router)
 api_router.include_router(voice.router)
+api_router.include_router(voice_live.router)
