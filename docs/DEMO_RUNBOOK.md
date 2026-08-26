@@ -48,8 +48,12 @@ resolved immutable version and highlighted span.
    Version 2, then select **Revert as new version** on Version 1. The older
    version is not deleted; a new current version is created.
 4. In Glance, show the medication item and its **Clinician accepted** reason.
-5. Log out, choose **Clinic admin**, and open the metadata-only audit trail.
-   Show the `entry.reverted` event and that clinical body text is absent.
+5. Log out, choose **Clinic admin**, open **Care notes · read-only**, and show
+   clinic-scoped oversight of Alex's Timeline, internal comments, versions,
+   Glance, and provenance. Confirm edit, recording, comment, assignment, and
+   highlight decision controls are absent.
+6. Return to **Administration**, open the metadata-only audit trail, and show
+   the `entry.reverted` event without clinical body text in the audit payload.
 
 The comment extension supplies only the selected-text `commentId` mark.
 Nightingale owns persistence, quote/context anchors, immutable-version binding,
@@ -95,7 +99,8 @@ It performs all of the following against the running TLS application:
 2. The first `PATCH` with `If-Match` wins.
 3. The stale second `PATCH` returns `409 VERSION_CONFLICT`.
 4. Updates to two different entries both succeed.
-5. Clinic admin cannot read clinical content (`403`).
+5. Clinic admin can read same-clinic clinical content but an attempted write
+   returns `403`; an admin from another clinic receives `404`.
 6. Staff in the other synthetic clinic cannot discover the entry (`404`).
 
 ## 6. Scenario E — patient-safe network and provider-off truth

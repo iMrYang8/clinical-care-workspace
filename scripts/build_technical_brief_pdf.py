@@ -641,7 +641,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
         truth_w,
         105,
         "VERIFIED",
-        "Deterministic text fixture, synthetic voice fixture, access controls, encryption, versions, provenance, jobs, decay, browser flows, release image.",
+        "Deterministic text and voice fixtures, read-only Admin oversight, dataset-import contracts, encryption, versions, provenance, jobs, decay, browser flows, release image.",
         TEAL,
         TEAL_SOFT,
     )
@@ -683,7 +683,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
     c.drawString(MARGIN + 12, 129, "DELIVERY CONTENTS")
     draw_paragraph(
         c,
-        "Runnable source + synthetic seed + Scenario A-F runbook + 64-second silent demo recording + editable architecture/schema diagrams + machine-readable evidence + full notices + this brief. Remote publication remains an operator action because no authenticated GitHub session was available.",
+        "Runnable source + full Git history bundle + synthetic seed/importer + Scenario A-F runbook + under-90-second silent demo + editable diagrams + machine-readable evidence + full notices + this brief. Remote publication remains an operator action if no authenticated GitHub session is available.",
         MARGIN + 12,
         120,
         PAGE_W - 2 * MARGIN - 24,

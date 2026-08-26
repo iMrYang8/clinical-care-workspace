@@ -29,7 +29,7 @@ The default checkout is deliberately deterministic and offline: `AI_PROVIDER=det
 
 | Area | Implemented behavior |
 | --- | --- |
-| Identity and tenancy | Secure-cookie login; Patient, Staff, Clinician, Admin, and Worker memberships; one-time admin invitations; patient-record links; clinic-scoped RLS |
+| Identity and tenancy | Secure-cookie login; Patient, Staff, Clinician, Admin, and Worker memberships; clinic-scoped read-only Admin oversight; one-time admin invitations; patient-record links; clinic-scoped RLS |
 | Care Note | Timeline; separate Staff/Clinician entries; Tiptap editor; immutable versions, diff, revert, CAS conflict; metadata-only audit |
 | Trust | Glance top five; score components and risk reason; accept/reject/pin; exact-span provenance; bounded clinic-scoped learning |
 | AI | Fail-closed redaction; deterministic and configured remote-provider contracts; jobs, attempts, retry, idempotency, SSE status, fallback/review states |
@@ -72,7 +72,7 @@ All tenant rows carry `clinic_id`; tenant-composite foreign keys prevent cross-c
 - Clinical text, comments, Glance payloads, redaction maps, transcript/facts, and audio use AES-256-GCM. HKDF derives a distinct clinic key and authenticated data binds clinic, namespace, and record. The field-encryption key is separate from the session secret outside development.
 - Browser auth uses a `Secure`, `HttpOnly`, `SameSite=Lax` cookie. Cookie mutations check Origin; bearer JWT remains only for API compatibility. SSE reauthorizes on each short poll and terminates at token expiry.
 - All API responses and the HTML shell are `private, no-store`; only content-hashed assets are public/immutable. Cross-tab logout and rejected session probes mask PHI and complete bounded IndexedDB cleanup before sign-in returns.
-- Admin is a membership-management and metadata-audit role, not a clinical editor. Patient onboarding is not conflated with a care-team invitation. Removal cannot deactivate the last active Admin.
+- Admin has clinic-scoped read-only oversight of patient records, internal comments, versions, Glance, and provenance, but cannot mutate clinical content or workflow state. Admin also manages memberships and metadata audit. Patient onboarding is not conflated with a care-team invitation. Removal cannot deactivate the last active Admin.
 - Local demo ports bind to loopback. Production Compose disables demo auth and fixture seeding, separates owner/runtime database credentials, and promotes the same verified OCI image rather than rebuilding after approval.
 
 <div style="page-break-after: always;"></div>
@@ -99,19 +99,20 @@ Run `./scripts/demo-up.sh`, accept the local certificate warning at `https://loc
 - **A — Evidence:** Glance card → exact immutable Timeline span.
 - **B — Collaboration:** anchored comment, `@clinician`, assignment, resolve, diff, revert-as-new-version, learning signal, and metadata-only audit.
 - **C — Retention:** cross-date Timeline → eligibility preview → archive → checksum-verified rehydrate.
-- **D — Concurrency:** two browser contexts produce a deterministic `409`, while edits to different entries succeed and tenant boundaries return `403/404` as designed.
+- **D — Concurrency:** two browser contexts produce a deterministic `409`, while edits to different entries succeed; Admin can read within the clinic but receives `403` on writes, and cross-clinic records remain `404`.
 - **E — Patient safety:** patient navigation and captured network responses contain no raw AI, internal comment, scoring internals, transcript/facts, or audio; provider-off state is explicit.
 - **F — Voice review:** two-device synthetic WAV capture, forced outage, encrypted reload recovery, finalization, Review Mode, fact-to-audio navigation, and Clinician publication.
 
-The repository also includes a reproducible silent walkthrough at [`output/demo/Nightingale_Demo.mp4`](../output/demo/Nightingale_Demo.mp4), covering the visible evidence, patient-safe, and synthetic voice-review paths.
+The repository also includes a reproducible silent walkthrough at [`output/demo/Nightingale_Demo.mp4`](../output/demo/Nightingale_Demo.mp4), covering visible evidence, immutable history, Admin read-only oversight, patient-safe projection, and synthetic voice-review paths.
 
 ## 6 · Provenance, licensing, and claim boundaries
 
-Nightingale began from `fastapi/full-stack-fastapi-template@68adb40d` and keeps the upstream MIT notice. Direct use includes MIT Tiptap OSS and Serene Comment Extension, MIT Presidio packages, ISC `idb`, BSD-3-Clause zstandard, and the recorded Debian FFmpeg build. faster-whisper, CTranslate2, PyAV, spaCy model, and pyannote are optional/profile-specific and have explicit packaging or model-license gates. `open-medical-scribe`, `AI-Medical-Scribe`, and OpenScribe are recorded as **design references only**; no source from them is incorporated. Full details are in `ATTRIBUTION.txt`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_LICENSES/`, and `MODEL_INVENTORY.md`.
+Nightingale began from `fastapi/full-stack-fastapi-template@68adb40d` and keeps the upstream MIT notice. Direct use includes MIT Tiptap OSS and Serene Comment Extension, MIT Presidio packages, ISC `idb`, BSD-3-Clause zstandard, and the recorded Debian FFmpeg build. The optional, synthetic-only evaluation importer pins and verifies Synthea (Apache-2.0), ACI-Bench (CC BY-NC-SA 4.0), and PriMock57 (CC BY 4.0) sources; raw downloads remain outside Git and imported references are never represented as model output. faster-whisper, CTranslate2, PyAV, spaCy model, and pyannote are optional/profile-specific and have explicit packaging or model-license gates. `open-medical-scribe`, `AI-Medical-Scribe`, and OpenScribe are recorded as **design references only**; no source from them is incorporated. Full details are in `ATTRIBUTION.txt`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_LICENSES/`, `MODEL_INVENTORY.md`, and `datasets/README.md`.
 
 ### Explicit limitations
 
 - The deterministic text extractor and synthetic voice fixture are verified. They are workflow fixtures, not evidence of LLM/ASR quality or clinical validity.
+- Dataset importer behavior, checksums, idempotency, encryption, and provenance are verified with local test fixtures. This is not a model-quality benchmark result; downloaded benchmark references remain subject to their upstream licenses.
 - The OpenAI text/review/final-audio/provisional-live adapters have contract coverage with mocked transport. The live-caption state machine is also exercised with an explicitly synthetic deterministic fixture. **No live OpenAI call, model-quality evaluation, cost, or latency measurement was performed for this candidate.**
 - Provisional captions are ephemeral: they use bounded 100 ms application frames and are replaced by the immutable finalize result. A final AudioWorklet tail shorter than 100 ms is not forwarded to the provisional provider; MediaRecorder and the durable finalize path retain the authoritative recording.
 - faster-whisper is lock-resolved and gated to a pre-cached local model, but its CTranslate2/PyAV runtime and any weights are **not live-tested**. pyannote exposes readiness only; no gated model was downloaded or run, and no diarization result is claimed.

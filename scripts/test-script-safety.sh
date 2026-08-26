@@ -23,6 +23,8 @@ grep -q 'git status --porcelain --untracked-files=all' \
   "$root/scripts/verify-release.sh"
 grep -q 'release-verification-complete.txt' "$root/scripts/verify-release.sh"
 grep -q 'validate_release_evidence.py' "$root/scripts/package-release.sh"
+grep -q 'git bundle create' "$root/scripts/package-release.sh"
+grep -q 'git bundle verify' "$root/scripts/package-release.sh"
 grep -Fxq 'backend/app/frontend' "$root/.dockerignore"
 grep -Fxq 'frontend/.env*' "$root/.dockerignore"
 grep -Fq 'RUN test ! -e /app/backend/app/frontend' "$root/backend/Dockerfile"

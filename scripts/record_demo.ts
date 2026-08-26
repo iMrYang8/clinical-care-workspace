@@ -142,12 +142,21 @@ async function focusTarget(page: Page, target: Locator) {
   })
 }
 
-async function login(page: Page, role: "Care staff" | "Clinician" | "Patient") {
+async function login(
+  page: Page,
+  role: "Care staff" | "Clinician" | "Patient" | "Clinic admin",
+) {
   await page.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded" })
   const button = page.getByRole("button", { name: `Continue as ${role}` })
   await button.waitFor({ state: "visible" })
   await focusTarget(page, button)
-  await page.waitForURL(role === "Patient" ? /\/my-care$/ : /\/patients\/?$/)
+  const destination =
+    role === "Patient"
+      ? /\/my-care$/
+      : role === "Clinic admin"
+        ? /\/admin$/
+        : /\/patients\/?$/
+  await page.waitForURL(destination)
 }
 
 async function logout(page: Page) {
@@ -334,6 +343,31 @@ try {
   await pause(page, 3_000)
   await page.keyboard.press("Escape")
   await history.waitFor({ state: "hidden" })
+
+  await logout(page)
+  await login(page, "Clinic admin")
+  await page.getByRole("heading", { name: "Clinic administration" }).waitFor()
+  await focusTarget(
+    page,
+    page.getByRole("link", { name: /Care notes · read-only/ }),
+  )
+  await focusTarget(
+    page,
+    page.getByRole("link", { name: "Open care note for Alex Synthetic" }),
+  )
+  await page.getByRole("heading", { name: "Alex Synthetic" }).waitFor()
+  await page.getByText("admin · read-only oversight").waitFor()
+  await scene(
+    page,
+    "Admin oversight",
+    "Clinic-scoped visibility with clinical writes disabled",
+  )
+  if (
+    (await page.getByRole("button", { name: "Edit" }).count()) !== 0 ||
+    (await page.getByRole("link", { name: "Record visit" }).count()) !== 0
+  ) {
+    throw new Error("Admin recording exposed a clinical mutation control")
+  }
 
   await logout(page)
   await login(page, "Patient")

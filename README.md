@@ -68,8 +68,8 @@ export AI_PROVIDER=openai REMOTE_TEXT_EGRESS_ENABLED=true
 ```
 
 To regenerate the checked-in, **silent synthetic** UI walkthrough (Scenario A
-Glance/provenance, Scenario E patient-safe My Care, and Scenario F voice Review
-Mode), run:
+Glance/provenance, version history, Admin read-only oversight, Scenario E
+patient-safe My Care, and Scenario F voice Review Mode), run:
 
 ```bash
 BUN_BIN="$(command -v bun)" ./scripts/record-demo.sh
@@ -133,7 +133,11 @@ probe—including a direct visit to `/login` with an expired cookie—uses the s
 path and finishes bounded IndexedDB cleanup before sign-in controls appear.
 Bearer JWTs remain available for non-browser API compatibility.
 
-Clinic admins invite an email but never create its global user, choose a
+Clinic admins have clinic-scoped, read-only oversight of patient care notes,
+internal comments, immutable versions, Glance, and provenance. They cannot
+create, edit, comment on, assign, resolve, accept, reject, pin, publish, or
+archive clinical content. This is enforced by the API in addition to the UI.
+Admins invite an email but never create its global user, choose a
 temporary password, or silently attach an identity already used by another
 clinic. A 24-hour high-entropy one-time code is stored only as a hash; the
 recipient opens `/accept-invitation` (the code may be pasted or carried only in
@@ -263,9 +267,9 @@ after every requested gate and cleanup succeeds. `package-release.sh`
 cross-checks the commit and image through the completion marker, benchmark,
 FFmpeg record, candidate summary, raw log, and PDF evidence binding. It also
 rejects a dirty worktree, missing PDF/video/evidence, and an existing output
-path. The result contains a source archive, evidence, technical brief, demo
-video, per-file SHA-256 manifest, final ZIP, and ZIP checksum outside the
-repository.
+path. The result contains a source archive, a restorable full Git-history
+bundle, evidence, technical brief, demo video, per-file SHA-256 manifest, final
+ZIP, and ZIP checksum outside the repository.
 
 ## Production boundary
 

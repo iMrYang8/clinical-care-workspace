@@ -61,6 +61,8 @@ fi
 mkdir -p "$stage/release-evidence" "$stage/artifacts"
 git archive --format=zip --prefix=nightingale/ \
   --output="$stage/nightingale-source-$short.zip" HEAD
+git bundle create "$stage/nightingale-history-$short.bundle" --all
+git bundle verify "$stage/nightingale-history-$short.bundle" >/dev/null
 cp "$evidence_dir"/* "$stage/release-evidence/"
 cp "$pdf" "$stage/artifacts/Nightingale_Technical_Brief.pdf"
 cp "$pdf_binding" \
@@ -71,6 +73,7 @@ cat > "$stage/RELEASE_MANIFEST.txt" <<EOF
 Nightingale 72-hour synthetic healthcare candidate
 source_commit=$commit
 source_archive=nightingale-source-$short.zip
+git_history_bundle=nightingale-history-$short.bundle
 release_evidence=release-evidence/
 technical_brief=artifacts/Nightingale_Technical_Brief.pdf
 technical_brief_evidence_binding=artifacts/Nightingale_Technical_Brief.pdf.binding.json
@@ -83,6 +86,7 @@ EOF
   cd "$stage"
   shasum -a 256 \
     "nightingale-source-$short.zip" \
+    "nightingale-history-$short.bundle" \
     artifacts/Nightingale_Technical_Brief.pdf \
     artifacts/Nightingale_Technical_Brief.pdf.binding.json \
     artifacts/Nightingale_Demo.mp4 \
