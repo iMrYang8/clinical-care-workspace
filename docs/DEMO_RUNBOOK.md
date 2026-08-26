@@ -264,7 +264,54 @@ cat docs/evidence/ffmpeg-container-version.txt
 If the generator has not run against the release image, record the container
 FFmpeg build as **not tested** rather than copying host output.
 
-## 10. Demo teardown
+## 10. Record the silent synthetic walkthrough
+
+Requirements: Bun, Docker Desktop/Compose, host FFmpeg/ffprobe, and the local
+ability to use Playwright's browser cache/download on the first run.
+
+```bash
+BUN_BIN="$(command -v bun)" ./scripts/record-demo.sh
+```
+
+The command performs a path-bound reset through `reset-demo.sh` (which starts
+the application through `demo-up.sh`), installs only the frozen Bun lock, and
+installs the matching Playwright Chromium before using `scripts/record_demo.ts`
+to drive the real UI over self-signed local TLS.
+It records a 1280×720 silent video and converts Playwright's temporary recording
+with host FFmpeg to H.264/yuv420p with fast-start metadata:
+
+```text
+output/demo/Nightingale_Demo.mp4
+```
+
+The walkthrough logs in as Staff, resolves Alex Synthetic's Glance card to the
+exact immutable source, opens a version diff, changes to Patient and shows the
+approved-only My Care source, then changes to Clinician and completes the local
+synthetic voice fixture into Review Mode. The script mocks only browser capture
+hardware with deterministic WAV bytes, exactly as Scenario F does; it does not
+stub API responses or insert fabricated browser-only clinical data. Scene
+labels and focus rings are temporary DOM annotations used only for recording.
+The output intentionally has no audio track.
+
+To inspect the encoded deliverable and sample four frames:
+
+```bash
+ffprobe -v error \
+  -show_entries stream=codec_name,width,height:format=duration,size \
+  -of default=noprint_wrappers=1 output/demo/Nightingale_Demo.mp4
+mkdir -p /tmp/nightingale-demo-frames
+ffmpeg -y -i output/demo/Nightingale_Demo.mp4 \
+  -vf "select='eq(n,150)+eq(n,600)+eq(n,1050)+eq(n,1500)'" -vsync 0 \
+  /tmp/nightingale-demo-frames/frame-%02d.png
+```
+
+Set `NIGHTINGALE_RECORD_KEEP_STATE=1` to skip the path-bound database reset and
+record an already-running synthetic state. Reproducible delivery uses the
+default reset. If recording is interrupted, no other checkout/project is
+touched and the Playwright scratch video remains in the operating-system temp
+directory only.
+
+## 11. Demo teardown
 
 Stop containers while preserving the demo database:
 
