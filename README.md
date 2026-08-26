@@ -209,6 +209,29 @@ commits after that implementation commit do not retroactively change the
 evidence; rerun the full command for every new implementation release and
 hardware target.
 
+To produce a commit-bound delivery after a successful full gate, keep the
+evidence outside the worktree, add a `release-candidate.txt` summary to that
+directory, generate the three-page brief from the same evidence, and package
+only while Git is clean:
+
+```bash
+release_evidence="$(mktemp -d /var/tmp/nightingale-release.XXXXXXXX)"
+NIGHTINGALE_RELEASE_EVIDENCE_DIR="$release_evidence" \
+  ./scripts/verify-release.sh --e2e --benchmark --ffmpeg
+
+# release-candidate.txt must name the exact release-commit.txt SHA, verified
+# image ID, test counts, Glance result, and container FFmpeg version.
+NIGHTINGALE_EVIDENCE_DIR="$release_evidence" \
+  python3 scripts/build_technical_brief_pdf.py
+NIGHTINGALE_RELEASE_EVIDENCE_DIR="$release_evidence" \
+  ./scripts/package-release.sh
+```
+
+`package-release.sh` rejects a dirty worktree, mismatched evidence SHA, missing
+PDF/video/evidence, and an existing output path. It writes a source archive,
+evidence, technical brief, demo video, per-file SHA-256 manifest, final ZIP,
+and ZIP checksum outside the repository.
+
 ## Production boundary
 
 The no-`-f` command is deliberately the local development path because Docker

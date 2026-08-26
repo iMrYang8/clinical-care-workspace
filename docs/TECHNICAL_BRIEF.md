@@ -1,6 +1,6 @@
 # Nightingale — Technical Brief
 
-**72-hour synthetic healthcare collaboration candidate · verified implementation snapshot `2e59a9b` · 26 August 2026**
+**72-hour synthetic healthcare collaboration candidate · synthetic data only · 26 August 2026**
 
 Nightingale is a clinic-scoped care-note workspace designed to answer one practical question quickly: **what matters for this patient now, and what immutable source supports it?** It combines a precomputed Glance view, versioned human notes, anchored collaboration, reviewable AI-derived material, and recoverable voice capture without making an external model a prerequisite for the core demo. Every identity and clinical record in the repository is synthetic.
 
@@ -35,6 +35,7 @@ The default checkout is deliberately deterministic and offline: `AI_PROVIDER=det
 | AI | Fail-closed redaction; deterministic and configured remote-provider contracts; jobs, attempts, retry, idempotency, SSE status, fallback/review states |
 | Data decay | Eligibility preview; dry-run default; zstd + AES-GCM archive; checksum validation; rehydrate while retaining version/audit/provenance rows |
 | Voice | Encrypted resumable chunks; multi-device seal barrier; bounded FFmpeg preprocessing; immutable transcript revisions; Review Mode; fact → transcript → audio provenance; Clinician publication |
+| Provisional live captions | Same-origin, membership-revalidated WebSocket; bounded 24 kHz PCM16 frames; clinic/user/session leases; deterministic synthetic fixture and gated OpenAI adapter; final transcript remains authoritative |
 
 <div style="page-break-after: always;"></div>
 
@@ -80,7 +81,7 @@ All tenant rows carry `clinic_id`; tenant-composite foreign keys prevent cross-c
 
 The complete gate is `./scripts/verify-release.sh --e2e --benchmark --ffmpeg`. It checks frozen locks, Ruff/format/mypy/ty, pytest and coverage, Alembic downgrade/upgrade/current/check, frontend type/lint/unit/build, generated OpenAPI client sync, Compose rendering, TLS browser flows, Glance latency, container FFmpeg inventory, and the exact verified image in a separate production topology.
 
-| Evidence at candidate `2e59a9b` | Result | Boundary |
+| Checked-in historical evidence at candidate `2e59a9b` | Result | Boundary |
 | --- | --- | --- |
 | Backend | **180 passed, 1 skipped; 91% coverage** | Local full release-gate run |
 | Frontend unit | **26 / 26 passed** | Vitest |
@@ -89,7 +90,7 @@ The complete gate is `./scripts/verify-release.sh --e2e --benchmark --ffmpeg`. I
 | Container media | **FFmpeg 7.1.5-0+deb13u1** | Exact Debian arm64 backend image; GPL-enabled build recorded |
 | Release artifact | Image `sha256:96252cf9d76d89c69884ce0a9c7849d5be28190dd4b82b2603f077b07fba8c6b` | Benchmark, API, worker, FFmpeg, and production-topology smoke use the same OCI image |
 
-Candidate machine-readable evidence is shipped with the repository: [`glance-benchmark.json`](./evidence/glance-benchmark.json) records the fixture, response hashes, latency distribution, Compose fingerprint, image digest, and image revision; [`ffmpeg-container-version.txt`](./evidence/ffmpeg-container-version.txt) records the exact container binary and build configuration; and [`release-candidate.txt`](./evidence/release-candidate.txt) is the concise gate summary. The raw console stream was ephemeral and is not represented as an archived artifact. The latency number measures the precomputed snapshot read path, not model inference. Regenerate all release evidence for a new implementation commit or hardware target.
+The repository retains a historical machine-readable evidence set for auditability: [`glance-benchmark.json`](./evidence/glance-benchmark.json) records the fixture, response hashes, latency distribution, Compose fingerprint, image digest, and image revision; [`ffmpeg-container-version.txt`](./evidence/ffmpeg-container-version.txt) records the exact container binary and build configuration; and [`release-candidate.txt`](./evidence/release-candidate.txt) is its concise gate summary. It does not attest to later commits. Each delivery bundle contains a newly generated evidence directory—including the raw release log—bound to that bundle's exact source SHA and OCI image. The latency number measures the precomputed snapshot read path, not model inference.
 
 ## 5 · Demonstration path
 
@@ -102,6 +103,8 @@ Run `./scripts/demo-up.sh`, accept the local certificate warning at `https://loc
 - **E — Patient safety:** patient navigation and captured network responses contain no raw AI, internal comment, scoring internals, transcript/facts, or audio; provider-off state is explicit.
 - **F — Voice review:** two-device synthetic WAV capture, forced outage, encrypted reload recovery, finalization, Review Mode, fact-to-audio navigation, and Clinician publication.
 
+The repository also includes a reproducible silent walkthrough at [`output/demo/Nightingale_Demo.mp4`](../output/demo/Nightingale_Demo.mp4), covering the visible evidence, patient-safe, and synthetic voice-review paths.
+
 ## 6 · Provenance, licensing, and claim boundaries
 
 Nightingale began from `fastapi/full-stack-fastapi-template@68adb40d` and keeps the upstream MIT notice. Direct use includes MIT Tiptap OSS and Serene Comment Extension, MIT Presidio packages, ISC `idb`, BSD-3-Clause zstandard, and the recorded Debian FFmpeg build. faster-whisper, CTranslate2, PyAV, spaCy model, and pyannote are optional/profile-specific and have explicit packaging or model-license gates. `open-medical-scribe`, `AI-Medical-Scribe`, and OpenScribe are recorded as **design references only**; no source from them is incorporated. Full details are in `ATTRIBUTION.txt`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_LICENSES/`, and `MODEL_INVENTORY.md`.
@@ -109,8 +112,9 @@ Nightingale began from `fastapi/full-stack-fastapi-template@68adb40d` and keeps 
 ### Explicit limitations
 
 - The deterministic text extractor and synthetic voice fixture are verified. They are workflow fixtures, not evidence of LLM/ASR quality or clinical validity.
-- The OpenAI text/review/audio adapters have contract coverage with mocked transport, but **no live OpenAI call, model-quality evaluation, cost, or latency measurement was performed for this candidate**.
-- faster-whisper is lock-resolved and gated to a pre-cached local model, but its CTranslate2/PyAV runtime and any weights are **not live-tested**. pyannote exposes readiness only; no gated model was downloaded or run, and no diarization result is claimed. Live captions report unavailable.
+- The OpenAI text/review/final-audio/provisional-live adapters have contract coverage with mocked transport. The live-caption state machine is also exercised with an explicitly synthetic deterministic fixture. **No live OpenAI call, model-quality evaluation, cost, or latency measurement was performed for this candidate.**
+- Provisional captions are ephemeral: they use bounded 100 ms application frames and are replaced by the immutable finalize result. A final AudioWorklet tail shorter than 100 ms is not forwarded to the provisional provider; MediaRecorder and the durable finalize path retain the authoritative recording.
+- faster-whisper is lock-resolved and gated to a pre-cached local model, but its CTranslate2/PyAV runtime and any weights are **not live-tested**. pyannote exposes readiness only; no gated model was downloaded or run, and no diarization result is claimed.
 - Automated de-identification, encryption, RLS, and auditability do not make this a production EHR, medical device, or compliance certification. Only synthetic data was used.
 - The code and local release candidate exist at the verified SHA; **remote repository publication and hosted production deployment were not verified in this build session**.
 
