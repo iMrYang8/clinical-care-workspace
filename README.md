@@ -39,6 +39,21 @@ RESET_NIGHTINGALE_LOCAL_DEMO="$(./scripts/demo-project-name.sh --fingerprint)" \
 See [`docs/DEMO_RUNBOOK.md`](./docs/DEMO_RUNBOOK.md) for the Scenario A-F
 walkthrough, deterministic reset order, and the exact automated checks.
 
+To regenerate the checked-in, **silent synthetic** UI walkthrough (Scenario A
+Glance/provenance, Scenario E patient-safe My Care, and Scenario F voice Review
+Mode), run:
+
+```bash
+BUN_BIN="$(command -v bun)" ./scripts/record-demo.sh
+```
+
+The recorder resets only this checkout-scoped local Compose project, drives the
+real TLS application with Playwright at 1280×720, and asks host FFmpeg to write
+`output/demo/Nightingale_Demo.mp4` as H.264. The microphone and transcript are
+the explicitly labelled synthetic fixtures; no backend responses are stubbed.
+Set `NIGHTINGALE_RECORD_KEEP_STATE=1` only when deliberately recording the
+already-running synthetic state.
+
 ## What is implemented
 
 - **Trustworthy Glance:** up to five precomputed cards with a reason label and
