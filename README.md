@@ -172,16 +172,17 @@ automatic fixture seed, HTTPS redirect/routing, the durable worker, and its
 restricted database role without rebuilding the verified image.
 
 Individual commands are documented in the verification section of the demo
-runbook. The checked-in **historical** measurement for commit
-`ced58bf7501182b0b46147ebbe3a189eede3511a`
+runbook. The checked-in candidate measurement for implementation commit
+`2e59a9b89e65c81ac030d943e9f9e7c51cbfcab3`
 used the exact **Alex Synthetic** fixture (4/4 expected cards), 20 warmups and
-100 local HTTPS samples on the recorded arm64 host: median `3.124 ms`, p95
-`3.508 ms`, and p99 `3.707 ms`. The schema/body, Compose config, and backend
-image fingerprints are in
+100 local HTTPS samples on the recorded arm64 host: median `3.667 ms`, p95
+`4.077 ms`, and p99 `4.275 ms`. The schema/body, Compose config, exact backend
+image revision and image digest are in
 [`docs/evidence/glance-benchmark.json`](./docs/evidence/glance-benchmark.json).
-It measures the precomputed read path, not a model call. Because it is not from
-the current `HEAD`, it never satisfies a current release gate; rerun the full
-command for every release commit and hardware target.
+It measures the precomputed read path, not a model call. Documentation-only
+commits after that implementation commit do not retroactively change the
+evidence; rerun the full command for every new implementation release and
+hardware target.
 
 ## Production boundary
 
