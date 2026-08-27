@@ -1,122 +1,77 @@
-# Nightingale — Technical Brief
+# Nightingale technical overview
 
-**72-hour synthetic healthcare collaboration candidate · synthetic data only · 26 August 2026**
+Nightingale is a shared patient-care workspace for clinical teams. It helps care staff and clinicians understand current priorities, document care, coordinate follow-up, and review AI-assisted notes against their supporting sources. Clinic administrators manage access and review activity without editing clinical documentation. Patients use a separate My Care portal.
 
-Nightingale is a clinic-scoped care-note workspace designed to answer one practical question quickly: **what matters for this patient now, and what immutable source supports it?** It combines a precomputed Glance view, versioned human notes, anchored collaboration, reviewable AI-derived material, and recoverable voice capture without making an external model a prerequisite for the core demo. Every identity and clinical record in the repository is synthetic.
+## Product experience
 
-## 1 · Problem and solution
+The clinical workspace follows the way a care team reviews a patient record:
 
-Electronic records accumulate long notes, comments, generated summaries, and audio. A concise top card is useful only when users can inspect its source, understand why it ranked, distinguish human from derived content, and rely on permissions at both application and database boundaries. Nightingale therefore treats **evidence, version, tenant, role, and review state** as first-class data rather than UI labels.
+1. Open **Patients** and select a patient.
+2. Review up to five **Current priorities**.
+3. Open **Source details** to see the supporting note, author, date, exact wording, and whether the source is current or historical.
+4. Read and update the **Care timeline** within the user's permitted section.
+5. Use **Team discussion** to mention a colleague, assign follow-up, reply, and resolve a thread.
+6. Use **Change history** to understand who changed a note and when, compare saved versions, or restore an earlier version without deleting history.
+7. Review visit recordings, correct the transcript, confirm clinical findings, and publish the reviewed note.
 
-The implemented product loop is:
+Patients sign in separately. Their portal receives a deliberately narrower view that excludes internal discussions, AI working material, raw transcripts, audio, and ranking details.
 
-1. A Staff or Clinician user opens **Alex Synthetic** and reads at most five precomputed Glance cards.
-2. Each card exposes a reason and resolves to an exact span in an immutable `EntryVersion`.
-3. Staff and Clinician sections are independent entries; edits use `ETag`/`If-Match`, stale writes return `409 VERSION_CONFLICT`, and revert creates another version.
-4. Selected-text comments retain offsets, quote, prefix/suffix, and SHA-256 context; threads support replies, mentions, assignment, resolution, and orphan/review state.
-5. AI and voice outputs remain derived, reviewable records. A Clinician publishes accepted voice facts as new immutable entries; no generated result overwrites a human note.
-6. Patient responses are separate DTOs that omit raw AI, internal comments, scores, facts, transcripts, warnings, and audio.
-
-## 2 · Architecture
+## Architecture
 
 ![Nightingale system architecture](./architecture.svg)
 
-The browser application uses React, Vite, TanStack Router/Query, shadcn/ui, Tiptap `3.30.3`, the Serene comment mark extension `0.2.0`, MediaRecorder, WebCrypto, and IndexedDB. Traefik terminates local TLS. FastAPI serves the `/api/v1` boundary and the production frontend from the same origin. SQLModel and Alembic target PostgreSQL 16; a separate durable worker claims AI and voice jobs. The codebase is pinned to Python 3.12.
+The browser application uses React, TypeScript, Vite, TanStack Router and Query, shadcn/ui, and Tiptap. FastAPI serves the application boundary and the production frontend from the same origin. SQLModel and Alembic manage PostgreSQL data. A separate worker processes durable text and voice jobs.
 
-The default checkout is deliberately deterministic and offline: `AI_PROVIDER=deterministic`, voice transcription is disabled for ordinary recordings, and remote text/audio egress flags are false. Optional OpenAI, faster-whisper, and pyannote paths sit behind explicit configuration gates; no model weights or Hugging Face token are bundled.
-
-### Implemented capability surface
-
-| Area | Implemented behavior |
-| --- | --- |
-| Identity and tenancy | Secure-cookie login; Patient, Staff, Clinician, Admin, and Worker memberships; clinic-scoped read-only Admin oversight; one-time admin invitations; patient-record links; clinic-scoped RLS |
-| Care Note | Timeline; separate Staff/Clinician entries; Tiptap editor; immutable versions, diff, revert, CAS conflict; metadata-only audit |
-| Trust | Glance top five; score components and risk reason; accept/reject/pin; exact-span provenance; bounded clinic-scoped learning |
-| AI | Fail-closed redaction; deterministic and configured remote-provider contracts; jobs, attempts, retry, idempotency, SSE status, fallback/review states |
-| Data decay | Eligibility preview; dry-run default; zstd + AES-GCM archive; checksum validation; rehydrate while retaining version/audit/provenance rows |
-| Voice | Encrypted resumable chunks; multi-device seal barrier; bounded FFmpeg preprocessing; immutable transcript revisions; Review Mode; fact → transcript → audio provenance; Clinician publication |
-| Provisional live captions | Same-origin, membership-revalidated WebSocket; bounded 24 kHz PCM16 frames; clinic/user/session leases; deterministic synthetic fixture and gated OpenAI adapter; final transcript remains authoritative |
-
-<div style="page-break-after: always;"></div>
-
-## 3 · Trust, privacy, and data flow
-
-### Trust-preserving write path
-
-```text
-human text / synthetic fixture / authorized audio
-    → authenticated clinic membership + role check
-    → immutable source version or encrypted audio asset
-    → deterministic SG recognizers + configured Presidio + residual scan
-    → clinic-scoped durable job and fenced worker attempt
-    → deterministic fallback or explicitly enabled provider
-    → derived entry / highlight / transcript revision / clinical fact
-    → immutable span + quote hash (+ audio milliseconds for voice)
-    → Clinician review and separate publication
-    → precomputed, bounded Glance snapshot
-```
-
-Remote text is eligible for egress only after known patient names, NRIC/FIN-like identifiers, MRN, Singapore phone numbers, email patterns, configured Presidio analysis, and a residual scan all pass. The redaction map is encrypted; logs contain entity categories and counts rather than detected values. Missing NLP models, analyzer errors, or residual findings fail closed to a deterministic fallback and `needs_review`. This is a defense layer, not a guarantee that arbitrary real-world clinical text is de-identified.
-
-Voice chunks are encrypted in the browser before IndexedDB persistence and re-encrypted server-side after authenticated upload. Device-specific final indices form a server barrier that rejects missing chunks before finalization. FFmpeg uses argument arrays, protocol restrictions, time and size bounds, `0600` files in a `0700` temporary directory, and produces 16 kHz mono PCM plus silence/clipping/noise review signals. A synthetic transcript fixture exercises speaker, timestamp, language, confidence, code-switching, and overlap states; it is not represented as speech recognition.
-
-### Data model
+The main data chain is shown below:
 
 ![Nightingale clinic-scoped data model](./schema.svg)
 
-All tenant rows carry `clinic_id`; tenant-composite foreign keys prevent cross-clinic relationships. The central chain is `Patient → Entry → EntryVersion`. Comments and highlights bind to immutable versions. `ProvenancePointer` stores offsets, exact quote/context, quote hash, and optional audio asset/time range. Glance reads an encrypted `PatientGlanceSnapshot`, not a synchronous model call. AI, redaction, job, attempt, event, importance, decay, archive, voice, transcript, and fact records remain independently auditable.
+Care notes are stored as entries with immutable saved versions. Comments and current-priority cards point to a specific saved version and text span. Restoring an earlier note creates a new current version rather than deleting later history.
 
-### Security boundaries
+## Identity and permissions
 
-- The server ignores client-supplied clinic, actor, and role authority and resolves a current `ClinicMembership` before protected work. A non-owner runtime database role is `NOSUPERUSER` and `NOBYPASSRLS`; owner credentials are reserved for provisioning and migration.
-- Clinical text, comments, Glance payloads, redaction maps, transcript/facts, and audio use AES-256-GCM. HKDF derives a distinct clinic key and authenticated data binds clinic, namespace, and record. The field-encryption key is separate from the session secret outside development.
-- Browser auth uses a `Secure`, `HttpOnly`, `SameSite=Lax` cookie. Cookie mutations check Origin; bearer JWT remains only for API compatibility. SSE reauthorizes on each short poll and terminates at token expiry.
-- All API responses and the HTML shell are `private, no-store`; only content-hashed assets are public/immutable. Cross-tab logout and rejected session probes mask PHI and complete bounded IndexedDB cleanup before sign-in returns.
-- Admin has clinic-scoped read-only oversight of patient records, internal comments, versions, Glance, and provenance, but cannot mutate clinical content or workflow state. Admin also manages memberships and metadata audit. Patient onboarding is not conflated with a care-team invitation. Removal cannot deactivate the last active Admin.
-- Local demo ports bind to loopback. Production Compose disables demo auth and fixture seeding, separates owner/runtime database credentials, and promotes the same verified OCI image rather than rebuilding after approval.
+Every protected request resolves the signed-in user's active clinic membership on the server. Browser-supplied clinic, role, and author values are not trusted as authority.
 
-<div style="page-break-after: always;"></div>
+- **Care staff** can document care in the staff section and collaborate with the team.
+- **Clinicians** can document clinical judgement, review AI-assisted material, and publish reviewed visit notes.
+- **Clinic administrators** can manage members and inspect activity but cannot change clinical content.
+- **Patients** can read patient-facing information and submit their own insights or recordings through My Care.
+- **Background workers** receive narrowly scoped access to create derived records for an assigned clinic job.
 
-## 4 · Verification and release evidence
+Clinic-scoped foreign keys and PostgreSQL row-level security reinforce application authorization. Browser sessions use secure, same-origin cookies, and protected responses are not stored in shared caches.
 
-The complete gate is `./scripts/verify-release.sh --e2e --benchmark --ffmpeg`. It checks frozen locks, Ruff/format/mypy/ty, pytest and coverage, Alembic downgrade/upgrade/current/check, frontend type/lint/unit/build, generated OpenAPI client sync, Compose rendering, TLS browser flows, Glance latency, container FFmpeg inventory, and the exact verified image in a separate production topology.
+## Source-supported care
 
-| Checked-in historical evidence at candidate `2e59a9b` | Result | Boundary |
-| --- | --- | --- |
-| Backend | **180 passed, 1 skipped; 91% coverage** | Local full release-gate run |
-| Frontend unit | **26 / 26 passed** | Vitest |
-| Browser | **22 tests × 3 = 66 / 66 passed** | Chromium, real HTTPS app; includes Scenarios A–F |
-| Glance | **4 / 4 expected cards**; median **3.667 ms**, p95 **4.077 ms**, p99 **4.275 ms** | Alex Synthetic; 20 warmups + 100 local HTTPS samples; p95 gate ≤300 ms |
-| Container media | **FFmpeg 7.1.5-0+deb13u1** | Exact Debian arm64 backend image; GPL-enabled build recorded |
-| Release artifact | Image `sha256:96252cf9d76d89c69884ce0a9c7849d5be28190dd4b82b2603f077b07fba8c6b` | Benchmark, API, worker, FFmpeg, and production-topology smoke use the same OCI image |
+Current priorities are read from a precomputed snapshot, so opening a patient record does not wait for remote processing. Each priority points to an immutable note version and exact supporting wording. The interface presents the source title, author, date, quoted text, and historical status while keeping internal identifiers and integrity metadata out of the clinical workflow.
 
-The repository retains a historical machine-readable evidence set for auditability: [`glance-benchmark.json`](./evidence/glance-benchmark.json) records the fixture, response hashes, latency distribution, Compose fingerprint, image digest, and image revision; [`ffmpeg-container-version.txt`](./evidence/ffmpeg-container-version.txt) records the exact container binary and build configuration; and [`release-candidate.txt`](./evidence/release-candidate.txt) is its concise gate summary. It does not attest to later commits. Each delivery bundle contains a newly generated evidence directory—including the raw release log—bound to that bundle's exact source SHA and OCI image. The latency number measures the precomputed snapshot read path, not model inference.
+AI-assisted entries remain distinguishable from human notes. They carry a review message and do not overwrite human documentation. A clinician correction or publication creates a separate record with its own source links.
 
-## 5 · Demonstration path
+## Team collaboration and note history
 
-Run `./scripts/demo-up.sh`, accept the local certificate warning at `https://localhost`, and follow `docs/DEMO_RUNBOOK.md`:
+Staff and clinician notes are separate entries, allowing the two sections to progress independently. Concurrent updates to the same entry are compared against the version that was opened. If the note changed in another session, Nightingale preserves the user's draft and asks them to review the latest saved note.
 
-- **A — Evidence:** Glance card → exact immutable Timeline span.
-- **B — Collaboration:** anchored comment, `@clinician`, assignment, resolve, diff, revert-as-new-version, learning signal, and metadata-only audit.
-- **C — Retention:** cross-date Timeline → eligibility preview → archive → checksum-verified rehydrate.
-- **D — Concurrency:** two browser contexts produce a deterministic `409`, while edits to different entries succeed; Admin can read within the clinic but receives `403` on writes, and cross-clinic records remain `404`.
-- **E — Patient safety:** patient navigation and captured network responses contain no raw AI, internal comment, scoring internals, transcript/facts, or audio; provider-off state is explicit.
-- **F — Voice review:** two-device synthetic WAV capture, forced outage, encrypted reload recovery, finalization, Review Mode, fact-to-audio navigation, and Clinician publication.
+Selected-text discussions retain enough source context to reconnect to the intended wording after later edits. Mentions and assignments use clinic member names and roles in the interface. Administrators can inspect discussions as read-only oversight.
 
-The repository also includes a reproducible silent walkthrough at [`output/demo/Nightingale_Demo.mp4`](../output/demo/Nightingale_Demo.mp4), covering visible evidence, immutable history, Admin read-only oversight, patient-safe projection, and synthetic voice-review paths.
+## Visit recordings
 
-## 6 · Provenance, licensing, and claim boundaries
+The recording workflow supports temporary live captions, encrypted local recovery, resumable upload, final transcription, speaker and timing review, confidence indicators, transcript correction, clinical findings, and publication by a clinician. Temporary captions are never treated as the reviewed record.
 
-Nightingale began from `fastapi/full-stack-fastapi-template@68adb40d` and keeps the upstream MIT notice. Direct use includes MIT Tiptap OSS and Serene Comment Extension, MIT Presidio packages, ISC `idb`, BSD-3-Clause zstandard, and the recorded Debian FFmpeg build. The optional, synthetic-only evaluation importer pins and verifies Synthea (Apache-2.0), ACI-Bench (CC BY-NC-SA 4.0), and PriMock57 (CC BY 4.0) sources; raw downloads remain outside Git and imported references are never represented as model output. faster-whisper, CTranslate2, PyAV, spaCy model, and pyannote are optional/profile-specific and have explicit packaging or model-license gates. `open-medical-scribe`, `AI-Medical-Scribe`, and OpenScribe are recorded as **design references only**; no source from them is incorporated. Full details are in `ATTRIBUTION.txt`, `THIRD_PARTY_NOTICES.md`, `THIRD_PARTY_LICENSES/`, `MODEL_INVENTORY.md`, and `datasets/README.md`.
+The default local configuration keeps remote text and audio processing off. Optional processing integrations are enabled only through explicit deployment configuration. See the [voice pipeline](./VOICE_PIPELINE.md) and [processing inventory](../MODEL_INVENTORY.md) for operational gates and claim boundaries.
 
-### Explicit limitations
+## Privacy and data lifecycle
 
-- The deterministic text extractor and synthetic voice fixture are verified. They are workflow fixtures, not evidence of LLM/ASR quality or clinical validity.
-- Dataset importer behavior, checksums, idempotency, encryption, and provenance are verified with local test fixtures. This is not a model-quality benchmark result; downloaded benchmark references remain subject to their upstream licenses.
-- The OpenAI text/review/final-audio/provisional-live adapters have contract coverage with mocked transport. The live-caption state machine is also exercised with an explicitly synthetic deterministic fixture. **No live OpenAI call, model-quality evaluation, cost, or latency measurement was performed for this candidate.**
-- Provisional captions are ephemeral: they use bounded 100 ms application frames and are replaced by the immutable finalize result. A final AudioWorklet tail shorter than 100 ms is not forwarded to the provisional provider; MediaRecorder and the durable finalize path retain the authoritative recording.
-- faster-whisper is lock-resolved and gated to a pre-cached local model, but its CTranslate2/PyAV runtime and any weights are **not live-tested**. pyannote exposes readiness only; no gated model was downloaded or run, and no diarization result is claimed.
-- Automated de-identification, encryption, RLS, and auditability do not make this a production EHR, medical device, or compliance certification. Only synthetic data was used.
-- The code and local release candidate exist at the verified SHA; **remote repository publication and hosted production deployment were not verified in this build session**.
+Clinical text, discussions, current-priority payloads, transcripts, findings, and audio are encrypted with clinic-bound authenticated encryption. Text approved for remote processing first passes configured de-identification and residual checks; a failed check stops the remote call and records a review state.
 
-The defensible deliverable is therefore a reproducible, source-traceable synthetic care workflow with explicit fallback and review states—not a claim that an external model or production clinical deployment has been validated.
+Older eligible payloads can move to encrypted compressed storage while their saved-version metadata, activity record, and source links remain available. Rehydration verifies integrity before returning content to the active record.
+
+## Operations and verification
+
+The root [README](../README.md) contains the product workflow, local startup, configuration, and release checks. Additional references include:
+
+- [Voice pipeline](./VOICE_PIPELINE.md)
+- [Deployment guide](../deployment-docker-compose.md)
+- [Attribution](../ATTRIBUTION.txt)
+- [Third-party notices](../THIRD_PARTY_NOTICES.md)
+- [Delivery and historical verification material](./delivery/BUILD_DELIVERY.md)
+
+Delivery-specific scenarios, historical measurements, and recording instructions are isolated under [`docs/delivery/`](./delivery/) so that the primary documentation remains focused on clinical users and operators.

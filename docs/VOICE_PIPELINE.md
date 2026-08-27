@@ -118,7 +118,7 @@ docker compose run --rm backend \
 | Mode | Required configuration | Network/model behavior |
 | --- | --- | --- |
 | Disabled (default) | `VOICE_TRANSCRIPTION_PROVIDER=disabled` | No ASR; encrypted audio is retained with an explicit pending/review state. |
-| Synthetic fixture | Development demo plus explicit fixture checkbox | Fixed speaker/timestamp/code-switch/overlap fixture only; never selected for ordinary audio. |
+| Synthetic fixture | Development-only test session flag; no product-interface control | Fixed speaker/timestamp/code-switch/overlap fixture only; never selected for ordinary audio. |
 | OpenAI final transcription | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, `OPENAI_API_KEY`, `OPENAI_TRANSCRIBE_MODEL` | Sends the normalized audio only when every gate is true. `STRICT_NO_AUDIO_EGRESS=true` overrides all remote settings. Model IDs come from the environment. Calls have a bounded ASR timeout. |
 | faster-whisper | `compose.local-asr.yml`, a pre-cached `LOCAL_ASR_MODEL_DIR` | CPU/int8 and `local_files_only=True`; no runtime model download. Inference runs in a dedicated child process that is killed on timeout/cancellation, so retries cannot stack orphaned CTranslate2 threads. No diarization is claimed. |
 | pyannote experimental | `compose.diarization.yml`, accepted model terms, cached `PYANNOTE_MODEL_DIR` | Default off. Current code exposes a local readiness gate; it does not silently fetch or apply a gated model. |
@@ -159,7 +159,7 @@ failures after a session/provider attempt persist `unavailable` or
 
 Live captions are intentionally ephemeral. They are not written as transcript
 revisions or clinical facts. The durable finalize worker creates the immutable
-transcript and sets the live status to `replaced`, so the final Review Mode
+transcript and sets the live status to `replaced`, so the final reviewed visit
 result is always authoritative. `replaced` is terminal: a late socket error or
 disconnect cannot downgrade the finalized state.
 
@@ -182,9 +182,9 @@ docker compose -f compose.yml -f compose.override.yml \
 No Hugging Face token or weight is committed. A missing dependency, missing
 directory, or rejected model access cannot block the core synthetic demo.
 
-## Review and publication
+## Clinical review and publication
 
-Clinical Review Mode shows transcript, summary, and facts in desktop columns
+**Review visit recording** shows transcript, summary, and findings in desktop columns
 and mobile tabs. It exposes speaker, timestamp, language, confidence, overlap,
 low-confidence filtering, and honest `stale`, `needs_review`, `fallback`,
 `ready`, and `published` states. Clicking a fact scrolls to its transcript
