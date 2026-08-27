@@ -321,6 +321,51 @@ def test_importance_exposure_dedup_and_feedback_reasons(
     assert event.applied_delta == 0
 
 
+def test_decision_explanation_exposes_review_controls(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("clinician")
+    _, highlight = _create_highlight(
+        client,
+        headers,
+        content="Anaphylaxis after penicillin exposure.",
+    )
+    response = client.get(
+        f"/api/v1/highlights/{highlight['id']}/decision-explanation",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    explanation = response.json()
+    assert explanation["highlight_id"] == highlight["id"]
+    assert explanation["review_state"] in {
+        "ready",
+        "review_required",
+        "abstained",
+    }
+    assert explanation["risk"]["effective"] == "critical"
+    assert explanation["risk"]["rule_version"] == "clinical-risk-rules-v2"
+    assert explanation["importance"]["protected"] is True
+    assert "band" in explanation["confidence"]
+
+
+def test_request_review_keeps_highlight_visible(
+    client: TestClient, auth_headers
+) -> None:
+    headers = auth_headers("staff")
+    _, highlight = _create_highlight(
+        client,
+        auth_headers("clinician"),
+        content="Follow-up blood pressure review is due.",
+    )
+    response = client.post(
+        f"/api/v1/highlights/{highlight['id']}/request-review",
+        headers=headers,
+        json={"reason": "Please confirm the current follow-up date."},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["unresolved"] is True
+
+
 def test_every_patient_publication_item_has_exact_source(
     client: TestClient, auth_headers, owner_session: Session
 ) -> None:
