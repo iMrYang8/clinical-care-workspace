@@ -246,6 +246,7 @@ test("clinic administrators see administration but not patient navigation", asyn
     allowAdminAISettings: true,
   })
 
+  await page.getByRole("button", { name: "New invitation" }).click()
   const inviteEmail = page.getByLabel("Email")
   await inviteEmail.fill("not-an-email")
   await page.getByRole("button", { name: "Send verified invitation" }).click()

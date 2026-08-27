@@ -239,7 +239,9 @@ test("failed network and CSRF logout stay masked until a confirmed retry", async
     .getByRole("link", { name: "Open care note for Alex Tan" })
     .click()
   await expect(second.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
-  await expect(second.getByText("Current priorities")).toBeVisible()
+  await expect(
+    second.getByRole("heading", { name: "Current priorities", exact: true }),
+  ).toBeVisible()
 
   let attempts = 0
   let csrfStatus: number | undefined
@@ -912,6 +914,7 @@ test("[Scenario B] recipient accepts a one-time clinic invitation in the public 
 
   await signInAs(page, "admin")
   await expect(page).toHaveURL(/\/admin$/)
+  await page.getByRole("button", { name: "New invitation" }).click()
   await page.getByLabel("Email").fill(email)
   await page.getByLabel("Display name").fill("Verified Browser Invite")
   await page.getByLabel("Role").selectOption("clinician")
