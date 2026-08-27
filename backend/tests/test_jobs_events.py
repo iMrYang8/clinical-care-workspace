@@ -450,7 +450,9 @@ def test_invalid_interaction_type_never_reaches_provider_or_plaintext_storage(
             outbound.append(redacted_text)
             raise AssertionError("provider must not be called")
 
-    monkeypatch.setattr(ai_jobs, "_configured_remote_provider", lambda *_: SpyProvider())
+    monkeypatch.setattr(
+        ai_jobs, "_configured_remote_provider", lambda *_: SpyProvider()
+    )
     headers = auth_headers("clinician")
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
     source = client.post(
