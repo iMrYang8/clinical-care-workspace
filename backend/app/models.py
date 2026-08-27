@@ -769,6 +769,16 @@ class ConflictCase(TenantRow, table=True):
             name="fk_conflict_right_pointer",
         ),
         ForeignKeyConstraint(
+            ["clinic_id", "left_assertion_id"],
+            ["clinical_fact_assertions.clinic_id", "clinical_fact_assertions.id"],
+            name="fk_conflict_left_assertion",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "right_assertion_id"],
+            ["clinical_fact_assertions.clinic_id", "clinical_fact_assertions.id"],
+            name="fk_conflict_right_assertion",
+        ),
+        ForeignKeyConstraint(
             ["clinic_id", "resolved_by_membership_id"],
             ["clinic_memberships.clinic_id", "clinic_memberships.id"],
             name="fk_conflict_resolver",
@@ -1173,6 +1183,16 @@ class DecisionAssessment(TenantRow, table=True):
             name="fk_decision_assessment_highlight",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["clinic_id", "assertion_id"],
+            ["clinical_fact_assertions.clinic_id", "clinical_fact_assertions.id"],
+            name="fk_decision_assessment_assertion",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "calibration_report_id"],
+            ["calibration_reports.clinic_id", "calibration_reports.id"],
+            name="fk_decision_assessment_calibration",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     highlight_id: uuid.UUID
@@ -1234,6 +1254,10 @@ class ClinicalFactAssertion(TenantRow, table=True):
             "patient_id",
             "fact_type",
         ),
+        Index(
+            "ix_clinicalfactassertion_normalized_key_hash",
+            "normalized_key_hash",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     patient_id: uuid.UUID
@@ -1246,7 +1270,7 @@ class ClinicalFactAssertion(TenantRow, table=True):
     normalized_value_ciphertext: bytes = Field(
         sa_column=Column(LargeBinary, nullable=False)
     )
-    normalized_key_hash: str = Field(max_length=64, index=True)
+    normalized_key_hash: str = Field(max_length=64)
     polarity: str = Field(default="present", max_length=20)
     clinical_status: str = Field(default="active", max_length=30)
     effective_time: datetime | None = Field(
@@ -1306,6 +1330,12 @@ class CalibrationReport(TenantRow, table=True):
             "task",
             "expires_at",
         ),
+        ForeignKeyConstraint(
+            ["clinic_id", "evaluation_run_id"],
+            ["evaluation_runs.clinic_id", "evaluation_runs.id"],
+            name="fk_calibration_report_run",
+            ondelete="CASCADE",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     evaluation_run_id: uuid.UUID
@@ -1339,6 +1369,12 @@ class CalibrationBucket(TenantRow, table=True):
             "calibration_report_id",
             "bucket_key",
             name="uq_calibration_bucket",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "calibration_report_id"],
+            ["calibration_reports.clinic_id", "calibration_reports.id"],
+            name="fk_calibration_bucket_report",
+            ondelete="CASCADE",
         ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -1474,6 +1510,16 @@ class PatientPublicationItem(TenantRow, table=True):
             ["clinic_id", "provenance_pointer_id"],
             ["provenance_pointers.clinic_id", "provenance_pointers.id"],
             name="fk_patient_publication_item_pointer",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "assertion_id"],
+            ["clinical_fact_assertions.clinic_id", "clinical_fact_assertions.id"],
+            name="fk_publication_item_assertion",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "decision_assessment_id"],
+            ["decision_assessments.clinic_id", "decision_assessments.id"],
+            name="fk_publication_item_assessment",
         ),
         UniqueConstraint(
             "clinic_id",
