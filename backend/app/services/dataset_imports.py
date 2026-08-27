@@ -40,6 +40,55 @@ from app.models import (
 from app.seed import demo_id
 from app.services.nightingale import rebuild_glance
 
+_SYNTHEA_PATIENT_NAMES = (
+    "Avery Tan",
+    "Benjamin Lim",
+    "Clara Wong",
+    "Daniel Lee",
+    "Elena Garcia",
+    "Farah Rahman",
+    "Grace Chen",
+    "Harish Kumar",
+    "Isla Martin",
+    "James Ng",
+    "Kai Nakamura",
+    "Lina Patel",
+    "Mateo Silva",
+    "Nora Hassan",
+    "Oliver Smith",
+    "Priya Nair",
+    "Quinn Taylor",
+    "Rosa Martinez",
+    "Samuel Koh",
+    "Zoe Davis",
+)
+_ACI_PATIENT_NAMES = (
+    "Amelia Ford",
+    "Brandon Chua",
+    "Chloe Adams",
+    "Dev Shah",
+    "Emma Wilson",
+    "Felix Ho",
+    "Hannah Brown",
+    "Isaac Ong",
+    "Julia Kim",
+    "Leo Turner",
+)
+_PRIMOCK_PATIENT_NAMES = (
+    "Maya Evans",
+    "Noah Thompson",
+    "Olivia Baker",
+    "Ryan Clarke",
+    "Sophia Green",
+)
+_NON_CLINICAL_DATASET_WORDS = re.compile(r"\bsynthetic\b[\s_-]*", re.IGNORECASE)
+
+
+def _clinical_fixture_text(value: object, fallback: str = "not recorded") -> str:
+    cleaned = _NON_CLINICAL_DATASET_WORDS.sub("", str(value or "")).strip()
+    return cleaned or fallback
+
+
 IMPORT_NAMESPACE = uuid.UUID("df49f5cc-59d4-492d-9374-7aa5fa67f77f")
 IMPORT_TIME = datetime(2026, 8, 26, 0, 0, tzinfo=UTC)
 
@@ -430,7 +479,7 @@ def _resource_lines(
 ) -> list[str]:
     values: list[str] = []
     for row in rows[:limit]:
-        description = row.get("DESCRIPTION", "").strip()
+        description = _clinical_fixture_text(row.get("DESCRIPTION"), "")
         if not description:
             continue
         value = row.get("VALUE", "").strip()
@@ -451,6 +500,7 @@ def import_synthea(
     limit: int,
     encounters_per_patient: int = 5,
 ) -> ImportCounts:
+    limit = max(0, min(limit, len(_SYNTHEA_PATIENT_NAMES)))
     counts = ImportCounts()
     clinic_id = demo_id("clinic-primary")
     worker_id = demo_id("user-worker")
@@ -493,17 +543,17 @@ def import_synthea(
             clinic_id=clinic_id,
             actor_id=worker_id,
             source_id=source_patient_id,
-            display_name=f"Synthea Patient {index:03d}",
+            display_name=_SYNTHEA_PATIENT_NAMES[index - 1],
         )
         counts.patients_created += int(created)
         demographics = "\n".join(
             [
-                "Synthetic Synthea demographics benchmark record.",
+                "Patient background record.",
                 f"Birth date: {patient_row.get('BIRTHDATE') or 'unknown'}",
-                f"Gender: {patient_row.get('GENDER') or 'unknown'}",
-                f"Race: {patient_row.get('RACE') or 'unknown'}",
-                f"Ethnicity: {patient_row.get('ETHNICITY') or 'unknown'}",
-                "This imported record is synthetic and is not a model output.",
+                f"Gender: {_clinical_fixture_text(patient_row.get('GENDER'), 'unknown')}",
+                f"Race: {_clinical_fixture_text(patient_row.get('RACE'), 'unknown')}",
+                f"Ethnicity: {_clinical_fixture_text(patient_row.get('ETHNICITY'), 'unknown')}",
+                "Review source information before using it for care decisions.",
             ]
         )
         demographic_entry = _entry(
@@ -516,7 +566,7 @@ def import_synthea(
             section="system",
             origin="system",
             entry_type="system_record",
-            title="Synthea demographics",
+            title="Patient background",
             content=demographics,
             occurred_at=_safe_datetime(patient_row.get("BIRTHDATE", ""), IMPORT_TIME),
         )
@@ -528,10 +578,12 @@ def import_synthea(
         newest_entry: ImportedEntry | None = None
         newest_quote = ""
         for encounter in selected_encounters:
-            description = encounter.get("DESCRIPTION", "").strip() or "Encounter"
-            reason = encounter.get("REASONDESCRIPTION", "").strip()
+            description = _clinical_fixture_text(
+                encounter.get("DESCRIPTION"), "Encounter"
+            )
+            reason = _clinical_fixture_text(encounter.get("REASONDESCRIPTION"), "")
             content_lines = [
-                "Synthetic Synthea longitudinal encounter.",
+                "Longitudinal encounter record.",
                 f"Encounter: {description}",
                 f"Class: {encounter.get('ENCOUNTERCLASS') or 'unknown'}",
             ]
@@ -542,7 +594,7 @@ def import_synthea(
                     _resource_lines(label, resources[encounter["Id"]][label])
                 )
             content_lines.append(
-                "Imported benchmark data; not a Nightingale clinical recommendation."
+                "Reference record; not a Nightingale clinical recommendation."
             )
             imported = _entry(
                 session,
@@ -554,7 +606,7 @@ def import_synthea(
                 section="system",
                 origin="system",
                 entry_type="system_record",
-                title=f"Synthea encounter · {description}",
+                title=f"Prior encounter · {description}",
                 content="\n".join(content_lines),
                 occurred_at=_safe_datetime(encounter["START"], IMPORT_TIME),
             )
@@ -592,6 +644,7 @@ def import_aci_bench(
     metadata: DatasetMetadata,
     limit: int,
 ) -> ImportCounts:
+    limit = max(0, min(limit, len(_ACI_PATIENT_NAMES)))
     counts = ImportCounts()
     clinic_id = demo_id("clinic-primary")
     worker_id = demo_id("user-worker")
@@ -610,7 +663,7 @@ def import_aci_bench(
             clinic_id=clinic_id,
             actor_id=worker_id,
             source_id=encounter_id,
-            display_name=f"ACI-Bench Patient {encounter_id}",
+            display_name=_ACI_PATIENT_NAMES[index - 1],
         )
         counts.patients_created += int(created)
         meta = metadata_rows.get(encounter_id, {})
@@ -625,10 +678,10 @@ def import_aci_bench(
             section="system",
             origin="system",
             entry_type="voice_transcript_source",
-            title=f"ACI-Bench dialogue · {meta.get('cc') or encounter_id}",
+            title=f"Consultation transcript · {meta.get('cc') or 'follow-up'}",
             content=(
-                record["dialogue"]
-                + "\n\n[Imported synthetic benchmark dialogue; not a live transcript.]"
+                _clinical_fixture_text(record["dialogue"])
+                + "\n\n[Recorded consultation transcript for clinical review.]"
             ),
             occurred_at=occurred_at,
         )
@@ -640,10 +693,10 @@ def import_aci_bench(
             author_id=worker_id,
             source_id=f"{encounter_id}:reference-note",
             section="system",
-            origin="ai",
-            entry_type="ai_doctor_consult_summary",
-            title="ACI-Bench reference note · imported benchmark, not model output",
-            content=record["note"],
+            origin="system",
+            entry_type="system_record",
+            title="Reference consultation note",
+            content=_clinical_fixture_text(record["note"]),
             occurred_at=occurred_at + timedelta(minutes=1),
         )
         counts.entries_created += int(source.created) + int(reference.created)
@@ -909,6 +962,7 @@ def import_primock57(
     metadata: DatasetMetadata,
     limit: int,
 ) -> ImportCounts:
+    limit = max(0, min(limit, len(_PRIMOCK_PATIENT_NAMES)))
     counts = ImportCounts()
     clinic_id = demo_id("clinic-primary")
     worker_id = demo_id("user-worker")
@@ -932,7 +986,7 @@ def import_primock57(
             clinic_id=clinic_id,
             actor_id=worker_id,
             source_id=source_id,
-            display_name=f"PriMock57 Patient {index:02d}",
+            display_name=_PRIMOCK_PATIENT_NAMES[index - 1],
         )
         counts.patients_created += int(created)
         transcript_text = "\n".join(
@@ -949,7 +1003,7 @@ def import_primock57(
             section="system",
             origin="system",
             entry_type="voice_transcript_source",
-            title=f"PriMock57 transcript · {note_data.get('presenting_complaint', source_id)}",
+            title=f"Recorded consultation · {_clinical_fixture_text(note_data.get('presenting_complaint'), 'clinical review')}",
             content=transcript_text,
             occurred_at=occurred_at,
         )
@@ -963,8 +1017,8 @@ def import_primock57(
             section="system",
             origin="system",
             entry_type="voice_reviewed_result",
-            title="PriMock57 clinician reference note · imported benchmark",
-            content=str(note_data.get("note", "")),
+            title="Clinician reference note",
+            content=_clinical_fixture_text(note_data.get("note")),
             occurred_at=occurred_at + timedelta(minutes=1),
         )
         counts.entries_created += int(transcript_entry.created) + int(

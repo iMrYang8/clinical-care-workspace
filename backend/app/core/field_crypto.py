@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import uuid
@@ -47,6 +48,24 @@ class FieldEncryptionCodec:
             salt=clinic_id.bytes,
             info=b"nightingale/field-encryption/v1",
         ).derive(self.master_key)
+
+    def blind_index(self, clinic_id: uuid.UUID, namespace: str, value: str) -> str:
+        """Return a clinic-scoped keyed digest for exact-match lookup.
+
+        Blind indexes deliberately use a different HKDF info string from field
+        encryption.  A database dump therefore cannot run a useful dictionary
+        attack without the application master key, and equal identifiers in two
+        clinics never produce the same digest.
+        """
+
+        key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=clinic_id.bytes,
+            info=b"nightingale/blind-index/v1",
+        ).derive(self.master_key)
+        payload = f"{namespace}:{value}".encode()
+        return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
     @staticmethod
     def aad(clinic_id: uuid.UUID, namespace: str, record_id: uuid.UUID) -> bytes:

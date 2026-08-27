@@ -8,7 +8,10 @@ from app.api.routes import (
     decay,
     entries,
     events,
+    patient_registry,
     patients,
+    platform,
+    team,
     trust,
     utils,
     voice,
@@ -20,7 +23,11 @@ api_router.include_router(auth.router)
 api_router.include_router(admin.router)
 api_router.include_router(ai.router)
 api_router.include_router(utils.router)
+api_router.include_router(patient_registry.router)
+api_router.include_router(patient_registry.auth_router)
+api_router.include_router(platform.router)
 api_router.include_router(patients.router)
+api_router.include_router(team.router)
 api_router.include_router(entries.router)
 api_router.include_router(collaboration.router)
 api_router.include_router(trust.router)

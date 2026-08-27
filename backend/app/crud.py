@@ -7,7 +7,8 @@ DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZm
 
 
 def authenticate(*, session: Session, email: str, password: str) -> User | None:
-    user = session.exec(select(User).where(User.email == email)).first()
+    normalized_email = email.strip().lower()
+    user = session.exec(select(User).where(User.email == normalized_email)).first()
     if user is None:
         verify_password(password, DUMMY_HASH)
         return None

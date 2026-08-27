@@ -21,6 +21,7 @@ from app.models import (
     AIRunPublic,
     ClinicMembership,
     ConflictCase,
+    DecisionAssessment,
     Entry,
     EntryVersion,
     Highlight,
@@ -33,6 +34,14 @@ from app.models import (
     RedactionRun,
     User,
     get_datetime_utc,
+)
+from app.services.clinic_ai_settings import clinic_ai_runtime
+from app.services.decisioning import (
+    create_assertion,
+    deterministic_risk,
+    evaluation_manifest_sha256,
+    matching_calibration_report,
+    redaction_is_qualified,
 )
 from app.services.importance import refresh_highlight_score, sanitize_feature_keys
 from app.services.nightingale import decrypt_version, emit_change, get_patient
@@ -62,6 +71,7 @@ _WARNING_CODES: frozenset[str] = frozenset(
         "INVALID_RAW_EVIDENCE_SPAN",
         "NO_STRUCTURED_FACTS",
         "PRESIDIO_UNAVAILABLE",
+        "REDACTION_EVALUATION_REQUIRED",
         "PROVIDER_FACT_SCHEMA_INVALID",
         "PROVIDER_REPORTED_WARNING",
         "PROVIDER_WARNING_SCHEMA_INVALID",
@@ -135,18 +145,21 @@ def _map_facts_to_source(
     return mapped, discarded
 
 
-def _configured_remote_provider() -> OpenAITextProvider | None:
+def _configured_remote_provider(
+    session: Session, clinic_id: uuid.UUID
+) -> OpenAITextProvider | None:
+    runtime = clinic_ai_runtime(session, clinic_id)
     if (
         settings.AI_PROVIDER != "openai"
         or not settings.REMOTE_TEXT_EGRESS_ENABLED
-        or not settings.OPENAI_API_KEY
-        or not settings.OPENAI_EXTRACT_MODEL
+        or not runtime.api_key
+        or not runtime.fast_model
     ):
         return None
     return OpenAITextProvider(
-        api_key=settings.OPENAI_API_KEY,
-        extract_model=settings.OPENAI_EXTRACT_MODEL,
-        review_model=settings.OPENAI_REVIEW_MODEL,
+        api_key=runtime.api_key,
+        extract_model=runtime.fast_model,
+        review_model=runtime.careful_model,
     )
 
 
@@ -497,13 +510,21 @@ def _create_fact_provenance(
     source_text: str,
     facts: list[ClinicalFact],
     needs_review: bool,
+    provider: str,
+    model: str,
 ) -> None:
     for fact in facts:
         quote = source_text[fact.evidence_start : fact.evidence_end]
         if not quote or quote != fact.evidence_quote:
             continue
         feature_keys = sanitize_feature_keys(fact.feature_keys)
-        if fact.critical and "risk:critical" not in feature_keys:
+        risk = deterministic_risk(
+            fact_type=fact.fact_type,
+            text=quote,
+            model_risk="critical" if fact.critical else None,
+        )
+        effective_critical = risk.effective_risk == "critical"
+        if effective_critical and "risk:critical" not in feature_keys:
             feature_keys.append("risk:critical")
         highlight_id = uuid.uuid4()
         highlight = Highlight(
@@ -516,7 +537,7 @@ def _create_fact_provenance(
                 context.clinic_id, "highlight.label", highlight_id, fact.value
             ),
             status="pending",
-            critical=fact.critical,
+            critical=effective_critical,
             patient_facing=False,
             anchor_state="resolved",
             # Evidence validity is independent from the AI run's clinical
@@ -532,24 +553,104 @@ def _create_fact_provenance(
         pointer_id = uuid.uuid4()
         prefix = source_text[max(0, fact.evidence_start - 32) : fact.evidence_start]
         suffix = source_text[fact.evidence_end : fact.evidence_end + 32]
+        pointer = ProvenancePointer(
+            id=pointer_id,
+            clinic_id=context.clinic_id,
+            highlight_id=highlight.id,
+            entry_version_id=source_version.id,
+            start_offset=fact.evidence_start,
+            end_offset=fact.evidence_end,
+            exact_quote_ciphertext=field_codec.encrypt_text(
+                context.clinic_id, "provenance.exact_quote", pointer_id, quote
+            ),
+            prefix_ciphertext=field_codec.encrypt_text(
+                context.clinic_id, "provenance.prefix", pointer_id, prefix
+            ),
+            suffix_ciphertext=field_codec.encrypt_text(
+                context.clinic_id, "provenance.suffix", pointer_id, suffix
+            ),
+            quote_sha256=hashlib.sha256(quote.encode()).hexdigest(),
+        )
+        session.add(pointer)
+        session.flush()
+        from app.services.conflicts import extract_normalized_facts
+
+        normalized = next(
+            (
+                item
+                for item in extract_normalized_facts(quote)
+                if item.fact_type == fact.fact_type.lower()
+            ),
+            None,
+        )
+        assertion = create_assertion(
+            session,
+            clinic_id=context.clinic_id,
+            patient_id=job.patient_id,
+            entry_id=source_version.entry_id,
+            source_entry_version_id=source_version.id,
+            provenance_pointer=pointer,
+            fact_type=fact.fact_type,
+            subject=normalized.key if normalized else fact.value,
+            normalized_value=normalized.value if normalized else fact.value,
+            origin="ai",
+            highlight_id=highlight.id,
+        )
+        from app.services.conflicts import detect_conflicts_for_assertion
+
+        assertion_conflicts = detect_conflicts_for_assertion(
+            session, context, assertion
+        )
+        if assertion_conflicts:
+            highlight.unresolved = True
+            if any(item.severity == "critical" for item in assertion_conflicts):
+                highlight.critical = True
+            session.add(highlight)
+        request_parameters: dict[str, object] = {
+            "schema": "clinical-fact-v2",
+            "prompt": "fact-extraction-v2",
+        }
+        report = matching_calibration_report(
+            session,
+            clinic_id=context.clinic_id,
+            provider=provider,
+            exact_model_id=model,
+            task="clinical_fact_extraction",
+            request_parameters=request_parameters,
+            dataset_manifest_sha256=evaluation_manifest_sha256(),
+            code_commit=settings.NIGHTINGALE_SOURCE_COMMIT,
+        )
+        confidence_band = report.confidence_band if report else "unavailable"
+        abstained = needs_review or confidence_band not in {"high", "medium"}
         session.add(
-            ProvenancePointer(
-                id=pointer_id,
+            DecisionAssessment(
                 clinic_id=context.clinic_id,
                 highlight_id=highlight.id,
-                entry_version_id=source_version.id,
-                start_offset=fact.evidence_start,
-                end_offset=fact.evidence_end,
-                exact_quote_ciphertext=field_codec.encrypt_text(
-                    context.clinic_id, "provenance.exact_quote", pointer_id, quote
+                assertion_id=assertion.id,
+                output_type="extracted_fact",
+                support_state="supported",
+                risk_tier=risk.effective_risk,
+                deterministic_floor=risk.deterministic_floor,
+                model_risk=risk.model_risk,
+                effective_risk=risk.effective_risk,
+                risk_rule_ids_json=risk.rule_ids,
+                confidence_value=(report.accuracy_lower_bound if report else None),
+                confidence_lower_bound=(
+                    report.accuracy_lower_bound if report else None
                 ),
-                prefix_ciphertext=field_codec.encrypt_text(
-                    context.clinic_id, "provenance.prefix", pointer_id, prefix
+                confidence_band=confidence_band,
+                calibration_version=(str(report.id) if report else None),
+                calibration_report_id=(report.id if report else None),
+                abstained=abstained,
+                abstention_reason=(
+                    "clinical_review_required"
+                    if needs_review
+                    else "calibration_unavailable"
+                    if report is None
+                    else "calibrated_accuracy_below_threshold"
+                    if confidence_band == "low"
+                    else None
                 ),
-                suffix_ciphertext=field_codec.encrypt_text(
-                    context.clinic_id, "provenance.suffix", pointer_id, suffix
-                ),
-                quote_sha256=hashlib.sha256(quote.encode()).hexdigest(),
             )
         )
 
@@ -753,7 +854,14 @@ async def process_job(
             ),
             fallback_provider=fallback,
         )
-        remote_provider = _configured_remote_provider()
+        redaction_qualified = redaction_is_qualified(
+            session, clinic_id=context.clinic_id
+        )
+        remote_provider = (
+            _configured_remote_provider(session, context.clinic_id)
+            if redaction_qualified
+            else None
+        )
         result = await pipeline.run(
             source_text,
             context=extraction_context,
@@ -799,6 +907,8 @@ async def process_job(
             result.draft.facts, source_text
         )
         warnings = _safe_warning_codes([*result.draft.warnings, *review_warnings])
+        if not redaction_qualified:
+            warnings.append("REDACTION_EVALUATION_REQUIRED")
         if raw_mapping_failed:
             warnings.append("INVALID_RAW_EVIDENCE_SPAN")
         needs_review = (
@@ -842,10 +952,14 @@ async def process_job(
             source_text=source_text,
             facts=facts,
             needs_review=needs_review,
+            provider=result.draft.provider,
+            model=result.draft.model,
         )
         fallback_reason: str | None = None
         if result.used_fallback:
-            if result.redaction.error_code:
+            if not redaction_qualified:
+                fallback_reason = "REDACTION_EVALUATION_REQUIRED"
+            elif result.redaction.error_code:
                 fallback_reason = result.redaction.error_code
             elif settings.AI_PROVIDER == "disabled":
                 fallback_reason = "PROVIDER_DISABLED"

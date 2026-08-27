@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # 60 minutes * 24 hours * 8 days = 8 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
     AUTH_COOKIE_NAME: str = "nightingale_session"
+    PLATFORM_AUTH_COOKIE_NAME: str = "nightingale_platform_session"
     AUTH_COOKIE_SECURE: bool = True
     AUTH_COOKIE_SAMESITE: Literal["lax", "strict"] = "lax"
     # The supported browser path is same-origin TLS. A standalone Vite origin
@@ -90,6 +91,7 @@ class Settings(BaseSettings):
     LIVE_TRANSCRIPT_MAX_USER_CONNECTIONS: int = 2
 
     PROJECT_NAME: str
+    NIGHTINGALE_SOURCE_COMMIT: str = "unknown"
     SENTRY_DSN: HttpUrl | None = None
     DATABASE_URL: PostgresDsn
     # Only one-shot migration/bootstrap processes receive this credential.

@@ -6,7 +6,8 @@ pytestmark = pytest.mark.unit
 
 
 def test_delivery_openapi_surface_is_complete() -> None:
-    paths = set(app.openapi()["paths"])
+    document = app.openapi()
+    paths = set(document["paths"])
     required = {
         "/api/v1/auth/demo-login",
         "/api/v1/auth/me",
@@ -20,5 +21,13 @@ def test_delivery_openapi_surface_is_complete() -> None:
         "/api/v1/voice/sessions",
         "/api/v1/admin/memberships",
         "/api/v1/admin/audit",
+        "/api/v1/team/members",
     }
     assert required <= paths
+    clinic_code = next(
+        parameter
+        for parameter in document["paths"]["/api/v1/auth/login"]["post"]["parameters"]
+        if parameter["name"] == "X-Clinic-Code"
+    )
+    assert clinic_code["in"] == "header"
+    assert clinic_code["required"] is True

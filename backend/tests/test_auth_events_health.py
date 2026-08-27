@@ -3,6 +3,7 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlmodel import Session
 
 from app import initial_data
@@ -11,10 +12,10 @@ from app.api.routes import events as events_route
 from app.core.config import settings
 from app.core.db import engine
 from app.main import app
-from app.models import ClinicMembership, DomainEvent
+from app.models import ClinicMembership, DomainEvent, MembershipInvitationAccept, User
 from app.seed import demo_id
 
-CLINIC_HEADER = {"X-Clinic-ID": str(demo_id("clinic-primary"))}
+CLINIC_HEADER = {"X-Clinic-Code": "NIGHTINGALE"}
 
 
 def test_password_login_logout_health_and_bad_token(client) -> None:
@@ -22,13 +23,16 @@ def test_password_login_logout_health_and_bad_token(client) -> None:
         "/api/v1/auth/login",
         headers=CLINIC_HEADER,
         data={
-            "username": "staff@nightingale.synthetic",
+            "username": "staff@nightingale.example",
             "password": "synthetic-demo-only",
         },
     )
     assert login.status_code == 200, login.text
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
-    assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
+    me = client.get("/api/v1/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["clinic_code"] == "NIGHTINGALE"
+    assert me.json()["clinic_name"] == "Nightingale Clinic"
     assert client.post("/api/v1/auth/logout", headers=headers).status_code == 200
     assert client.get("/api/v1/utils/health-check/").json() is True
     invalid = client.get("/api/v1/auth/me", headers={"Authorization": "Bearer invalid"})
@@ -40,7 +44,7 @@ def test_password_login_logout_health_and_bad_token(client) -> None:
             "/api/v1/auth/login",
             headers=CLINIC_HEADER,
             data={
-                "username": "staff@nightingale.synthetic",
+                "username": "staff@nightingale.example",
                 "password": "wrong-password",
             },
         ).status_code
@@ -51,7 +55,7 @@ def test_password_login_logout_health_and_bad_token(client) -> None:
             "/api/v1/auth/login",
             headers=CLINIC_HEADER,
             data={
-                "username": "missing@nightingale.synthetic",
+                "username": "missing@nightingale.example",
                 "password": "wrong-password",
             },
         ).status_code
@@ -70,11 +74,131 @@ def test_password_login_requires_active_membership(client) -> None:
         "/api/v1/auth/login",
         headers=CLINIC_HEADER,
         data={
-            "username": "staff@nightingale.synthetic",
+            "username": "staff@nightingale.example",
             "password": "synthetic-demo-only",
         },
     )
-    assert response.status_code == 403
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Incorrect clinic code, email, or password"
+
+
+def test_password_login_normalizes_clinic_code_and_email_and_unifies_failures(
+    client,
+) -> None:
+    successful = client.post(
+        "/api/v1/auth/login",
+        headers={"X-Clinic-Code": "nightingale"},
+        data={
+            "username": "  STAFF@NIGHTINGALE.EXAMPLE  ",
+            "password": "synthetic-demo-only",
+        },
+    )
+    assert successful.status_code == 200, successful.text
+
+    attempts = (
+        (
+            {"X-Clinic-Code": "UNKNOWN"},
+            "staff@nightingale.example",
+            "synthetic-demo-only",
+        ),
+        (
+            {"X-Clinic-Code": "NIGHTINGALE"},
+            "missing@nightingale.example",
+            "synthetic-demo-only",
+        ),
+        (
+            {"X-Clinic-Code": "NIGHTINGALE"},
+            "staff@nightingale.example",
+            "wrong-password",
+        ),
+        (
+            {"X-Clinic-Code": "NTU-01"},
+            "staff@nightingale.example",
+            "synthetic-demo-only",
+        ),
+        (
+            {"X-Clinic-Code": " NIGHTINGALE "},
+            "staff@nightingale.example",
+            "synthetic-demo-only",
+        ),
+        (
+            {"X-Clinic-Code": "OTHERCLINIC"},
+            "staff@nightingale.example",
+            "synthetic-demo-only",
+        ),
+        (
+            {"X-Clinic-Code": "NIGHTINGALE"},
+            "staff@nightingale.example",
+            "x" * 201,
+        ),
+    )
+    errors = []
+    for headers, username, password in attempts:
+        response = client.post(
+            "/api/v1/auth/login",
+            headers=headers,
+            data={"username": username, "password": password},
+        )
+        errors.append((response.status_code, response.json()["detail"]))
+    assert set(errors) == {
+        (400, "Incorrect clinic code, email, or password"),
+    }
+
+
+def test_password_login_uses_the_same_error_for_an_inactive_user(
+    client, owner_session
+) -> None:
+    user = owner_session.get(User, demo_id("user-staff"))
+    assert user is not None
+    user.is_active = False
+    owner_session.add(user)
+    owner_session.commit()
+
+    response = client.post(
+        "/api/v1/auth/login",
+        headers=CLINIC_HEADER,
+        data={
+            "username": "staff@nightingale.example",
+            "password": "synthetic-demo-only",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Incorrect clinic code, email, or password"
+
+
+def test_password_login_rejects_worker_membership_with_the_generic_error(
+    client,
+) -> None:
+    response = client.post(
+        "/api/v1/auth/login",
+        headers=CLINIC_HEADER,
+        data={
+            "username": "worker@nightingale.example",
+            "password": "synthetic-demo-only",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Incorrect clinic code, email, or password"
+    assert settings.AUTH_COOKIE_NAME not in response.cookies
+
+
+def test_invitation_password_schema_preserves_passphrases_and_enforces_bounds() -> None:
+    for length in (16, 200):
+        password = " " + "x" * (length - 1)
+        body = MembershipInvitationAccept(
+            email="clinician@example.com",
+            token="t" * 64,
+            password=password,
+        )
+        assert body.password == password
+    for length in (15, 201):
+        with pytest.raises(ValidationError):
+            MembershipInvitationAccept(
+                email="clinician@example.com",
+                token="t" * 64,
+                password="x" * length,
+            )
 
 
 def test_inactive_authenticated_membership_marks_session_invalid(

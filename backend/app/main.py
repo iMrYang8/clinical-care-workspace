@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import sentry_sdk
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
 from sentry_sdk.types import Event, Hint
 from starlette.datastructures import MutableHeaders
@@ -23,7 +23,7 @@ FRONTEND_DIR = Path(__file__).parent / "frontend"
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
-    return f"{route.tags[0]}-{route.name}"
+    return f"{route.tags[0] if route.tags else 'frontend'}-{route.name}"
 
 
 def _sanitize_sentry_event(event: Event, _hint: Hint) -> Event | None:
@@ -135,13 +135,17 @@ class CookieCsrfMiddleware:
 
         request = Request(scope, receive=receive)
         is_mutation = request.method in {"POST", "PUT", "PATCH", "DELETE"}
-        cookie_auth = bool(request.cookies.get(settings.AUTH_COOKIE_NAME))
+        cookie_auth = bool(
+            request.cookies.get(settings.AUTH_COOKIE_NAME)
+            or request.cookies.get(settings.PLATFORM_AUTH_COOKIE_NAME)
+        )
         bearer_auth = (
             request.headers.get("authorization", "").lower().startswith("bearer ")
         )
         login_path = request.url.path in {
             f"{settings.API_V1_STR}/auth/login",
             f"{settings.API_V1_STR}/auth/demo-login",
+            f"{settings.API_V1_STR}/platform/auth/login",
         }
         if is_mutation and cookie_auth and not bearer_auth and not login_path:
             supplied = request.headers.get("origin")
@@ -237,4 +241,22 @@ async def version_conflict_handler(
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 if FRONTEND_DIR.exists():
+
+    @app.get("/login", include_in_schema=False)
+    @app.get("/accept-invitation", include_in_schema=False)
+    @app.get("/admin", include_in_schema=False)
+    @app.get("/my-care", include_in_schema=False)
+    @app.get("/my-care/{spa_path:path}", include_in_schema=False)
+    @app.get("/patients", include_in_schema=False)
+    @app.get("/patients/{spa_path:path}", include_in_schema=False)
+    @app.get("/patient", include_in_schema=False)
+    @app.get("/patient/{spa_path:path}", include_in_schema=False)
+    @app.get("/platform", include_in_schema=False)
+    @app.get("/platform/{spa_path:path}", include_in_schema=False)
+    async def frontend_route(spa_path: str = "") -> FileResponse:
+        """Return the SPA shell for browser deep links and refreshes."""
+
+        del spa_path
+        return FileResponse(FRONTEND_DIR / "index.html", media_type="text/html")
+
     app.frontend("/", directory=FRONTEND_DIR)

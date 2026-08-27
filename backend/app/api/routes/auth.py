@@ -9,6 +9,7 @@ from sqlmodel import col, select
 
 from app import crud
 from app.api.deps import CurrentContext, SessionDep
+from app.clinic_codes import normalize_clinic_code
 from app.core import security
 from app.core.config import settings
 from app.core.db import set_rls_clinic
@@ -30,6 +31,8 @@ from app.models import (
 from app.seed import demo_id, membership_for_persona
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_AUTHENTICATION_ERROR = "Incorrect clinic code, email, or password"
 
 
 def _set_rls_clinic(session: SessionDep, clinic_id: uuid.UUID) -> None:
@@ -88,23 +91,34 @@ def password_login(
     session: SessionDep,
     response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    x_clinic_id: Annotated[uuid.UUID, Header(alias="X-Clinic-ID")],
+    x_clinic_code: Annotated[str, Header(alias="X-Clinic-Code")],
 ) -> Token:
+    clinic_code = normalize_clinic_code(x_clinic_code)
+    if clinic_code is None or not 1 <= len(form_data.password) <= 200:
+        security.verify_password(form_data.password, crud.DUMMY_HASH)
+        raise HTTPException(status_code=400, detail=_AUTHENTICATION_ERROR)
+    clinic = session.exec(select(Clinic).where(Clinic.code == clinic_code)).first()
+    if clinic is None:
+        security.verify_password(form_data.password, crud.DUMMY_HASH)
+        raise HTTPException(status_code=400, detail=_AUTHENTICATION_ERROR)
+    _set_rls_clinic(session, clinic.id)
     user = crud.authenticate(
         session=session, email=form_data.username, password=form_data.password
     )
     if user is None or not user.is_active:
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
-    _set_rls_clinic(session, x_clinic_id)
+        raise HTTPException(status_code=400, detail=_AUTHENTICATION_ERROR)
     membership = session.exec(
         select(ClinicMembership).where(
             ClinicMembership.user_id == user.id,
-            ClinicMembership.clinic_id == x_clinic_id,
+            ClinicMembership.clinic_id == clinic.id,
             col(ClinicMembership.is_active).is_(True),
         )
     ).first()
-    if membership is None:
-        raise HTTPException(status_code=403, detail="No active clinic membership")
+    # Worker memberships are service identities bound to a claimed job. They
+    # are deliberately excluded from the human password-login surface; worker
+    # tokens continue to be issued only by the trusted internal workflow.
+    if membership is None or membership.role == "worker":
+        raise HTTPException(status_code=400, detail=_AUTHENTICATION_ERROR)
     token = _token(membership)
     _set_browser_cookie(response, token)
     return token
@@ -237,12 +251,17 @@ def accept_membership_invitation(
 
 
 @router.get("/me", response_model=MePublic)
-def me(context: CurrentContext) -> MePublic:
+def me(session: SessionDep, context: CurrentContext) -> MePublic:
+    clinic = session.get(Clinic, context.clinic_id)
+    if clinic is None:
+        raise HTTPException(status_code=403, detail="Invalid membership context")
     return MePublic(
         user_id=context.user_id,
         email=context.user.email,
         full_name=context.user.full_name,
         clinic_id=context.clinic_id,
+        clinic_code=clinic.code,
+        clinic_name=clinic.name,
         membership_id=context.membership.id,
         role=context.role,
     )

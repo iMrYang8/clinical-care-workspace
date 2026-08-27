@@ -226,7 +226,7 @@ def test_evaluation_pack_import_is_encrypted_traceable_and_idempotent(
     synthea_patient_id = stable_id("synthea", "patient", "synthea-patient-1")
     patient = owner_session.get(Patient, synthea_patient_id)
     assert patient is not None
-    assert b"Synthea Patient" not in patient.display_name_ciphertext
+    assert b"Avery Tan" not in patient.display_name_ciphertext
 
     encounter_entry_id = stable_id("synthea", "entry", "encounter:synthea-encounter-1")
     encounter = owner_session.get(Entry, encounter_entry_id)
@@ -266,10 +266,25 @@ def test_evaluation_pack_import_is_encrypted_traceable_and_idempotent(
     assert patient_list.status_code == 200
     names = {row["display_name"] for row in patient_list.json()["data"]}
     assert {
-        "Synthea Patient 001",
-        "ACI-Bench Patient ACI001",
-        "PriMock57 Patient 01",
+        "Avery Tan",
+        "Amelia Ford",
+        "Maya Evans",
     }.issubset(names)
+    for display_name in ("Avery Tan", "Amelia Ford", "Maya Evans"):
+        patient_id = next(
+            row["id"]
+            for row in patient_list.json()["data"]
+            if row["display_name"] == display_name
+        )
+        visible_timeline = client.get(
+            f"/api/v1/patients/{patient_id}/timeline", headers=headers
+        )
+        assert visible_timeline.status_code == 200
+        visible_text = json.dumps(visible_timeline.json()).lower()
+        assert "synthetic" not in visible_text
+        assert "synthea" not in visible_text
+        assert "aci-bench" not in visible_text
+        assert "primock57" not in visible_text
     timeline = client.get(
         f"/api/v1/patients/{synthea_patient_id}/timeline", headers=headers
     )

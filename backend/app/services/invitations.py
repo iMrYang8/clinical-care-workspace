@@ -40,3 +40,35 @@ def deliver_membership_invitation(*, recipient: str, token: str) -> None:
         if settings.SMTP_USER and settings.SMTP_PASSWORD:
             smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
         smtp.send_message(message)
+
+
+def deliver_patient_portal_invitation(
+    *, recipient: str, token: str, clinic_name: str
+) -> None:
+    """Deliver a patient-record link without placing the secret in a request URL."""
+
+    if not settings.emails_enabled or settings.SMTP_HOST is None:
+        raise RuntimeError("Invitation email delivery is not configured")
+    message = EmailMessage()
+    message["Subject"] = f"Access your care information from {clinic_name}"
+    message["From"] = f"{settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>"
+    message["To"] = recipient
+    acceptance_url = (
+        f"{str(settings.FRONTEND_HOST).rstrip('/')}/patient/accept-invitation#"
+        f"{quote(token, safe='')}"
+    )
+    message.set_content(
+        f"{clinic_name} invited you to access information shared through "
+        "Nightingale. The one-time code expires in 24 hours:\n\n"
+        f"{token}\n\nOpen this fragment-only link:\n{acceptance_url}\n\n"
+        "If you did not expect this invitation, ignore this message."
+    )
+    smtp_type: type[smtplib.SMTP] = (
+        smtplib.SMTP_SSL if settings.SMTP_SSL else smtplib.SMTP
+    )
+    with smtp_type(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as smtp:
+        if settings.SMTP_TLS and not settings.SMTP_SSL:
+            smtp.starttls()
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        smtp.send_message(message)

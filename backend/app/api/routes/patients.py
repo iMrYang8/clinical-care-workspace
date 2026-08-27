@@ -1,6 +1,7 @@
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import col, select
 
 from app.api.deps import CurrentContext, SessionDep
@@ -17,7 +18,13 @@ from app.models import (
     PatientTimeline,
     ProvenancePointer,
 )
-from app.services.nightingale import get_patient, list_patients, read_glance, timeline
+from app.services.nightingale import (
+    get_patient,
+    list_patients,
+    read_glance,
+    read_review_glance,
+    timeline,
+)
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 
@@ -90,10 +97,24 @@ def _patient_card_source_is_currently_visible(
 
 @router.get("", response_model=PatientsPublic)
 @router.get("/", response_model=PatientsPublic, include_in_schema=False)
-def patients(session: SessionDep, context: CurrentContext) -> PatientsPublic:
+def patients(
+    session: SessionDep,
+    context: CurrentContext,
+    search: str | None = Query(default=None, max_length=100),
+    visit_scope: Literal["all", "today", "previous"] = Query(default="all"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> PatientsPublic:
     _require_patient_data_role(context)
-    data = list_patients(session, context)
-    return PatientsPublic(data=data, count=len(data))
+    data, count = list_patients(
+        session,
+        context,
+        search=search,
+        visit_scope=visit_scope,
+        offset=offset,
+        limit=limit,
+    )
+    return PatientsPublic(data=data, count=count, offset=offset, limit=limit)
 
 
 @router.get("/{patient_id}/timeline", response_model=PatientTimeline)
@@ -150,13 +171,22 @@ def patient_glance(
             generated_at=generated_at,
             cards=patient_cards,
         )
+    clinical_cards = [
+        ClinicalGlanceCard.model_validate(
+            card | {"score_components": card.get("score_components", {})}
+        )
+        for card in cards[:5]
+    ]
+    review_cards_raw, _ = read_review_glance(snapshot)
+    review_cards = [
+        ClinicalGlanceCard.model_validate(
+            card | {"score_components": card.get("score_components", {})}
+        )
+        for card in review_cards_raw
+    ]
     return ClinicalGlancePublic(
         patient_id=patient_id,
         generated_at=generated_at,
-        cards=[
-            ClinicalGlanceCard.model_validate(
-                card | {"score_components": card.get("score_components", {})}
-            )
-            for card in cards[:5]
-        ],
+        cards=clinical_cards,
+        review_cards=review_cards,
     )

@@ -97,7 +97,12 @@ class OpenAITextProvider:
         return parsed
 
     @staticmethod
-    def _draft_from_raw(raw: dict[str, Any], *, model: str) -> ClinicalNoteDraft:
+    def _draft_from_raw(
+        raw: dict[str, Any],
+        *,
+        model: str,
+        source_text: str | None = None,
+    ) -> ClinicalNoteDraft:
         facts: list[ClinicalFact] = []
         raw_facts = raw.get("facts", [])
         invalid_fact = not isinstance(raw_facts, list)
@@ -108,13 +113,30 @@ class OpenAITextProvider:
                 invalid_fact = True
                 continue
             try:
+                evidence_quote = str(item["evidence_quote"])[:20_000]
+                evidence_start = int(item["evidence_start"])
+                evidence_end = int(item["evidence_end"])
+                # Models are poor character counters.  Repair an offset only
+                # when the verbatim quote has one unambiguous occurrence in
+                # the primary source.  Repeated or absent quotes remain
+                # invalid and are discarded by validate_evidence rather than
+                # attaching a fact to a guessed origin.
+                if (
+                    source_text is not None
+                    and evidence_quote
+                    and source_text[evidence_start:evidence_end] != evidence_quote
+                ):
+                    first = source_text.find(evidence_quote)
+                    if first >= 0 and source_text.find(evidence_quote, first + 1) < 0:
+                        evidence_start = first
+                        evidence_end = first + len(evidence_quote)
                 facts.append(
                     ClinicalFact(
                         fact_type=str(item["fact_type"])[:80],
                         value=str(item["value"])[:2_000],
-                        evidence_start=int(item["evidence_start"]),
-                        evidence_end=int(item["evidence_end"]),
-                        evidence_quote=str(item["evidence_quote"])[:20_000],
+                        evidence_start=evidence_start,
+                        evidence_end=evidence_end,
+                        evidence_quote=evidence_quote,
                         feature_keys=[
                             str(key)[:120] for key in item.get("feature_keys", [])[:20]
                         ],
@@ -150,7 +172,9 @@ class OpenAITextProvider:
         raw = await self.transport(
             self.extract_model, redacted_text, context.interaction_type
         )
-        return self._draft_from_raw(raw, model=self.extract_model)
+        return self._draft_from_raw(
+            raw, model=self.extract_model, source_text=redacted_text
+        )
 
     async def review(
         self,
@@ -187,4 +211,6 @@ class OpenAITextProvider:
             review_payload,
             f"{context.interaction_type}:review",
         )
-        return self._draft_from_raw(raw, model=self.review_model)
+        return self._draft_from_raw(
+            raw, model=self.review_model, source_text=redacted_text
+        )

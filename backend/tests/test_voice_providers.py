@@ -77,10 +77,11 @@ def test_openai_audio_adapter_normalizes_timestamped_segments(
             },
             {
                 "text": "penicillin allergy",
-                "start": 1.25,
+                "start": 1.0,
                 "end": 2.5,
-                "overlap_group_id": "overlap-1",
             },
+            {"text": "   ", "start": 2.5, "end": 2.75},
+            {"text": "invalid range", "start": 3.0, "end": 3.0},
             {"start": 3.0, "end": 4.0},
         ],
     }
@@ -99,7 +100,9 @@ def test_openai_audio_adapter_normalizes_timestamped_segments(
     assert result.segments[0].end_ms == 1_250
     assert result.segments[0].confidence_source == "provider"
     assert result.segments[1].confidence_source == "unavailable"
-    assert result.segments[1].overlap_group_id == "overlap-1"
+    assert result.segments[0].overlap_group_id == "openai-overlap-0"
+    assert result.segments[1].overlap_group_id == "openai-overlap-0"
+    assert result.warnings == ("PROVIDER_DROPPED_INVALID_SEGMENT_RANGE",)
     assert _AsyncClient.request["data"]["response_format"] == "diarized_json"
     assert _AsyncClient.request["headers"] == {"Authorization": "Bearer TOKEN"}
 

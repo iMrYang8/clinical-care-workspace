@@ -18,6 +18,75 @@ def _entry(client: TestClient, headers: dict[str, str]) -> dict:
     return response.json()
 
 
+def test_ai_scribed_highlight_is_promoted_and_resolves_to_exact_ai_version(
+    client: TestClient, auth_headers
+) -> None:
+    clinician_headers = auth_headers("clinician")
+    worker_headers = auth_headers("worker")
+    patient_id = client.get("/api/v1/patients", headers=clinician_headers).json()[
+        "data"
+    ][0]["id"]
+    content = "prefix clinician review is required suffix"
+    quote = "clinician review is required"
+    start = content.index(quote)
+
+    ai_entry = client.post(
+        "/api/v1/entries",
+        headers=worker_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "system",
+            "origin": "ai",
+            "entry_type": "ai_doctor_consult_summary",
+            "title": "Synthetic AI doctor consult summary",
+            "content": content,
+        },
+    )
+    assert ai_entry.status_code == 201, ai_entry.text
+    ai = ai_entry.json()
+    assert ai["origin"] == "ai"
+    assert ai["entry_type"] == "ai_doctor_consult_summary"
+
+    highlight = client.post(
+        f"/api/v1/entries/{ai['id']}/highlights",
+        headers=clinician_headers,
+        json={
+            "entry_version_id": ai["version_id"],
+            "start_offset": start,
+            "end_offset": start + len(quote),
+            "exact_quote": quote,
+            "prefix": content[:start],
+            "suffix": content[start + len(quote) :],
+            "label": "AI doctor draft requires clinician review",
+            "feature_keys": ["entry_type:ai_doctor_consult_summary"],
+            "clinician_confirmed": True,
+        },
+    )
+    assert highlight.status_code == 201, highlight.text
+    created = highlight.json()
+    assert created["anchor_state"] == "resolved"
+
+    accepted = client.post(
+        f"/api/v1/highlights/{created['id']}/accept", headers=clinician_headers
+    )
+    assert accepted.status_code == 200, accepted.text
+    glance = client.get(
+        f"/api/v1/patients/{patient_id}/glance", headers=clinician_headers
+    )
+    assert glance.status_code == 200, glance.text
+    assert created["id"] in {card["highlight_id"] for card in glance.json()["cards"]}
+
+    resolved = client.get(
+        f"/api/v1/provenance/{created['provenance_pointer_id']}/resolve",
+        headers=clinician_headers,
+    )
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    assert body["state"] == "resolved"
+    assert body["exact_quote"] == quote
+    assert body["entry_version_id"] == ai["version_id"]
+
+
 def test_provenance_resolves_against_immutable_version_after_edit(
     client: TestClient, auth_headers
 ) -> None:

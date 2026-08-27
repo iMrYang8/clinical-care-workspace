@@ -1,8 +1,10 @@
+import uuid
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.models import Comment, CommentMention
+from app.models import AuditEvent, Comment, CommentMention, DomainEvent
 
 
 def test_comment_anchor_mentions_assignment_resolve_and_encryption(
@@ -65,6 +67,43 @@ def test_comment_anchor_mentions_assignment_resolve_and_encryption(
     )
     assert resolved.status_code == 200
     assert resolved.json()["resolved_at"] is not None
+
+    assert (
+        client.post(
+            f"/api/v1/comments/{comment['id']}/unresolve",
+            headers=auth_headers("admin"),
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            f"/api/v1/comments/{comment['id']}/unresolve",
+            headers=auth_headers("patient"),
+        ).status_code
+        == 403
+    )
+    reopened = client.post(
+        f"/api/v1/comments/{comment['id']}/unresolve", headers=clinician_headers
+    )
+    assert reopened.status_code == 200
+    assert reopened.json()["resolved_at"] is None
+
+    with Session(engine) as session:
+        comment_id = uuid.UUID(comment["id"])
+        audit = session.exec(
+            select(AuditEvent).where(
+                AuditEvent.resource_id == comment_id,
+                AuditEvent.action == "comment.unresolved",
+            )
+        ).one()
+        domain_event = session.exec(
+            select(DomainEvent).where(
+                DomainEvent.aggregate_id == comment_id,
+                DomainEvent.event_type == "comment.unresolved",
+            )
+        ).one()
+        assert audit.metadata_json["entry_id"] == entry["id"]
+        assert domain_event.payload_json["entry_id"] == entry["id"]
 
     patient_membership = client.get(
         "/api/v1/auth/me", headers=auth_headers("patient")

@@ -29,6 +29,9 @@ def get_db() -> Generator[Session]:
 SessionDep = Annotated[Session, Depends(get_db)]
 BearerTokenDep = Annotated[str | None, Depends(reusable_oauth2)]
 CookieTokenDep = Annotated[str | None, Cookie(alias=settings.AUTH_COOKIE_NAME)]
+PlatformCookieTokenDep = Annotated[
+    str | None, Cookie(alias=settings.PLATFORM_AUTH_COOKIE_NAME)
+]
 
 # Fetch callers must distinguish an invalid authenticated context from an
 # ordinary role/record-level 403 without consuming or guessing at a JSON error
@@ -144,8 +147,16 @@ def _trusted_token(bearer: str | None, cookie: str | None) -> str:
 
 
 def get_request_context(
-    session: SessionDep, bearer: BearerTokenDep, cookie: CookieTokenDep = None
+    session: SessionDep,
+    bearer: BearerTokenDep,
+    cookie: CookieTokenDep = None,
+    platform_cookie: PlatformCookieTokenDep = None,
 ) -> RequestContext:
+    if bearer is None and cookie is None and platform_cookie is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="Platform administrators use the audited read-only workspace",
+        )
     return _resolve_request_context(session, _trusted_token(bearer, cookie))
 
 

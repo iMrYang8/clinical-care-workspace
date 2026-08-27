@@ -47,6 +47,11 @@ from app.models import (
     get_datetime_utc,
 )
 from app.services.ai_jobs import create_or_replay_job
+from app.services.conflicts import (
+    detect_conflicts_for_assertion,
+    extract_normalized_facts,
+)
+from app.services.decisioning import create_assertion
 from app.services.nightingale import emit_change, get_patient
 from app.services.voice.provenance import validate_fact_evidence
 
@@ -1182,35 +1187,62 @@ def publish_voice_result(
         start = fact.transcript_start
         end = fact.transcript_end
         pointer_id = uuid.uuid4()
-        db.add(
-            ProvenancePointer(
-                id=pointer_id,
-                clinic_id=context.clinic_id,
-                clinical_fact_id=fact.id,
-                entry_version_id=source_version.id,
-                start_offset=start,
-                end_offset=end,
-                exact_quote_ciphertext=field_codec.encrypt_text(
-                    context.clinic_id, "provenance.exact_quote", pointer_id, quote
-                ),
-                prefix_ciphertext=field_codec.encrypt_text(
-                    context.clinic_id,
-                    "provenance.prefix",
-                    pointer_id,
-                    text[max(0, start - 32) : start],
-                ),
-                suffix_ciphertext=field_codec.encrypt_text(
-                    context.clinic_id,
-                    "provenance.suffix",
-                    pointer_id,
-                    text[end : end + 32],
-                ),
-                quote_sha256=fact.quote_sha256,
-                audio_asset_id=fact.audio_asset_id,
-                audio_start_ms=fact.audio_start_ms,
-                audio_end_ms=fact.audio_end_ms,
-            )
+        pointer = ProvenancePointer(
+            id=pointer_id,
+            clinic_id=context.clinic_id,
+            clinical_fact_id=fact.id,
+            entry_version_id=source_version.id,
+            start_offset=start,
+            end_offset=end,
+            exact_quote_ciphertext=field_codec.encrypt_text(
+                context.clinic_id, "provenance.exact_quote", pointer_id, quote
+            ),
+            prefix_ciphertext=field_codec.encrypt_text(
+                context.clinic_id,
+                "provenance.prefix",
+                pointer_id,
+                text[max(0, start - 32) : start],
+            ),
+            suffix_ciphertext=field_codec.encrypt_text(
+                context.clinic_id,
+                "provenance.suffix",
+                pointer_id,
+                text[end : end + 32],
+            ),
+            quote_sha256=fact.quote_sha256,
+            audio_asset_id=fact.audio_asset_id,
+            audio_start_ms=fact.audio_start_ms,
+            audio_end_ms=fact.audio_end_ms,
         )
+        db.add(pointer)
+        db.flush()
+        normalized = next(
+            (
+                item
+                for item in extract_normalized_facts(quote)
+                if item.fact_type == fact.fact_type.lower()
+            ),
+            None,
+        )
+        value = field_codec.decrypt_text(
+            fact.clinic_id,
+            "clinical_fact.value",
+            fact.id,
+            fact.value_ciphertext,
+        )
+        assertion = create_assertion(
+            db,
+            clinic_id=context.clinic_id,
+            patient_id=voice_session.patient_id,
+            entry_id=source_entry.id,
+            source_entry_version_id=source_version.id,
+            provenance_pointer=pointer,
+            fact_type=fact.fact_type,
+            subject=normalized.key if normalized else value,
+            normalized_value=normalized.value if normalized else value,
+            origin="voice",
+        )
+        detect_conflicts_for_assertion(db, context, assertion)
     voice_session.published_entry_id = entry.id
     voice_session.patient_summary_ciphertext = field_codec.encrypt_text(
         context.clinic_id,

@@ -309,6 +309,31 @@ def resolve(
     return _comment_public(session, comment)
 
 
+@router.post("/comments/{comment_id}/unresolve", response_model=CommentPublic)
+@router.patch(
+    "/comments/{comment_id}/unresolve",
+    response_model=CommentPublic,
+    include_in_schema=False,
+)
+def unresolve(
+    comment_id: uuid.UUID, session: SessionDep, context: CurrentContext
+) -> CommentPublic:
+    comment = _get_comment(session, context, comment_id)
+    comment.resolved_at = None
+    session.add(comment)
+    emit_change(
+        session,
+        context,
+        action="comment.unresolved",
+        resource_type="comment",
+        resource_id=comment.id,
+        metadata={"entry_id": str(comment.entry_id)},
+    )
+    session.commit()
+    session.refresh(comment)
+    return _comment_public(session, comment)
+
+
 @router.patch("/comments/{comment_id}/assignment", response_model=CommentPublic)
 def assign(
     comment_id: uuid.UUID,

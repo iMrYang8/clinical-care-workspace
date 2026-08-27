@@ -24,9 +24,7 @@ def test_authenticated_phi_and_auth_responses_are_never_cacheable(
     patients = client.get("/api/v1/patients", headers=headers)
     assert me.status_code == patients.status_code == 200
     patient = next(
-        item
-        for item in patients.json()["data"]
-        if item["display_name"] == "Alex Synthetic"
+        item for item in patients.json()["data"] if item["display_name"] == "Alex Tan"
     )
     patient_id = patient["id"]
     created = client.post(

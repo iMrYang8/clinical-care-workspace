@@ -179,13 +179,15 @@ def lock_importance_scope(session: Session, clinic_id: uuid.UUID) -> None:
 
 
 def _feedback_request_identity(
-    highlight: Highlight, signal: str, idempotency_key: str
+    highlight: Highlight, signal: str, idempotency_key: str, reason: str | None = None
 ) -> tuple[list[str], str, str]:
     if signal not in SIGNAL_DELTAS:
         raise ValueError("Unsupported importance signal")
     feature_keys = sanitize_feature_keys(highlight.feature_keys_json)
     request_hash = hashlib.sha256(
-        (f"{highlight.id}:{signal}:" + ",".join(sorted(feature_keys))).encode()
+        (
+            f"{highlight.id}:{signal}:{reason or ''}:" + ",".join(sorted(feature_keys))
+        ).encode()
     ).hexdigest()
     idempotency_token = hashlib.sha256(idempotency_key.encode()).hexdigest()
     return feature_keys, request_hash, idempotency_token
@@ -198,6 +200,7 @@ def feedback_idempotency_replayed(
     *,
     signal: str,
     idempotency_key: str,
+    reason: str | None = None,
 ) -> bool:
     """Validate a feedback key and report an already-applied request.
 
@@ -208,7 +211,7 @@ def feedback_idempotency_replayed(
     """
 
     _, request_hash, idempotency_token = _feedback_request_identity(
-        highlight, signal, idempotency_key
+        highlight, signal, idempotency_key, reason
     )
     existing = session.exec(
         select(ImportanceFeedbackEvent).where(
@@ -240,6 +243,8 @@ def record_feedback(
     *,
     signal: str,
     idempotency_key: str,
+    reason: str | None = None,
+    learn: bool = True,
 ) -> tuple[bool, set[uuid.UUID]]:
     # The clinic row is the serialization point for learning. It makes first
     # observation creation and idempotency replay atomic without introducing a
@@ -261,7 +266,7 @@ def record_feedback(
         .execution_options(populate_existing=True)
     ).one()
     feature_keys, request_hash, idempotency_token = _feedback_request_identity(
-        highlight, signal, idempotency_key
+        highlight, signal, idempotency_key, reason
     )
     if feedback_idempotency_replayed(
         session,
@@ -269,13 +274,14 @@ def record_feedback(
         highlight,
         signal=signal,
         idempotency_key=idempotency_key,
+        reason=reason,
     ):
         return False, set()
     if not settings.IMPORTANCE_LEARNING_ENABLED:
         refresh_highlight_score(session, highlight)
         return False, {highlight.patient_id}
 
-    delta = SIGNAL_DELTAS[signal]
+    delta = SIGNAL_DELTAS[signal] if learn else 0.0
     for feature_key in feature_keys:
         stat = session.exec(
             select(ImportanceFeatureStat)
@@ -307,6 +313,7 @@ def record_feedback(
             highlight_id=highlight.id,
             actor_membership_id=context.membership.id,
             signal=signal,
+            reason=reason,
             feature_keys_json=feature_keys,
             applied_delta=delta,
             idempotency_key=idempotency_token,

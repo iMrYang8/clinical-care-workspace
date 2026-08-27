@@ -197,7 +197,7 @@ def test_failed_job_retry_persists_each_attempt(
 
     monkeypatch.setattr(settings, "PRESIDIO_REQUIRED", False)
     monkeypatch.setattr(
-        ai_jobs, "_configured_remote_provider", lambda: RaisingProvider()
+        ai_jobs, "_configured_remote_provider", lambda *_: RaisingProvider()
     )
     headers = auth_headers("clinician")
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
@@ -223,7 +223,7 @@ def test_failed_job_retry_persists_each_attempt(
     assert "S1234567D" not in failed.text
 
     monkeypatch.setattr(
-        ai_jobs, "_configured_remote_provider", lambda: WorkingProvider()
+        ai_jobs, "_configured_remote_provider", lambda *_: WorkingProvider()
     )
     retried = client.post(f"/api/v1/jobs/{failed.json()['id']}/retry", headers=headers)
     assert retried.status_code == 200, retried.text
@@ -286,7 +286,7 @@ def test_server_trusted_name_and_risk_force_redaction_and_second_review(
             return self._draft(redacted_text, self.review_model)
 
     monkeypatch.setattr(settings, "PRESIDIO_REQUIRED", False)
-    monkeypatch.setattr(ai_jobs, "_configured_remote_provider", lambda: ReviewSpy())
+    monkeypatch.setattr(ai_jobs, "_configured_remote_provider", lambda *_: ReviewSpy())
     headers = auth_headers("clinician")
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
     source = client.post(
@@ -297,7 +297,7 @@ def test_server_trusted_name_and_risk_force_redaction_and_second_review(
             "section": "clinician",
             "title": "Trusted redaction source",
             "content": (
-                "Alex Synthetic S1234567D MRN:AB-12345 91234567 has critical allergy."
+                "Alex Tan S1234567D MRN:AB-12345 91234567 has critical allergy."
             ),
         },
     ).json()
@@ -321,7 +321,7 @@ def test_server_trusted_name_and_risk_force_redaction_and_second_review(
     assert run["review_status"] == "consistent"
     assert [stage for stage, _ in outbound] == ["primary", "review"]
     for _, egress in outbound:
-        assert "Alex Synthetic" not in egress
+        assert "Alex Tan" not in egress
         assert "S1234567D" not in egress
         assert "AB-12345" not in egress
         assert "91234567" not in egress
@@ -450,7 +450,7 @@ def test_invalid_interaction_type_never_reaches_provider_or_plaintext_storage(
             outbound.append(redacted_text)
             raise AssertionError("provider must not be called")
 
-    monkeypatch.setattr(ai_jobs, "_configured_remote_provider", lambda: SpyProvider())
+    monkeypatch.setattr(ai_jobs, "_configured_remote_provider", lambda *_: SpyProvider())
     headers = auth_headers("clinician")
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
     source = client.post(
@@ -503,7 +503,7 @@ def test_provider_warning_and_exception_text_are_mapped_to_fixed_codes(
 
     monkeypatch.setattr(settings, "PRESIDIO_REQUIRED", False)
     monkeypatch.setattr(
-        ai_jobs, "_configured_remote_provider", lambda: WarningProvider()
+        ai_jobs, "_configured_remote_provider", lambda *_: WarningProvider()
     )
     headers = auth_headers("clinician")
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
@@ -686,7 +686,7 @@ def test_worker_runner_skips_inactive_user_and_selects_healthy_worker(
     owner_session.add(first_worker)
     second_user = User(
         id=second_user_id,
-        email="second.worker@nightingale.synthetic",
+        email="second.worker@nightingale.example",
         full_name="Second Synthetic Worker",
         hashed_password=first_worker.hashed_password,
     )
@@ -834,7 +834,7 @@ def test_expired_claim_cannot_finalize_after_new_worker_reclaims(
     ).json()
     job_id = uuid.UUID(queued["id"])
     monkeypatch.setattr(
-        ai_jobs, "_configured_remote_provider", lambda: BlockingProvider()
+        ai_jobs, "_configured_remote_provider", lambda *_: BlockingProvider()
     )
 
     async def scenario() -> None:

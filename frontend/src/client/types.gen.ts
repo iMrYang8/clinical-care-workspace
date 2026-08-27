@@ -191,6 +191,112 @@ export type Body_auth_password_login = {
 };
 
 /**
+ * ClinicAISettingPublic
+ */
+export type ClinicAISettingPublic = {
+    /**
+     * Provider
+     */
+    provider?: 'openai';
+    /**
+     * Api Key Configured
+     */
+    api_key_configured: boolean;
+    /**
+     * Api Key Last4
+     */
+    api_key_last4: string | null;
+    /**
+     * Credential Source
+     */
+    credential_source: 'clinic' | 'environment' | 'none';
+    /**
+     * Fast Model
+     */
+    fast_model: string;
+    /**
+     * Careful Model
+     */
+    careful_model: string;
+    /**
+     * Transcribe Model
+     */
+    transcribe_model: string;
+    /**
+     * Updated At
+     */
+    updated_at: string | null;
+};
+
+/**
+ * ClinicAISettingUpdate
+ */
+export type ClinicAISettingUpdate = {
+    /**
+     * Api Key
+     */
+    api_key?: string | null;
+    /**
+     * Clear Api Key
+     */
+    clear_api_key?: boolean;
+    /**
+     * Fast Model
+     */
+    fast_model: string;
+    /**
+     * Careful Model
+     */
+    careful_model: string;
+    /**
+     * Transcribe Model
+     */
+    transcribe_model: string;
+};
+
+/**
+ * ClinicalFactAssertionPublic
+ */
+export type ClinicalFactAssertionPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Fact Type
+     */
+    fact_type: string;
+    /**
+     * Subject
+     */
+    subject: string;
+    /**
+     * Normalized Value
+     */
+    normalized_value: string;
+    /**
+     * Clinical Status
+     */
+    clinical_status: string;
+    /**
+     * Effective Time
+     */
+    effective_time: string | null;
+    /**
+     * Origin
+     */
+    origin: string;
+    /**
+     * Source Entry Version Id
+     */
+    source_entry_version_id: string;
+    /**
+     * Provenance Pointer Id
+     */
+    provenance_pointer_id: string;
+};
+
+/**
  * ClinicalFactPublic
  */
 export type ClinicalFactPublic = {
@@ -278,6 +384,32 @@ export type ClinicalGlanceCard = {
     score_components: {
         [key: string]: number;
     };
+    /**
+     * Review State
+     */
+    review_state?: 'ready' | 'review_required' | 'abstained';
+    /**
+     * Risk
+     */
+    risk?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Confidence
+     */
+    confidence?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Importance
+     */
+    importance?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Abstention Reason
+     */
+    abstention_reason?: string | null;
 };
 
 /**
@@ -300,6 +432,10 @@ export type ClinicalGlancePublic = {
      * Cards
      */
     cards: Array<ClinicalGlanceCard>;
+    /**
+     * Review Cards
+     */
+    review_cards?: Array<ClinicalGlanceCard>;
 };
 
 /**
@@ -403,6 +539,74 @@ export type CommentPublic = {
 };
 
 /**
+ * ConflictPublic
+ */
+export type ConflictPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Fact Type
+     */
+    fact_type: string;
+    /**
+     * Normalized Key
+     */
+    normalized_key: string;
+    /**
+     * Severity
+     */
+    severity: string;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Left Entry Id
+     */
+    left_entry_id: string;
+    /**
+     * Right Entry Id
+     */
+    right_entry_id: string;
+    /**
+     * Left Pointer Id
+     */
+    left_pointer_id: string | null;
+    /**
+     * Right Pointer Id
+     */
+    right_pointer_id: string | null;
+    /**
+     * Resolution
+     */
+    resolution: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * ConflictResolve
+ */
+export type ConflictResolve = {
+    /**
+     * Resolution
+     */
+    resolution: string;
+    /**
+     * Correction Entry Id
+     */
+    correction_entry_id: string;
+};
+
+/**
  * DecayArchivePublic
  */
 export type DecayArchivePublic = {
@@ -484,6 +688,50 @@ export type DecayPreviewPublic = {
      * Count
      */
     count: number;
+};
+
+/**
+ * DecisionExplanationPublic
+ */
+export type DecisionExplanationPublic = {
+    /**
+     * Highlight Id
+     */
+    highlight_id: string;
+    /**
+     * Review State
+     */
+    review_state: 'ready' | 'review_required' | 'abstained';
+    /**
+     * Output Type
+     */
+    output_type: string;
+    /**
+     * Support State
+     */
+    support_state: string;
+    /**
+     * Risk
+     */
+    risk: {
+        [key: string]: unknown;
+    };
+    /**
+     * Confidence
+     */
+    confidence: {
+        [key: string]: unknown;
+    };
+    /**
+     * Importance
+     */
+    importance: {
+        [key: string]: unknown;
+    };
+    /**
+     * Abstention Reason
+     */
+    abstention_reason: string | null;
 };
 
 /**
@@ -872,6 +1120,44 @@ export type ImportanceFeedbackCreate = {
      * Signal
      */
     signal: 'dismiss';
+    /**
+     * Reason
+     */
+    reason: 'not_relevant' | 'outdated' | 'already_addressed' | 'too_busy_to_review';
+};
+
+/**
+ * ImportanceImpressionCreate
+ */
+export type ImportanceImpressionCreate = {
+    /**
+     * Highlight Id
+     */
+    highlight_id: string;
+    /**
+     * View Event Id
+     */
+    view_event_id: string;
+    /**
+     * Rank
+     */
+    rank: number;
+    /**
+     * Surface
+     */
+    surface?: string;
+    /**
+     * Exposure Probability
+     */
+    exposure_probability?: number;
+    /**
+     * Visible Ratio
+     */
+    visible_ratio: number;
+    /**
+     * Visible Duration Ms
+     */
+    visible_duration_ms: number;
 };
 
 /**
@@ -967,6 +1253,14 @@ export type MePublic = {
      * Clinic Id
      */
     clinic_id: string;
+    /**
+     * Clinic Code
+     */
+    clinic_code: string;
+    /**
+     * Clinic Name
+     */
+    clinic_name: string;
     /**
      * Membership Id
      */
@@ -1110,6 +1404,138 @@ export type Message = {
 };
 
 /**
+ * PatientCreate
+ */
+export type PatientCreate = {
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Date Of Birth
+     */
+    date_of_birth: string;
+    /**
+     * Medical Record Number
+     */
+    medical_record_number: string;
+    /**
+     * Identity Document Type
+     */
+    identity_document_type: 'nric_fin' | 'passport' | 'other';
+    /**
+     * Identity Document Number
+     */
+    identity_document_number: string;
+    /**
+     * Duplicate Confirmation Token
+     */
+    duplicate_confirmation_token?: string | null;
+};
+
+/**
+ * PatientDetailPublic
+ */
+export type PatientDetailPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Date Of Birth
+     */
+    date_of_birth: string | null;
+    /**
+     * Medical Record Number
+     */
+    medical_record_number: string | null;
+    /**
+     * Same Name Count
+     */
+    same_name_count?: number;
+    /**
+     * Today Visit At
+     */
+    today_visit_at?: string | null;
+    /**
+     * Today Visit Status
+     */
+    today_visit_status?: string | null;
+    /**
+     * Today Visit Type
+     */
+    today_visit_type?: string | null;
+    /**
+     * Last Activity At
+     */
+    last_activity_at?: string | null;
+    /**
+     * Identity Document Type
+     */
+    identity_document_type: string | null;
+    /**
+     * Masked Identity Document
+     */
+    masked_identity_document: string | null;
+    /**
+     * Portal Access State
+     */
+    portal_access_state: 'not_invited' | 'pending' | 'active' | 'deactivated';
+    /**
+     * Status
+     */
+    status: string;
+};
+
+/**
+ * PatientDuplicateCandidate
+ */
+export type PatientDuplicateCandidate = {
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Date Of Birth
+     */
+    date_of_birth: string | null;
+    /**
+     * Medical Record Number
+     */
+    medical_record_number: string | null;
+    /**
+     * Masked Identity Document
+     */
+    masked_identity_document: string | null;
+};
+
+/**
+ * PatientDuplicateCheckPublic
+ */
+export type PatientDuplicateCheckPublic = {
+    /**
+     * Status
+     */
+    status: 'clear' | 'possible_match' | 'exact_match';
+    /**
+     * Candidates
+     */
+    candidates: Array<PatientDuplicateCandidate>;
+    /**
+     * Duplicate Confirmation Token
+     */
+    duplicate_confirmation_token?: string | null;
+};
+
+/**
  * PatientGlanceCard
  */
 export type PatientGlanceCard = {
@@ -1128,6 +1554,130 @@ export type PatientGlanceCard = {
 };
 
 /**
+ * PatientIdentityInput
+ */
+export type PatientIdentityInput = {
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Date Of Birth
+     */
+    date_of_birth: string;
+    /**
+     * Medical Record Number
+     */
+    medical_record_number: string;
+    /**
+     * Identity Document Type
+     */
+    identity_document_type: 'nric_fin' | 'passport' | 'other';
+    /**
+     * Identity Document Number
+     */
+    identity_document_number: string;
+};
+
+/**
+ * PatientInvitationAccept
+ */
+export type PatientInvitationAccept = {
+    /**
+     * Token
+     */
+    token: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Password
+     */
+    password: string;
+    /**
+     * Full Name
+     */
+    full_name?: string | null;
+};
+
+/**
+ * PatientInvitationPreviewPublic
+ */
+export type PatientInvitationPreviewPublic = {
+    /**
+     * Clinic Name
+     */
+    clinic_name: string;
+    /**
+     * Patient Display Name
+     */
+    patient_display_name: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Account Exists
+     */
+    account_exists: boolean;
+};
+
+/**
+ * PatientInvitationPreviewRequest
+ */
+export type PatientInvitationPreviewRequest = {
+    /**
+     * Token
+     */
+    token: string;
+    /**
+     * Email
+     */
+    email: string;
+};
+
+/**
+ * PatientPortalInvitationCreate
+ */
+export type PatientPortalInvitationCreate = {
+    /**
+     * Email
+     */
+    email: string;
+};
+
+/**
+ * PatientPortalInvitationPublic
+ */
+export type PatientPortalInvitationPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * State
+     */
+    state?: 'pending';
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
  * PatientPublic
  */
 export type PatientPublic = {
@@ -1139,6 +1689,132 @@ export type PatientPublic = {
      * Display Name
      */
     display_name: string;
+    /**
+     * Date Of Birth
+     */
+    date_of_birth?: string | null;
+    /**
+     * Medical Record Number
+     */
+    medical_record_number?: string | null;
+    /**
+     * Same Name Count
+     */
+    same_name_count?: number;
+    /**
+     * Today Visit At
+     */
+    today_visit_at?: string | null;
+    /**
+     * Today Visit Status
+     */
+    today_visit_status?: string | null;
+    /**
+     * Today Visit Type
+     */
+    today_visit_type?: string | null;
+    /**
+     * Last Activity At
+     */
+    last_activity_at?: string | null;
+};
+
+/**
+ * PatientPublicationCreate
+ */
+export type PatientPublicationCreate = {
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+};
+
+/**
+ * PatientPublicationPublic
+ */
+export type PatientPublicationPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+    /**
+     * Approved By Name
+     */
+    approved_by_name: string;
+    /**
+     * Approval Policy Version
+     */
+    approval_policy_version: string;
+    /**
+     * Approved At
+     */
+    approved_at: string;
+    /**
+     * Withdrawn At
+     */
+    withdrawn_at: string | null;
+    /**
+     * Items
+     */
+    items?: Array<{
+        [key: string]: unknown;
+    }>;
+};
+
+/**
+ * PatientSharingRequestCreate
+ */
+export type PatientSharingRequestCreate = {
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+};
+
+/**
+ * PatientSharingRequestPublic
+ */
+export type PatientSharingRequestPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Entry Id
+     */
+    entry_id: string;
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+    /**
+     * Requested By Name
+     */
+    requested_by_name: string;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Reviewed At
+     */
+    reviewed_at: string | null;
 };
 
 /**
@@ -1203,6 +1879,12 @@ export type PatientTimelineEntry = {
      * Occurred At
      */
     occurred_at: string;
+    /**
+     * Approval Receipt
+     */
+    approval_receipt?: {
+        [key: string]: unknown;
+    } | null;
 };
 
 /**
@@ -1217,6 +1899,138 @@ export type PatientsPublic = {
      * Count
      */
     count: number;
+    /**
+     * Offset
+     */
+    offset?: number;
+    /**
+     * Limit
+     */
+    limit?: number;
+};
+
+/**
+ * PlatformAuditPublic
+ */
+export type PlatformAuditPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Action
+     */
+    action: string;
+    /**
+     * Target Clinic Id
+     */
+    target_clinic_id: string | null;
+    /**
+     * Target Patient Id
+     */
+    target_patient_id: string | null;
+    /**
+     * Request Id
+     */
+    request_id: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * PlatformAuditsPublic
+ */
+export type PlatformAuditsPublic = {
+    /**
+     * Data
+     */
+    data: Array<PlatformAuditPublic>;
+    /**
+     * Count
+     */
+    count: number;
+};
+
+/**
+ * PlatformClinicPublic
+ */
+export type PlatformClinicPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Code
+     */
+    code: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Member Count
+     */
+    member_count: number;
+    /**
+     * Patient Count
+     */
+    patient_count: number;
+};
+
+/**
+ * PlatformClinicsPublic
+ */
+export type PlatformClinicsPublic = {
+    /**
+     * Data
+     */
+    data: Array<PlatformClinicPublic>;
+    /**
+     * Count
+     */
+    count: number;
+};
+
+/**
+ * PlatformLogin
+ */
+export type PlatformLogin = {
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Password
+     */
+    password: string;
+};
+
+/**
+ * PlatformMePublic
+ */
+export type PlatformMePublic = {
+    /**
+     * User Id
+     */
+    user_id: string;
+    /**
+     * Platform Admin Id
+     */
+    platform_admin_id: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Full Name
+     */
+    full_name: string | null;
+    /**
+     * Role
+     */
+    role?: 'platform_admin';
 };
 
 /**
@@ -1293,6 +2107,52 @@ export type RehydratePublic = {
      * Content Sha256
      */
     content_sha256: string;
+};
+
+/**
+ * ReviewRequestCreate
+ */
+export type ReviewRequestCreate = {
+    /**
+     * Reason
+     */
+    reason: string;
+};
+
+/**
+ * TeamMemberPublic
+ */
+export type TeamMemberPublic = {
+    /**
+     * Membership Id
+     */
+    membership_id: string;
+    /**
+     * User Id
+     */
+    user_id: string;
+    /**
+     * Full Name
+     */
+    full_name: string | null;
+    /**
+     * Role
+     */
+    role: 'staff' | 'clinician' | 'admin';
+};
+
+/**
+ * TeamMembersPublic
+ */
+export type TeamMembersPublic = {
+    /**
+     * Data
+     */
+    data: Array<TeamMemberPublic>;
+    /**
+     * Count
+     */
+    count: number;
 };
 
 /**
@@ -1828,9 +2688,9 @@ export type authPasswordLoginData = {
     body: Body_auth_password_login;
     headers: {
         /**
-         * X-Clinic-Id
+         * X-Clinic-Code
          */
-        'X-Clinic-ID': string;
+        'X-Clinic-Code': string;
     };
     path?: never;
     query?: never;
@@ -1920,6 +2780,56 @@ export type authLogoutResponses = {
 };
 
 export type authLogoutResponse = authLogoutResponses[keyof authLogoutResponses];
+
+export type adminAiSettingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/ai-settings';
+};
+
+export type adminAiSettingsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminAiSettingsError = adminAiSettingsErrors[keyof adminAiSettingsErrors];
+
+export type adminAiSettingsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClinicAISettingPublic;
+};
+
+export type adminAiSettingsResponse = adminAiSettingsResponses[keyof adminAiSettingsResponses];
+
+export type adminUpdateAiSettingsData = {
+    body: ClinicAISettingUpdate;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/ai-settings';
+};
+
+export type adminUpdateAiSettingsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminUpdateAiSettingsError = adminUpdateAiSettingsErrors[keyof adminUpdateAiSettingsErrors];
+
+export type adminUpdateAiSettingsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClinicAISettingPublic;
+};
+
+export type adminUpdateAiSettingsResponse = adminUpdateAiSettingsResponses[keyof adminUpdateAiSettingsResponses];
 
 export type adminMembershipsData = {
     body?: never;
@@ -2181,10 +3091,52 @@ export type utilsHealthCheckResponses = {
 
 export type utilsHealthCheckResponse = utilsHealthCheckResponses[keyof utilsHealthCheckResponses];
 
+export type patientsDuplicateCheckData = {
+    body: PatientIdentityInput;
+    path?: never;
+    query?: never;
+    url: '/api/v1/patients/duplicate-check';
+};
+
+export type patientsDuplicateCheckErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientsDuplicateCheckError = patientsDuplicateCheckErrors[keyof patientsDuplicateCheckErrors];
+
+export type patientsDuplicateCheckResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientDuplicateCheckPublic;
+};
+
+export type patientsDuplicateCheckResponse = patientsDuplicateCheckResponses[keyof patientsDuplicateCheckResponses];
+
 export type patientsPatientsData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Search
+         */
+        search?: string | null;
+        /**
+         * Visit Scope
+         */
+        visit_scope?: 'all' | 'today' | 'previous';
+        /**
+         * Offset
+         */
+        offset?: number;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
     url: '/api/v1/patients';
 };
 
@@ -2205,6 +3157,347 @@ export type patientsPatientsResponses = {
 };
 
 export type patientsPatientsResponse = patientsPatientsResponses[keyof patientsPatientsResponses];
+
+export type patientsCreatePatientData = {
+    body: PatientCreate;
+    headers?: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/patients';
+};
+
+export type patientsCreatePatientErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientsCreatePatientError = patientsCreatePatientErrors[keyof patientsCreatePatientErrors];
+
+export type patientsCreatePatientResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientDetailPublic;
+};
+
+export type patientsCreatePatientResponse = patientsCreatePatientResponses[keyof patientsCreatePatientResponses];
+
+export type patientsReadPatientData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}';
+};
+
+export type patientsReadPatientErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientsReadPatientError = patientsReadPatientErrors[keyof patientsReadPatientErrors];
+
+export type patientsReadPatientResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientDetailPublic;
+};
+
+export type patientsReadPatientResponse = patientsReadPatientResponses[keyof patientsReadPatientResponses];
+
+export type patientsInvitePatientData = {
+    body: PatientPortalInvitationCreate;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/portal-invitations';
+};
+
+export type patientsInvitePatientErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientsInvitePatientError = patientsInvitePatientErrors[keyof patientsInvitePatientErrors];
+
+export type patientsInvitePatientResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientPortalInvitationPublic;
+};
+
+export type patientsInvitePatientResponse = patientsInvitePatientResponses[keyof patientsInvitePatientResponses];
+
+export type authPreviewPatientInvitationData = {
+    body: PatientInvitationPreviewRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/patient-invitations/preview';
+};
+
+export type authPreviewPatientInvitationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type authPreviewPatientInvitationError = authPreviewPatientInvitationErrors[keyof authPreviewPatientInvitationErrors];
+
+export type authPreviewPatientInvitationResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientInvitationPreviewPublic;
+};
+
+export type authPreviewPatientInvitationResponse = authPreviewPatientInvitationResponses[keyof authPreviewPatientInvitationResponses];
+
+export type authAcceptPatientInvitationData = {
+    body: PatientInvitationAccept;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/patient-invitations/accept';
+};
+
+export type authAcceptPatientInvitationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type authAcceptPatientInvitationError = authAcceptPatientInvitationErrors[keyof authAcceptPatientInvitationErrors];
+
+export type authAcceptPatientInvitationResponses = {
+    /**
+     * Successful Response
+     */
+    200: Token;
+};
+
+export type authAcceptPatientInvitationResponse = authAcceptPatientInvitationResponses[keyof authAcceptPatientInvitationResponses];
+
+export type platformPlatformLoginData = {
+    body: PlatformLogin;
+    path?: never;
+    query?: never;
+    url: '/api/v1/platform/auth/login';
+};
+
+export type platformPlatformLoginErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type platformPlatformLoginError = platformPlatformLoginErrors[keyof platformPlatformLoginErrors];
+
+export type platformPlatformLoginResponses = {
+    /**
+     * Successful Response
+     */
+    200: Token;
+};
+
+export type platformPlatformLoginResponse = platformPlatformLoginResponses[keyof platformPlatformLoginResponses];
+
+export type platformPlatformLogoutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/platform/auth/logout';
+};
+
+export type platformPlatformLogoutResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type platformPlatformLogoutResponse = platformPlatformLogoutResponses[keyof platformPlatformLogoutResponses];
+
+export type platformPlatformMeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/platform/auth/me';
+};
+
+export type platformPlatformMeErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type platformPlatformMeError = platformPlatformMeErrors[keyof platformPlatformMeErrors];
+
+export type platformPlatformMeResponses = {
+    /**
+     * Successful Response
+     */
+    200: PlatformMePublic;
+};
+
+export type platformPlatformMeResponse = platformPlatformMeResponses[keyof platformPlatformMeResponses];
+
+export type platformPlatformClinicsData = {
+    body?: never;
+    headers?: {
+        /**
+         * X-Request-Id
+         */
+        'X-Request-ID'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/platform/clinics';
+};
+
+export type platformPlatformClinicsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type platformPlatformClinicsError = platformPlatformClinicsErrors[keyof platformPlatformClinicsErrors];
+
+export type platformPlatformClinicsResponses = {
+    /**
+     * Successful Response
+     */
+    200: PlatformClinicsPublic;
+};
+
+export type platformPlatformClinicsResponse = platformPlatformClinicsResponses[keyof platformPlatformClinicsResponses];
+
+export type platformPlatformPatientsData = {
+    body?: never;
+    headers?: {
+        /**
+         * X-Request-Id
+         */
+        'X-Request-ID'?: string | null;
+    };
+    path: {
+        /**
+         * Clinic Code
+         */
+        clinic_code: string;
+    };
+    query?: never;
+    url: '/api/v1/platform/clinics/{clinic_code}/patients';
+};
+
+export type platformPlatformPatientsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type platformPlatformPatientsError = platformPlatformPatientsErrors[keyof platformPlatformPatientsErrors];
+
+export type platformPlatformPatientsResponses = {
+    /**
+     * Response Platform-Platform Patients
+     *
+     * Successful Response
+     */
+    200: Array<PatientDetailPublic>;
+};
+
+export type platformPlatformPatientsResponse = platformPlatformPatientsResponses[keyof platformPlatformPatientsResponses];
+
+export type platformPlatformPatientTimelineData = {
+    body?: never;
+    headers?: {
+        /**
+         * X-Request-Id
+         */
+        'X-Request-ID'?: string | null;
+    };
+    path: {
+        /**
+         * Clinic Code
+         */
+        clinic_code: string;
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/platform/clinics/{clinic_code}/patients/{patient_id}/timeline';
+};
+
+export type platformPlatformPatientTimelineErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type platformPlatformPatientTimelineError = platformPlatformPatientTimelineErrors[keyof platformPlatformPatientTimelineErrors];
+
+export type platformPlatformPatientTimelineResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientTimeline;
+};
+
+export type platformPlatformPatientTimelineResponse = platformPlatformPatientTimelineResponses[keyof platformPlatformPatientTimelineResponses];
+
+export type platformPlatformAuditLogData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/platform/audit';
+};
+
+export type platformPlatformAuditLogErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type platformPlatformAuditLogError = platformPlatformAuditLogErrors[keyof platformPlatformAuditLogErrors];
+
+export type platformPlatformAuditLogResponses = {
+    /**
+     * Successful Response
+     */
+    200: PlatformAuditsPublic;
+};
+
+export type platformPlatformAuditLogResponse = platformPlatformAuditLogResponses[keyof platformPlatformAuditLogResponses];
 
 export type patientsPatientTimelineData = {
     body?: never;
@@ -2267,6 +3560,31 @@ export type patientsPatientGlanceResponses = {
 };
 
 export type patientsPatientGlanceResponse = patientsPatientGlanceResponses[keyof patientsPatientGlanceResponses];
+
+export type teamTeamMembersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/team/members';
+};
+
+export type teamTeamMembersErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type teamTeamMembersError = teamTeamMembersErrors[keyof teamTeamMembersErrors];
+
+export type teamTeamMembersResponses = {
+    /**
+     * Successful Response
+     */
+    200: TeamMembersPublic;
+};
+
+export type teamTeamMembersResponse = teamTeamMembersResponses[keyof teamTeamMembersResponses];
 
 export type entriesCreateData = {
     body: EntryCreate;
@@ -2802,6 +4120,91 @@ export type trustFeedbackResponses = {
 
 export type trustFeedbackResponse = trustFeedbackResponses[keyof trustFeedbackResponses];
 
+export type trustDecisionExplanationData = {
+    body?: never;
+    path: {
+        /**
+         * Highlight Id
+         */
+        highlight_id: string;
+    };
+    query?: never;
+    url: '/api/v1/highlights/{highlight_id}/decision-explanation';
+};
+
+export type trustDecisionExplanationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustDecisionExplanationError = trustDecisionExplanationErrors[keyof trustDecisionExplanationErrors];
+
+export type trustDecisionExplanationResponses = {
+    /**
+     * Successful Response
+     */
+    200: DecisionExplanationPublic;
+};
+
+export type trustDecisionExplanationResponse = trustDecisionExplanationResponses[keyof trustDecisionExplanationResponses];
+
+export type trustRequestReviewData = {
+    body: ReviewRequestCreate;
+    path: {
+        /**
+         * Highlight Id
+         */
+        highlight_id: string;
+    };
+    query?: never;
+    url: '/api/v1/highlights/{highlight_id}/request-review';
+};
+
+export type trustRequestReviewErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustRequestReviewError = trustRequestReviewErrors[keyof trustRequestReviewErrors];
+
+export type trustRequestReviewResponses = {
+    /**
+     * Successful Response
+     */
+    200: HighlightPublic;
+};
+
+export type trustRequestReviewResponse = trustRequestReviewResponses[keyof trustRequestReviewResponses];
+
+export type trustRecordImportanceImpressionData = {
+    body: ImportanceImpressionCreate;
+    path?: never;
+    query?: never;
+    url: '/api/v1/importance-impressions';
+};
+
+export type trustRecordImportanceImpressionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustRecordImportanceImpressionError = trustRecordImportanceImpressionErrors[keyof trustRecordImportanceImpressionErrors];
+
+export type trustRecordImportanceImpressionResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type trustRecordImportanceImpressionResponse = trustRecordImportanceImpressionResponses[keyof trustRecordImportanceImpressionResponses];
+
 export type trustProvenanceResolveData = {
     body?: never;
     path: {
@@ -2831,6 +4234,222 @@ export type trustProvenanceResolveResponses = {
 };
 
 export type trustProvenanceResolveResponse = trustProvenanceResolveResponses[keyof trustProvenanceResolveResponses];
+
+export type trustClinicalFactsForPatientData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/clinical-facts';
+};
+
+export type trustClinicalFactsForPatientErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustClinicalFactsForPatientError = trustClinicalFactsForPatientErrors[keyof trustClinicalFactsForPatientErrors];
+
+export type trustClinicalFactsForPatientResponses = {
+    /**
+     * Response Trust-Clinical Facts For Patient
+     *
+     * Successful Response
+     */
+    200: Array<ClinicalFactAssertionPublic>;
+};
+
+export type trustClinicalFactsForPatientResponse = trustClinicalFactsForPatientResponses[keyof trustClinicalFactsForPatientResponses];
+
+export type trustConflictsForPatientData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/conflicts';
+};
+
+export type trustConflictsForPatientErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustConflictsForPatientError = trustConflictsForPatientErrors[keyof trustConflictsForPatientErrors];
+
+export type trustConflictsForPatientResponses = {
+    /**
+     * Response Trust-Conflicts For Patient
+     *
+     * Successful Response
+     */
+    200: Array<ConflictPublic>;
+};
+
+export type trustConflictsForPatientResponse = trustConflictsForPatientResponses[keyof trustConflictsForPatientResponses];
+
+export type trustResolveConflictData = {
+    body: ConflictResolve;
+    path: {
+        /**
+         * Conflict Id
+         */
+        conflict_id: string;
+    };
+    query?: never;
+    url: '/api/v1/conflicts/{conflict_id}/resolve';
+};
+
+export type trustResolveConflictErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustResolveConflictError = trustResolveConflictErrors[keyof trustResolveConflictErrors];
+
+export type trustResolveConflictResponses = {
+    /**
+     * Successful Response
+     */
+    200: ConflictPublic;
+};
+
+export type trustResolveConflictResponse = trustResolveConflictResponses[keyof trustResolveConflictResponses];
+
+export type trustCreatePatientSharingRequestData = {
+    body: PatientSharingRequestCreate;
+    path: {
+        /**
+         * Entry Id
+         */
+        entry_id: string;
+    };
+    query?: never;
+    url: '/api/v1/entries/{entry_id}/patient-sharing-requests';
+};
+
+export type trustCreatePatientSharingRequestErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustCreatePatientSharingRequestError = trustCreatePatientSharingRequestErrors[keyof trustCreatePatientSharingRequestErrors];
+
+export type trustCreatePatientSharingRequestResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientSharingRequestPublic;
+};
+
+export type trustCreatePatientSharingRequestResponse = trustCreatePatientSharingRequestResponses[keyof trustCreatePatientSharingRequestResponses];
+
+export type trustListPatientSharingRequestsData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/patient-sharing-requests';
+};
+
+export type trustListPatientSharingRequestsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustListPatientSharingRequestsError = trustListPatientSharingRequestsErrors[keyof trustListPatientSharingRequestsErrors];
+
+export type trustListPatientSharingRequestsResponses = {
+    /**
+     * Response Trust-List Patient Sharing Requests
+     *
+     * Successful Response
+     */
+    200: Array<PatientSharingRequestPublic>;
+};
+
+export type trustListPatientSharingRequestsResponse = trustListPatientSharingRequestsResponses[keyof trustListPatientSharingRequestsResponses];
+
+export type trustPublishForPatientData = {
+    body: PatientPublicationCreate;
+    path: {
+        /**
+         * Entry Id
+         */
+        entry_id: string;
+    };
+    query?: never;
+    url: '/api/v1/entries/{entry_id}/patient-publications';
+};
+
+export type trustPublishForPatientErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustPublishForPatientError = trustPublishForPatientErrors[keyof trustPublishForPatientErrors];
+
+export type trustPublishForPatientResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientPublicationPublic;
+};
+
+export type trustPublishForPatientResponse = trustPublishForPatientResponses[keyof trustPublishForPatientResponses];
+
+export type trustWithdrawPatientPublicationData = {
+    body?: never;
+    path: {
+        /**
+         * Publication Id
+         */
+        publication_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patient-publications/{publication_id}/withdraw';
+};
+
+export type trustWithdrawPatientPublicationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustWithdrawPatientPublicationError = trustWithdrawPatientPublicationErrors[keyof trustWithdrawPatientPublicationErrors];
+
+export type trustWithdrawPatientPublicationResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientPublicationPublic;
+};
+
+export type trustWithdrawPatientPublicationResponse = trustWithdrawPatientPublicationResponses[keyof trustWithdrawPatientPublicationResponses];
 
 export type eventsEventStreamData = {
     body?: never;

@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 import uuid
 from datetime import timedelta
@@ -9,11 +10,16 @@ from sqlalchemy import func, or_
 from sqlmodel import col, select
 
 from app.api.deps import CurrentContext, SessionDep
+from app.core.config import settings
+from app.core.field_crypto import field_codec
 from app.models import (
     AuditEvent,
     AuditEventPublic,
     AuditEventsPublic,
     Clinic,
+    ClinicAISetting,
+    ClinicAISettingPublic,
+    ClinicAISettingUpdate,
     ClinicInvitation,
     ClinicMembership,
     MembershipCreate,
@@ -29,11 +35,109 @@ from app.services.invitations import deliver_membership_invitation
 from app.services.nightingale import emit_change
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,159}$")
 
 
 def _require_admin(context: CurrentContext) -> None:
     if context.role != "admin":
         raise HTTPException(status_code=403, detail="Clinic admin role required")
+
+
+def _ai_setting_public(row: ClinicAISetting | None) -> ClinicAISettingPublic:
+    clinic_key_configured = bool(row and row.api_key_ciphertext)
+    return ClinicAISettingPublic(
+        api_key_configured=clinic_key_configured,
+        api_key_last4=row.api_key_last4 if row else None,
+        credential_source=(
+            "clinic"
+            if clinic_key_configured
+            else "environment"
+            if settings.OPENAI_API_KEY
+            else "none"
+        ),
+        fast_model=row.fast_model if row else "gpt-5-mini",
+        careful_model=row.careful_model if row else "gpt-5.1",
+        transcribe_model=(row.transcribe_model if row else "gpt-4o-transcribe-diarize"),
+        updated_at=row.updated_at if row else None,
+    )
+
+
+@router.get("/ai-settings", response_model=ClinicAISettingPublic)
+def ai_settings(session: SessionDep, context: CurrentContext) -> ClinicAISettingPublic:
+    _require_admin(context)
+    row = session.exec(
+        select(ClinicAISetting).where(ClinicAISetting.clinic_id == context.clinic_id)
+    ).first()
+    return _ai_setting_public(row)
+
+
+@router.put("/ai-settings", response_model=ClinicAISettingPublic)
+def update_ai_settings(
+    body: ClinicAISettingUpdate,
+    session: SessionDep,
+    context: CurrentContext,
+) -> ClinicAISettingPublic:
+    _require_admin(context)
+    for value in (body.fast_model, body.careful_model, body.transcribe_model):
+        if not _MODEL_ID.fullmatch(value):
+            raise HTTPException(status_code=422, detail="Invalid model identifier")
+    if body.api_key and body.clear_api_key:
+        raise HTTPException(status_code=422, detail="Choose replace or remove key")
+
+    row = session.exec(
+        select(ClinicAISetting)
+        .where(ClinicAISetting.clinic_id == context.clinic_id)
+        .with_for_update()
+    ).first()
+    if row is None:
+        row = ClinicAISetting(
+            clinic_id=context.clinic_id,
+            updated_by_membership_id=context.membership.id,
+        )
+        session.add(row)
+        session.flush()
+
+    key_changed = False
+    if body.api_key:
+        api_key = body.api_key.strip()
+        if len(api_key) < 20:
+            raise HTTPException(status_code=422, detail="Invalid API key")
+        row.api_key_ciphertext = field_codec.encrypt_text(
+            context.clinic_id,
+            "clinic_ai_setting.api_key",
+            row.id,
+            api_key,
+        )
+        row.api_key_last4 = api_key[-4:]
+        key_changed = True
+    elif body.clear_api_key:
+        row.api_key_ciphertext = None
+        row.api_key_last4 = None
+        key_changed = True
+
+    row.fast_model = body.fast_model
+    row.careful_model = body.careful_model
+    row.transcribe_model = body.transcribe_model
+    row.updated_by_membership_id = context.membership.id
+    row.updated_at = get_datetime_utc()
+    session.add(row)
+    emit_change(
+        session,
+        context,
+        action="clinic.ai_settings.updated",
+        resource_type="clinic_ai_setting",
+        resource_id=row.id,
+        metadata={
+            "provider": "openai",
+            "fast_model": row.fast_model,
+            "careful_model": row.careful_model,
+            "transcribe_model": row.transcribe_model,
+            "key_changed": key_changed,
+        },
+    )
+    session.commit()
+    session.refresh(row)
+    return _ai_setting_public(row)
 
 
 def _public(user: User, membership: ClinicMembership) -> MembershipPublic:
@@ -279,7 +383,10 @@ def audit_events(
     _require_admin(context)
     events = session.exec(
         select(AuditEvent)
-        .where(AuditEvent.clinic_id == context.clinic_id)
+        .where(
+            AuditEvent.clinic_id == context.clinic_id,
+            AuditEvent.action != "fixture.loaded",
+        )
         .order_by(col(AuditEvent.created_at).desc(), col(AuditEvent.id).desc())
         .limit(limit)
     ).all()

@@ -704,7 +704,7 @@ def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
     initial_revision_id = initial_transcript.json()["id"]
 
     reviewer_user = User(
-        email="second-clinician@nightingale.synthetic",
+        email="second-clinician@nightingale.example",
         full_name="Second Synthetic Clinician",
         hashed_password="not-used-for-token-test",
     )

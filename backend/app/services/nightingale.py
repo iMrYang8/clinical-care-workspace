@@ -2,8 +2,9 @@ import difflib
 import hashlib
 import uuid
 from collections.abc import Mapping
-from datetime import datetime
-from typing import cast
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Literal, cast
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import desc
@@ -13,6 +14,8 @@ from app.api.deps import RequestContext
 from app.core.field_crypto import field_codec
 from app.models import (
     AuditEvent,
+    ClinicMembership,
+    DecisionAssessment,
     DomainEvent,
     Entry,
     EntryCreate,
@@ -26,11 +29,22 @@ from app.models import (
     JobAttempt,
     Patient,
     PatientGlanceSnapshot,
+    PatientIdentifier,
     PatientPublic,
+    PatientPublication,
+    PatientPublicationItem,
+    PatientSharingRequest,
     PatientTimelineEntry,
     PatientUserLink,
+    PatientVisit,
     ProvenancePointer,
+    User,
     get_datetime_utc,
+)
+from app.services.decisioning import (
+    assessment_review_state,
+    decision_payload,
+    redaction_is_qualified,
 )
 from app.services.importance import record_feedback, refresh_highlight_score
 
@@ -102,26 +116,179 @@ def get_patient(
     return patient
 
 
-def list_patients(session: Session, context: RequestContext) -> list[PatientPublic]:
+def list_patients(
+    session: Session,
+    context: RequestContext,
+    *,
+    search: str | None = None,
+    visit_scope: Literal["all", "today", "previous"] = "all",
+    offset: int = 0,
+    limit: int = 50,
+) -> tuple[list[PatientPublic], int]:
+    """Return a tenant-scoped, decrypted patient directory page.
+
+    Names, dates of birth, and MRNs remain encrypted at rest, so filtering is
+    deliberately performed only after the trusted API has applied tenant/RLS
+    scope.  This is bounded to one clinic and avoids introducing a plaintext
+    search index for clinical identity data.
+    """
+
     statement = select(Patient).where(Patient.clinic_id == context.clinic_id)
     if context.role == "patient":
         statement = statement.join(PatientUserLink).where(
             PatientUserLink.clinic_id == context.clinic_id,
             PatientUserLink.user_id == context.user_id,
         )
-    patients = session.exec(statement.order_by(col(Patient.created_at))).all()
-    return [
-        PatientPublic(
-            id=patient.id,
-            display_name=field_codec.decrypt_text(
-                patient.clinic_id,
-                "patient.display_name",
-                patient.id,
-                patient.display_name_ciphertext,
-            ),
+    patients = list(session.exec(statement.order_by(col(Patient.created_at))).all())
+    patient_ids = [patient.id for patient in patients]
+    identifiers = (
+        session.exec(
+            select(PatientIdentifier).where(
+                PatientIdentifier.clinic_id == context.clinic_id,
+                col(PatientIdentifier.patient_id).in_(patient_ids),
+            )
+        ).all()
+        if patient_ids
+        else []
+    )
+    singapore = ZoneInfo("Asia/Singapore")
+    singapore_today = datetime.now(singapore).date()
+    day_start = datetime.combine(
+        singapore_today, time.min, tzinfo=singapore
+    ).astimezone(UTC)
+    day_end = day_start + timedelta(days=1)
+    visits = (
+        session.exec(
+            select(PatientVisit)
+            .where(
+                PatientVisit.clinic_id == context.clinic_id,
+                col(PatientVisit.patient_id).in_(patient_ids),
+                PatientVisit.scheduled_at >= day_start,
+                PatientVisit.scheduled_at < day_end,
+                col(PatientVisit.status).notin_({"cancelled", "no_show"}),
+            )
+            .order_by(col(PatientVisit.scheduled_at))
+        ).all()
+        if patient_ids
+        else []
+    )
+    today_visit_by_patient: dict[uuid.UUID, PatientVisit] = {}
+    for visit in visits:
+        today_visit_by_patient.setdefault(visit.patient_id, visit)
+
+    latest_activity_by_patient: dict[uuid.UUID, datetime] = {}
+    if patient_ids:
+        activity_rows = session.exec(
+            select(Entry.patient_id, Entry.occurred_at).where(
+                Entry.clinic_id == context.clinic_id,
+                col(Entry.patient_id).in_(patient_ids),
+            )
+        ).all()
+        for patient_id, occurred_at in activity_rows:
+            current = latest_activity_by_patient.get(patient_id)
+            if current is None or occurred_at > current:
+                latest_activity_by_patient[patient_id] = occurred_at
+    mrn_by_patient: dict[uuid.UUID, str] = {}
+    for identifier in identifiers:
+        if identifier.identifier_type == "medical_record_number":
+            mrn_by_patient[identifier.patient_id] = field_codec.decrypt_text(
+                identifier.clinic_id,
+                "patient_identifier.value",
+                identifier.id,
+                identifier.value_ciphertext,
+            )
+
+    rows: list[PatientPublic] = []
+    name_counts: dict[str, int] = {}
+    for patient in patients:
+        display_name = field_codec.decrypt_text(
+            patient.clinic_id,
+            "patient.display_name",
+            patient.id,
+            patient.display_name_ciphertext,
         )
-        for patient in patients
-    ]
+        key = " ".join(display_name.casefold().split())
+        name_counts[key] = name_counts.get(key, 0) + 1
+        dob: date | None = None
+        if patient.date_of_birth_ciphertext:
+            dob = date.fromisoformat(
+                field_codec.decrypt_text(
+                    patient.clinic_id,
+                    "patient.date_of_birth",
+                    patient.id,
+                    patient.date_of_birth_ciphertext,
+                )
+            )
+        today_visit = today_visit_by_patient.get(patient.id)
+        rows.append(
+            PatientPublic(
+                id=patient.id,
+                display_name=display_name,
+                date_of_birth=dob,
+                medical_record_number=mrn_by_patient.get(patient.id),
+                today_visit_at=(
+                    today_visit.scheduled_at if today_visit is not None else None
+                ),
+                today_visit_status=(
+                    today_visit.status if today_visit is not None else None
+                ),
+                today_visit_type=(
+                    today_visit.visit_type if today_visit is not None else None
+                ),
+                last_activity_at=latest_activity_by_patient.get(
+                    patient.id, patient.created_at
+                ),
+            )
+        )
+    for row in rows:
+        row.same_name_count = name_counts[" ".join(row.display_name.casefold().split())]
+
+    normalized_search = " ".join((search or "").casefold().split())
+    if normalized_search:
+        rows = [
+            row
+            for row in rows
+            if normalized_search in row.display_name.casefold()
+            or normalized_search in (row.medical_record_number or "").casefold()
+            or normalized_search
+            in (row.date_of_birth.isoformat() if row.date_of_birth else "")
+        ]
+    if visit_scope == "today":
+        rows = [row for row in rows if row.today_visit_at is not None]
+    elif visit_scope == "previous":
+        rows = [row for row in rows if row.today_visit_at is None]
+
+    if visit_scope == "today":
+        rows.sort(
+            key=lambda row: (
+                row.today_visit_at.timestamp() if row.today_visit_at else float("inf"),
+                row.display_name.casefold(),
+                str(row.id),
+            )
+        )
+    elif visit_scope == "previous":
+        rows.sort(
+            key=lambda row: (
+                -row.last_activity_at.timestamp() if row.last_activity_at else 0,
+                row.display_name.casefold(),
+                str(row.id),
+            )
+        )
+    else:
+        rows.sort(
+            key=lambda row: (
+                0 if row.today_visit_at is not None else 1,
+                row.today_visit_at.timestamp()
+                if row.today_visit_at is not None
+                else -(
+                    row.last_activity_at.timestamp() if row.last_activity_at else 0
+                ),
+                row.display_name.casefold(),
+                str(row.id),
+            )
+        )
+    total = len(rows)
+    return rows[offset : offset + limit], total
 
 
 def get_scoped_entry(
@@ -152,7 +319,7 @@ def authorize_entry_create(
 ) -> tuple[str, bool, str]:
     role = context.role
     if role == "staff" and data.section == "staff":
-        return "human", data.patient_facing, "manual_staff_note"
+        return "human", False, "manual_staff_note"
     if role == "clinician" and data.section == "clinician":
         return "human", data.patient_facing, "manual_clinician_note"
     if role == "patient" and data.section == "patient":
@@ -325,6 +492,90 @@ def entry_public(session: Session, entry: Entry) -> EntryPublic:
     )
 
 
+def _record_clinician_publication(
+    session: Session,
+    context: RequestContext,
+    entry: Entry,
+    version: EntryVersion,
+    content: str,
+) -> PatientPublication:
+    """Bind a clinician sharing decision to an exact immutable text span."""
+
+    if not redaction_is_qualified(session, clinic_id=context.clinic_id):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "REDACTION_EVALUATION_REQUIRED"},
+        )
+
+    pointer_id = uuid.uuid4()
+    pointer = ProvenancePointer(
+        id=pointer_id,
+        clinic_id=context.clinic_id,
+        entry_version_id=version.id,
+        start_offset=0,
+        end_offset=len(content),
+        exact_quote_ciphertext=field_codec.encrypt_text(
+            context.clinic_id,
+            "provenance.exact_quote",
+            pointer_id,
+            content,
+        ),
+        prefix_ciphertext=field_codec.encrypt_text(
+            context.clinic_id, "provenance.prefix", pointer_id, ""
+        ),
+        suffix_ciphertext=field_codec.encrypt_text(
+            context.clinic_id, "provenance.suffix", pointer_id, ""
+        ),
+        quote_sha256=hashlib.sha256(content.encode()).hexdigest(),
+    )
+    session.add(pointer)
+    publication = PatientPublication(
+        clinic_id=context.clinic_id,
+        patient_id=entry.patient_id,
+        entry_version_id=version.id,
+        approved_by_membership_id=context.membership.id,
+    )
+    session.add(publication)
+    session.flush()
+    session.add(
+        PatientPublicationItem(
+            clinic_id=context.clinic_id,
+            publication_id=publication.id,
+            provenance_pointer_id=pointer.id,
+            support_state="human_asserted",
+            confidence_band="not_applicable",
+        )
+    )
+    return publication
+
+
+def _record_patient_sharing_request(
+    session: Session,
+    context: RequestContext,
+    entry: Entry,
+    version: EntryVersion,
+) -> PatientSharingRequest:
+    existing = session.exec(
+        select(PatientSharingRequest).where(
+            PatientSharingRequest.clinic_id == context.clinic_id,
+            PatientSharingRequest.entry_version_id == version.id,
+            PatientSharingRequest.status == "pending",
+        )
+    ).first()
+    if existing is not None:
+        return existing
+    request = PatientSharingRequest(
+        clinic_id=context.clinic_id,
+        patient_id=entry.patient_id,
+        entry_id=entry.id,
+        entry_version_id=version.id,
+        requested_by_membership_id=context.membership.id,
+    )
+    session.add(request)
+    session.flush()
+    return request
+
+
 def create_entry(
     session: Session, context: RequestContext, data: EntryCreate
 ) -> EntryPublic:
@@ -355,6 +606,22 @@ def create_entry(
     session.flush()
     entry.current_version_id = version.id
     session.add(entry)
+
+    from app.services.conflicts import detect_conflicts_for_version
+
+    conflicts = detect_conflicts_for_version(
+        session, context, entry, version, data.content
+    )
+    if patient_facing and conflicts:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "UNRESOLVED_CLINICAL_CONFLICT",
+                "message": "Resolve the clinical conflict before patient sharing.",
+            },
+        )
+    if patient_facing and context.role == "clinician":
+        _record_clinician_publication(session, context, entry, version, data.content)
 
     if data.supersedes_entry_id or data.conflicts_with_entry_id:
         if context.role != "clinician":
@@ -387,6 +654,18 @@ def create_entry(
         resource_id=entry.id,
         metadata={"version_id": str(version.id), "section": entry.section},
     )
+    if context.role == "staff" and data.patient_facing:
+        sharing_request = _record_patient_sharing_request(
+            session, context, entry, version
+        )
+        emit_change(
+            session,
+            context,
+            action="entry.patient_sharing_requested",
+            resource_type="entry",
+            resource_id=sharing_request.id,
+            metadata={"version_id": str(version.id), "entry_id": str(entry.id)},
+        )
     session.commit()
     session.refresh(entry)
     return entry_public(session, entry)
@@ -403,6 +682,7 @@ def patch_entry(
     patient_facing: bool | None,
     reverted_from_version_id: uuid.UUID | None = None,
     action: str = "entry.updated",
+    approved_patient_sharing: bool = False,
 ) -> EntryPublic:
     entry = get_scoped_entry(session, context, entry_id, lock=True)
     authorize_entry_write(context, entry)
@@ -419,6 +699,10 @@ def patch_entry(
     )
     if context.role == "patient":
         effective_patient_facing = True
+    elif context.role == "staff" and not approved_patient_sharing:
+        # Clinical notes are shared through the explicit clinician publication
+        # gate, never by toggling a generic entry field.
+        effective_patient_facing = False
     sharing_changed = effective_patient_facing != entry.patient_facing
     next_version = _new_version(
         entry=entry,
@@ -434,6 +718,47 @@ def patch_entry(
     entry.current_version_id = next_version.id
     entry.patient_facing = effective_patient_facing
     session.add(entry)
+    from app.services.conflicts import detect_conflicts_for_version
+
+    conflicts = detect_conflicts_for_version(
+        session,
+        context,
+        entry,
+        next_version,
+        content if content is not None else current_content,
+    )
+    if effective_patient_facing and conflicts:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "UNRESOLVED_CLINICAL_CONFLICT",
+                "message": "Resolve the clinical conflict before patient sharing.",
+            },
+        )
+    if (
+        effective_patient_facing
+        and context.role == "clinician"
+        and (sharing_changed or approved_patient_sharing)
+    ):
+        _record_clinician_publication(
+            session,
+            context,
+            entry,
+            next_version,
+            content if content is not None else current_content,
+        )
+    if context.role == "staff" and patient_facing:
+        sharing_request = _record_patient_sharing_request(
+            session, context, entry, next_version
+        )
+        emit_change(
+            session,
+            context,
+            action="entry.patient_sharing_requested",
+            resource_type="patient_sharing_request",
+            resource_id=sharing_request.id,
+            metadata={"entry_id": str(entry.id), "version_id": str(next_version.id)},
+        )
     affected_patients: set[uuid.UUID] = set()
     if sharing_changed:
         # Patient-facing Glance is precomputed. A sharing withdrawal must
@@ -469,6 +794,15 @@ def patch_entry(
         resource_id=entry.id,
         metadata=metadata,
     )
+    if context.role == "staff" and patient_facing:
+        emit_change(
+            session,
+            context,
+            action="entry.patient_sharing_requested",
+            resource_type="entry",
+            resource_id=entry.id,
+            metadata={"version_id": str(next_version.id)},
+        )
     for patient_id in affected_patients:
         rebuild_glance(session, context, patient_id)
     session.commit()
@@ -548,6 +882,30 @@ def timeline(
     output: list[PatientTimelineEntry] = []
     for entry in entries:
         public = entry_public(session, entry)
+        publication = session.exec(
+            select(PatientPublication).where(
+                PatientPublication.clinic_id == context.clinic_id,
+                PatientPublication.entry_version_id == public.version_id,
+                col(PatientPublication.withdrawn_at).is_(None),
+            )
+        ).first()
+        approval_receipt: dict[str, object] | None = None
+        if publication is not None:
+            membership = session.get(
+                ClinicMembership, publication.approved_by_membership_id
+            )
+            approver = session.get(User, membership.user_id) if membership else None
+            approval_receipt = {
+                "approved_by": (
+                    approver.full_name or str(approver.email)
+                    if approver
+                    else "Clinician"
+                ),
+                "approved_at": publication.approved_at.isoformat(),
+                "source_title": public.title,
+                "source_date": public.created_at.isoformat(),
+                "withdrawal_status": "active",
+            }
         output.append(
             PatientTimelineEntry(
                 id=public.id,
@@ -561,6 +919,7 @@ def timeline(
                 content=public.content,
                 created_at=public.created_at,
                 occurred_at=public.occurred_at,
+                approval_receipt=approval_receipt,
             )
         )
     return output
@@ -668,9 +1027,10 @@ def rebuild_glance(
         .execution_options(populate_existing=True)
     ).all()
     cards: list[dict[str, object]] = []
+    review_cards: list[dict[str, object]] = []
     patient_cards: list[dict[str, object]] = []
     for highlight in highlights:
-        if len(cards) >= 5 and len(patient_cards) >= 5:
+        if len(cards) >= 5 and len(patient_cards) >= 5 and len(review_cards) >= 20:
             break
         pointer = session.exec(
             select(ProvenancePointer).where(
@@ -703,6 +1063,17 @@ def rebuild_glance(
             and source_version is not None
             and source_version.patient_facing
         )
+        assessment = session.exec(
+            select(DecisionAssessment).where(
+                DecisionAssessment.clinic_id == context.clinic_id,
+                DecisionAssessment.highlight_id == highlight.id,
+            )
+        ).first()
+        decision = decision_payload(
+            assessment=assessment,
+            highlight=highlight,
+            score_components=score_components.get(highlight.id, {}),
+        )
         card: dict[str, object] = {
             "highlight_id": str(highlight.id),
             "label": field_codec.decrypt_text(
@@ -720,13 +1091,19 @@ def rebuild_glance(
             "risk_reason": highlight.risk_reason,
             "score_components": score_components.get(highlight.id, {}),
             "provenance_pointer_id": str(pointer.id),
+            **decision,
         }
-        if len(cards) < 5:
+        review_state = assessment_review_state(assessment, highlight)
+        if review_state == "ready" and len(cards) < 5:
             cards.append(card)
         # Patient eligibility is applied before the independent top-five cut;
         # high-scoring internal cards therefore cannot crowd out a sixth public
         # candidate from the patient projection.
-        if currently_patient_facing and len(patient_cards) < 5:
+        if (
+            review_state == "ready"
+            and currently_patient_facing
+            and len(patient_cards) < 5
+        ):
             patient_cards.append(
                 {
                     "highlight_id": card["highlight_id"],
@@ -735,6 +1112,8 @@ def rebuild_glance(
                     "provenance_pointer_id": card["provenance_pointer_id"],
                 }
             )
+        if review_state != "ready" and len(review_cards) < 20:
+            review_cards.append(card)
     snapshot = session.exec(
         select(PatientGlanceSnapshot).where(
             PatientGlanceSnapshot.clinic_id == context.clinic_id,
@@ -752,7 +1131,11 @@ def rebuild_glance(
         context.clinic_id,
         "glance.payload",
         snapshot.id,
-        {"cards": cards, "patient_cards": patient_cards},
+        {
+            "cards": cards,
+            "review_cards": review_cards,
+            "patient_cards": patient_cards,
+        },
     )
     session.add(snapshot)
     return snapshot
@@ -789,3 +1172,21 @@ def read_glance(
     if not isinstance(cards, list):
         return [], snapshot.generated_at
     return cast(list[dict[str, object]], cards[:5]), snapshot.generated_at
+
+
+def read_review_glance(
+    snapshot: PatientGlanceSnapshot,
+) -> tuple[list[dict[str, object]], datetime]:
+    payload = cast(
+        dict[str, object],
+        field_codec.decrypt_json(
+            snapshot.clinic_id,
+            "glance.payload",
+            snapshot.id,
+            snapshot.payload_ciphertext,
+        ),
+    )
+    cards = payload.get("review_cards", [])
+    if not isinstance(cards, list):
+        cards = []
+    return cast(list[dict[str, object]], cards[:20]), snapshot.generated_at

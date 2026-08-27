@@ -26,6 +26,8 @@ def create_access_token(
     membership_id: str | Any | None = None,
     clinic_id: str | Any | None = None,
     job_id: str | Any | None = None,
+    platform_admin_id: str | Any | None = None,
+    scope: str | None = None,
 ) -> str:
     expire = datetime.now(UTC) + expires_delta
     to_encode = {"exp": expire, "sub": str(subject)}
@@ -35,6 +37,10 @@ def create_access_token(
         to_encode["clinic_id"] = str(clinic_id)
     if job_id is not None:
         to_encode["job_id"] = str(job_id)
+    if platform_admin_id is not None:
+        to_encode["platform_admin_id"] = str(platform_admin_id)
+    if scope is not None:
+        to_encode["scope"] = scope
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 

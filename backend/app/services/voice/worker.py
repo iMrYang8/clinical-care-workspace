@@ -20,6 +20,7 @@ from app.core.field_crypto import field_codec
 from app.models import (
     AudioAsset,
     AudioChunk,
+    CalibrationReport,
     ClinicalFact,
     Job,
     JobAttempt,
@@ -30,6 +31,11 @@ from app.models import (
     get_datetime_utc,
 )
 from app.services.ai_jobs import active_worker_for_context, claim_job
+from app.services.clinic_ai_settings import clinic_ai_runtime
+from app.services.decisioning import (
+    evaluation_manifest_sha256,
+    matching_calibration_report,
+)
 from app.services.nightingale import emit_change
 from app.services.voice.ffmpeg import (
     AudioPreprocessingError,
@@ -328,6 +334,7 @@ def _store_asset(
 
 
 def _configured_provider(
+    db: Session,
     voice_session: VoiceSession,
 ) -> tuple[TranscriptionProvider | None, str | None]:
     if voice_session.synthetic_fixture:
@@ -335,16 +342,17 @@ def _configured_provider(
     if settings.VOICE_TRANSCRIPTION_PROVIDER == "disabled":
         return None, "ASR_PROVIDER_DISABLED"
     if settings.VOICE_TRANSCRIPTION_PROVIDER == "openai":
+        runtime = clinic_ai_runtime(db, voice_session.clinic_id)
         if settings.STRICT_NO_AUDIO_EGRESS:
             return None, "STRICT_NO_AUDIO_EGRESS"
         if not settings.REMOTE_AUDIO_EGRESS_ENABLED:
             return None, "REMOTE_AUDIO_EGRESS_DISABLED"
-        if not settings.OPENAI_API_KEY or not settings.OPENAI_TRANSCRIBE_MODEL:
+        if not runtime.api_key or not runtime.transcribe_model:
             return None, "OPENAI_AUDIO_NOT_CONFIGURED"
         return (
             OpenAIAudioTranscriptionProvider(
-                api_key=settings.OPENAI_API_KEY,
-                model=settings.OPENAI_TRANSCRIBE_MODEL,
+                api_key=runtime.api_key,
+                model=runtime.transcribe_model,
             ),
             None,
         )
@@ -365,7 +373,7 @@ def _configured_provider(
 
 
 async def _transcribe(
-    voice_session: VoiceSession, asset_payload: bytes
+    db: Session, voice_session: VoiceSession, asset_payload: bytes
 ) -> tuple[TranscriptResult | None, str | None]:
     if voice_session.synthetic_fixture:
         if not voice_session.fixture_id:
@@ -374,7 +382,7 @@ async def _transcribe(
             SyntheticFixtureProvider().transcribe_fixture(voice_session.fixture_id),
             None,
         )
-    provider, reason = _configured_provider(voice_session)
+    provider, reason = _configured_provider(db, voice_session)
     if provider is None:
         return None, reason
     with tempfile.TemporaryDirectory(prefix="nightingale-asr-") as temp_name:
@@ -449,6 +457,27 @@ def _fact_candidate(
     return None
 
 
+def _apply_calibration(
+    segments: list[TranscriptSegmentResult],
+    calibration: CalibrationReport | None,
+) -> list[TranscriptSegmentResult]:
+    """Replace provider self-scores with holdout-calibrated evidence or no score."""
+
+    if calibration is None:
+        return [
+            replace(item, confidence=None, confidence_source="unavailable")
+            for item in segments
+        ]
+    return [
+        replace(
+            item,
+            confidence=calibration.accuracy_lower_bound,
+            confidence_source=f"calibrated:{calibration.id}",
+        )
+        for item in segments
+    ]
+
+
 def _create_revision(
     db: Session,
     context: RequestContext,
@@ -460,6 +489,20 @@ def _create_revision(
     reanalyzed: bool = False,
 ) -> TranscriptRevision:
     segments, span_warnings = _normalized_segments(result, asset)
+    calibration = matching_calibration_report(
+        db,
+        clinic_id=context.clinic_id,
+        provider=result.provider,
+        exact_model_id=result.model,
+        task="voice_transcription",
+        request_parameters={
+            "response_format": "diarized_json",
+            "chunking_strategy": "auto",
+        },
+        dataset_manifest_sha256=evaluation_manifest_sha256(),
+        code_commit=settings.NIGHTINGALE_SOURCE_COMMIT,
+    )
+    segments = _apply_calibration(segments, calibration)
     fact_candidate = _fact_candidate(result.text, segments)
     fact_valid = False
     if fact_candidate is not None:
@@ -488,10 +531,8 @@ def _create_revision(
         if asset.preprocessing_json.get(signal) is True
     }
     warnings = sorted({*result.warnings, *span_warnings, *preprocessing_warnings})
-    low_confidence = any(
-        item.confidence is not None and item.confidence < 0.75 for item in segments
-    )
-    confidence_unavailable = any(item.confidence is None for item in segments)
+    low_confidence = calibration is not None and calibration.confidence_band == "low"
+    confidence_unavailable = calibration is None
     overlap = any(item.overlap_group_id for item in segments)
     if low_confidence:
         warnings.append("LOW_CONFIDENCE_REVIEW")
@@ -789,7 +830,9 @@ async def process_voice_job(
             )
             job, attempt = _renew_claim(db, context, job_id, token)
             voice_session = _session_from_payload(db, context, job, payload)
-            result, unavailable_reason = await _transcribe(voice_session, asset_payload)
+            result, unavailable_reason = await _transcribe(
+                db, voice_session, asset_payload
+            )
             job, attempt = _claim_is_current(db, context, job_id, token)
             voice_session = _session_from_payload(db, context, job, payload)
             if result is None:

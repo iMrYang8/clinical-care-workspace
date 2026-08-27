@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import create_engine
 from sqlmodel import Session, select
 
+from app.clinic_codes import normalize_clinic_code
 from app.core.config import settings
 from app.core.security import get_password_hash, verify_password
 from app.models import Clinic, ClinicMembership, User
@@ -56,29 +57,39 @@ def _require_matching_membership(
 def provision_clinic_admin(
     session: Session,
     *,
+    clinic_code: str,
     clinic_slug: str,
     clinic_name: str,
     admin_email: str,
     admin_password: str,
     worker_email: str,
 ) -> ProvisionedClinic:
+    code = normalize_clinic_code(clinic_code)
     slug = clinic_slug.strip().lower()
     name = clinic_name.strip()
     normalized_admin_email = admin_email.strip().lower()
     normalized_worker_email = worker_email.strip().lower()
-    if not _SLUG.fullmatch(slug) or not name:
+    if code is None or not _SLUG.fullmatch(slug) or not name:
         raise ValueError("PROVISION_INVALID_CLINIC")
     if not normalized_admin_email or normalized_admin_email == normalized_worker_email:
         raise ValueError("PROVISION_INVALID_IDENTITY")
-    if len(admin_password) < 16:
-        raise ValueError("PROVISION_ADMIN_PASSWORD_TOO_SHORT")
+    if not 16 <= len(admin_password) <= 200:
+        raise ValueError("PROVISION_ADMIN_PASSWORD_INVALID_LENGTH")
 
     clinic = session.exec(select(Clinic).where(Clinic.slug == slug)).first()
+    code_owner = session.exec(select(Clinic).where(Clinic.code == code)).first()
     if clinic is None:
-        clinic = Clinic(slug=slug, name=name)
+        if code_owner is not None:
+            raise RuntimeError("PROVISION_CLINIC_CODE_CONFLICT")
+        clinic = Clinic(code=code, slug=slug, name=name)
         session.add(clinic)
         session.flush()
-    elif clinic.name != name:
+    elif (
+        clinic.name != name
+        or clinic.code != code
+        or code_owner is None
+        or code_owner.id != clinic.id
+    ):
         raise RuntimeError("PROVISION_CLINIC_CONFLICT")
 
     admin = session.exec(
@@ -132,6 +143,7 @@ def _value(argument: str | None, env_name: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="provision-clinic-admin")
+    parser.add_argument("--clinic-code")
     parser.add_argument("--clinic-slug")
     parser.add_argument("--clinic-name")
     parser.add_argument("--admin-email")
@@ -142,6 +154,7 @@ def main() -> None:
     with Session(create_engine(str(settings.MIGRATION_DATABASE_URL))) as session:
         result = provision_clinic_admin(
             session,
+            clinic_code=_value(args.clinic_code, "NIGHTINGALE_PROVISION_CLINIC_CODE"),
             clinic_slug=_value(args.clinic_slug, "NIGHTINGALE_PROVISION_CLINIC_SLUG"),
             clinic_name=_value(args.clinic_name, "NIGHTINGALE_PROVISION_CLINIC_NAME"),
             admin_email=_value(args.admin_email, "NIGHTINGALE_PROVISION_ADMIN_EMAIL"),

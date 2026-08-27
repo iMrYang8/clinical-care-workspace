@@ -36,11 +36,18 @@ def reset_synthetic_fixture(session: Session) -> None:
         text(
             """
             TRUNCATE TABLE
+              platform_audit_events, platform_administrators,
+              patient_publication_items, patient_sharing_requests,
+              patient_publications, calibration_buckets, decision_assessments,
+              calibration_reports, evaluation_runs, redaction_evaluation_runs,
+              importance_impressions,
+              patient_portal_invitations, patient_identifiers, patient_visits,
               clinic_invitations, clinical_facts, transcript_segments, transcript_revisions,
               audio_assets, audio_chunks, voice_devices, voice_sessions,
               domain_events, audit_events, job_attempts, ai_runs, redaction_runs,
               importance_feedback_events, importance_feature_stats, decay_runs,
-              retention_locks, archive_blobs, provenance_pointers, conflict_cases,
+              retention_locks, archive_blobs, conflict_cases,
+              clinical_fact_assertions, provenance_pointers,
               highlights, care_tasks, comment_mentions, comments, entry_relations,
               entry_versions, entries, jobs, patient_glance_snapshots, patient_user_links,
               patients, clinic_memberships, users, clinics

@@ -94,7 +94,7 @@ def _create_allergy_highlight(
             "section": section,
             "title": "Synthetic allergy",
             "content": "allergy",
-            "patient_facing": True,
+            "patient_facing": section == "clinician",
         },
     )
     assert entry.status_code == 201, entry.text
@@ -108,7 +108,7 @@ def _create_allergy_highlight(
             "exact_quote": "allergy",
             "label": "Allergy signal",
             "feature_keys": ["entity:allergy"],
-            "patient_facing": True,
+            "patient_facing": section == "clinician",
         },
     )
     assert response.status_code == 201, response.text
@@ -248,7 +248,7 @@ def test_patient_is_denied_before_internal_highlight_lookup(
         feedback = client.post(
             f"/api/v1/highlights/{highlight_id}/feedback",
             headers=patient | {"Idempotency-Key": f"patient-dismiss-{highlight_id}"},
-            json={"signal": "dismiss"},
+            json={"signal": "dismiss", "reason": "not_relevant"},
         )
         assert transitioned.status_code == 403
         assert feedback.status_code == 403
@@ -271,7 +271,7 @@ def test_dismiss_feedback_is_negative_idempotent_and_resource_bound(
         dismissed = client.post(
             f"/api/v1/highlights/{first['id']}/feedback",
             headers=shared,
-            json={"signal": "dismiss"},
+            json={"signal": "dismiss", "reason": "not_relevant"},
         )
         assert dismissed.status_code == 200, dismissed.text
         assert dismissed.json()["status"] == "dismissed"
@@ -279,13 +279,13 @@ def test_dismiss_feedback_is_negative_idempotent_and_resource_bound(
     second_dismissed = client.post(
         f"/api/v1/highlights/{second['id']}/feedback",
         headers=headers | {"Idempotency-Key": "dismiss-second"},
-        json={"signal": "dismiss"},
+        json={"signal": "dismiss", "reason": "not_relevant"},
     )
     assert second_dismissed.status_code == 200, second_dismissed.text
     conflict = client.post(
         f"/api/v1/highlights/{second['id']}/feedback",
         headers=shared,
-        json={"signal": "dismiss"},
+        json={"signal": "dismiss", "reason": "not_relevant"},
     )
     assert conflict.status_code == 409, conflict.text
     assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
@@ -299,14 +299,16 @@ def test_dismiss_feedback_is_negative_idempotent_and_resource_bound(
         ).all()
         audits = session.exec(
             select(AuditEvent).where(
-                AuditEvent.resource_id == uuid.UUID(first["id"]),
-                AuditEvent.action == "highlight.feedback.dismiss",
+                    AuditEvent.resource_id == uuid.UUID(first["id"]),
+                    AuditEvent.action
+                    == "highlight.feedback.dismiss.not_relevant",
             )
         ).all()
         domain_events = session.exec(
             select(DomainEvent).where(
-                DomainEvent.aggregate_id == uuid.UUID(first["id"]),
-                DomainEvent.event_type == "highlight.feedback.dismiss",
+                    DomainEvent.aggregate_id == uuid.UUID(first["id"]),
+                    DomainEvent.event_type
+                    == "highlight.feedback.dismiss.not_relevant",
             )
         ).all()
         assert len(feedback_events) == 1

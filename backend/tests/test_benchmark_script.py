@@ -25,12 +25,12 @@ benchmark_glance = _benchmark_module()
 def test_benchmark_selects_the_named_fixture_instead_of_the_first_patient() -> None:
     patients = [
         {"id": "empty-first", "display_name": "No Glance Fixture"},
-        {"id": "alex", "display_name": "Alex Synthetic"},
+        {"id": "alex", "display_name": "Alex Tan"},
     ]
 
     selected = benchmark_glance.select_fixture_patient(
         patients,
-        display_name="Alex Synthetic",
+        display_name="Alex Tan",
         patient_id=None,
     )
 
@@ -39,14 +39,14 @@ def test_benchmark_selects_the_named_fixture_instead_of_the_first_patient() -> N
 
 def test_benchmark_requires_one_unambiguous_fixture_identity() -> None:
     duplicate = [
-        {"id": "alex-1", "display_name": "Alex Synthetic"},
-        {"id": "alex-2", "display_name": "Alex Synthetic"},
+        {"id": "alex-1", "display_name": "Alex Tan"},
+        {"id": "alex-2", "display_name": "Alex Tan"},
     ]
 
     with pytest.raises(RuntimeError, match="exactly one"):
         benchmark_glance.select_fixture_patient(
             duplicate,
-            display_name="Alex Synthetic",
+            display_name="Alex Tan",
             patient_id=None,
         )
 

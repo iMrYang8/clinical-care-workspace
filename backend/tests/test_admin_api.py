@@ -8,10 +8,12 @@ from typing import Any
 from fastapi.testclient import TestClient
 from sqlmodel import col, select
 
+from app.core.field_crypto import field_codec
 from app.core.security import create_access_token, get_password_hash
 from app.main import app
-from app.models import ClinicInvitation, ClinicMembership, User
+from app.models import ClinicAISetting, ClinicInvitation, ClinicMembership, User
 from app.seed import demo_id
+from app.services.clinic_ai_settings import clinic_ai_runtime
 
 
 def _capture_invitation(monkeypatch) -> dict[str, str]:  # type: ignore[no-untyped-def]
@@ -27,7 +29,7 @@ def _capture_invitation(monkeypatch) -> dict[str, str]:  # type: ignore[no-untyp
 def test_invitation_is_committed_before_delivery_and_failed_token_is_revoked(
     client: TestClient, auth_headers, monkeypatch, owner_session
 ) -> None:  # type: ignore[no-untyped-def]
-    recipient = "delivery-failure@nightingale.synthetic"
+    recipient = "delivery-failure@nightingale.example"
 
     def fail_after_observing_commit(*, recipient: str, token: str) -> None:
         invitation = owner_session.exec(
@@ -85,7 +87,7 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
         "/api/v1/admin/memberships",
         headers=admin,
         json={
-            "email": "invited-clinician@nightingale.synthetic",
+            "email": "invited-clinician@nightingale.example",
             "full_name": "Invited Synthetic Clinician",
             "role": "clinician",
         },
@@ -100,13 +102,13 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
         "user_id",
         "is_active",
     }.isdisjoint(invited.json())
-    assert delivered["recipient"] == "invited-clinician@nightingale.synthetic"
+    assert delivered["recipient"] == "invited-clinician@nightingale.example"
 
     wrong_email = client.post(
         "/api/v1/auth/invitations/accept",
         headers={"Origin": "https://localhost"},
         json={
-            "email": "wrong-recipient@nightingale.synthetic",
+            "email": "wrong-recipient@nightingale.example",
             "token": delivered["token"],
             "password": "recipient-chosen-password",
         },
@@ -118,7 +120,7 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
         "/api/v1/admin/memberships",
         headers=admin,
         json={
-            "email": "ignored-password@nightingale.synthetic",
+            "email": "ignored-password@nightingale.example",
             "role": "staff",
             "temporary_password": "attacker-controlled-password",
         },
@@ -129,20 +131,21 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
         "/api/v1/admin/memberships",
         headers=admin,
         json={
-            "email": "invited-clinician@nightingale.synthetic",
+            "email": "invited-clinician@nightingale.example",
             "role": "staff",
         },
     )
     assert duplicate.status_code == 409
     assert client.get("/api/v1/admin/memberships", headers=admin).json()["count"] == 5
 
+    spaced_password = " recipient-chosen-password "
     accepted = client.post(
         "/api/v1/auth/invitations/accept",
         headers={"Origin": "https://localhost"},
         json={
-            "email": "invited-clinician@nightingale.synthetic",
+            "email": "invited-clinician@nightingale.example",
             "token": delivered["token"],
-            "password": "recipient-chosen-password",
+            "password": spaced_password,
             "full_name": "Recipient Verified Name",
         },
     )
@@ -151,11 +154,31 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
     assert accepted.json()["is_active"] is True
     assert client.get("/api/v1/admin/memberships", headers=admin).json()["count"] == 6
 
+    accepted_login = client.post(
+        "/api/v1/auth/login",
+        headers={"X-Clinic-Code": "nightingale"},
+        data={
+            "username": " INVITED-CLINICIAN@NIGHTINGALE.EXAMPLE ",
+            "password": spaced_password,
+        },
+    )
+    assert accepted_login.status_code == 200, accepted_login.text
+    trimmed_login = client.post(
+        "/api/v1/auth/login",
+        headers={"X-Clinic-Code": "NIGHTINGALE"},
+        data={
+            "username": "invited-clinician@nightingale.example",
+            "password": spaced_password.strip(),
+        },
+    )
+    assert trimmed_login.status_code == 400
+    assert trimmed_login.json()["detail"] == "Incorrect clinic code, email, or password"
+
     replay = client.post(
         "/api/v1/auth/invitations/accept",
         headers={"Origin": "https://localhost"},
         json={
-            "email": "invited-clinician@nightingale.synthetic",
+            "email": "invited-clinician@nightingale.example",
             "token": delivered["token"],
             "password": "recipient-chosen-password",
         },
@@ -183,8 +206,8 @@ def test_admin_invite_rejects_patient_self_and_existing_members(
     _capture_invitation(monkeypatch)
     admin = auth_headers("admin")
     for email in (
-        "admin@nightingale.synthetic",
-        "staff@nightingale.synthetic",
+        "admin@nightingale.example",
+        "staff@nightingale.example",
     ):
         response = client.post(
             "/api/v1/admin/memberships",
@@ -345,9 +368,9 @@ def test_cross_clinic_email_preoccupation_cannot_bind_victim_membership(
     before_accept = client.post(
         "/api/v1/auth/login",
         data=form,
-        headers={"X-Clinic-ID": str(demo_id("clinic-primary"))},
+        headers={"X-Clinic-Code": "NIGHTINGALE"},
     )
-    assert before_accept.status_code == 403
+    assert before_accept.status_code == 400
 
     accepted = client.post(
         "/api/v1/auth/invitations/accept",
@@ -365,13 +388,13 @@ def test_cross_clinic_email_preoccupation_cannot_bind_victim_membership(
     old_password = client.post(
         "/api/v1/auth/login",
         data=form,
-        headers={"X-Clinic-ID": str(demo_id("clinic-primary"))},
+        headers={"X-Clinic-Code": "NIGHTINGALE"},
     )
     assert old_password.status_code == 400
     victim_login = client.post(
         "/api/v1/auth/login",
         data={"username": victim_email, "password": "victim-controlled-password"},
-        headers={"X-Clinic-ID": str(demo_id("clinic-primary"))},
+        headers={"X-Clinic-Code": "NIGHTINGALE"},
     )
     assert victim_login.status_code == 200
 
@@ -401,6 +424,57 @@ def test_admin_audit_is_metadata_only_and_cross_clinic_hidden(
             "version_id",
             "created_at",
         }
+
+
+def test_clinic_admin_configures_encrypted_ai_routing_without_key_disclosure(
+    client: TestClient, auth_headers, owner_session
+) -> None:
+    admin = auth_headers("admin")
+    original = client.get("/api/v1/admin/ai-settings", headers=admin)
+    assert original.status_code == 200, original.text
+    assert original.json()["api_key_configured"] is False
+
+    raw_key = "sk-synthetic-clinic-secret-1234567890"
+    saved = client.put(
+        "/api/v1/admin/ai-settings",
+        headers=admin,
+        json={
+            "api_key": raw_key,
+            "clear_api_key": False,
+            "fast_model": "gpt-5-mini",
+            "careful_model": "gpt-5.1",
+            "transcribe_model": "gpt-4o-transcribe-diarize",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["api_key_configured"] is True
+    assert saved.json()["api_key_last4"] == "7890"
+    assert raw_key not in saved.text
+
+    row = owner_session.exec(
+        select(ClinicAISetting).where(
+            ClinicAISetting.clinic_id == demo_id("clinic-primary")
+        )
+    ).one()
+    assert row.api_key_ciphertext is not None
+    assert raw_key.encode() not in row.api_key_ciphertext
+    assert (
+        field_codec.decrypt_text(
+            row.clinic_id,
+            "clinic_ai_setting.api_key",
+            row.id,
+            row.api_key_ciphertext,
+        )
+        == raw_key
+    )
+    runtime = clinic_ai_runtime(owner_session, row.clinic_id)
+    assert runtime.api_key == raw_key
+    assert runtime.fast_model == "gpt-5-mini"
+    assert runtime.careful_model == "gpt-5.1"
+    forbidden = client.get("/api/v1/admin/ai-settings", headers=auth_headers("staff"))
+    assert forbidden.status_code == 403
+    audit = client.get("/api/v1/admin/audit", headers=admin)
+    assert raw_key not in audit.text
 
     assert (
         client.get(
