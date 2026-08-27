@@ -1,77 +1,110 @@
-# Nightingale technical overview
+# Nightingale — current technical brief
 
-Nightingale is a shared patient-care workspace for clinical teams. It helps care staff and clinicians understand current priorities, document care, coordinate follow-up, and review AI-assisted notes against their supporting sources. Clinic administrators manage access and review activity without editing clinical documentation. Patients use a separate My Care portal.
+**Current working tree · 28 August 2026 · synthetic/Mock patient data only**
 
-## Product experience
+Nightingale is a clinic-scoped patient-care workspace. It is designed to let a care team answer two questions quickly: **what matters for this patient now, and what exact saved source supports it?** The product combines a five-item Current priorities view, a longitudinal record, role-separated clinical collaboration, reviewable AI-assisted notes, and recoverable voice capture. It does not treat a score, risk badge, or model output as self-validating evidence.
 
-The clinical workspace follows the way a care team reviews a patient record:
-
-1. Open **Patients** and select a patient.
-2. Review up to five **Current priorities**.
-3. Open **Source details** to see the supporting note, author, date, exact wording, and whether the source is current or historical.
-4. Read and update the **Care timeline** within the user's permitted section.
-5. Use **Team discussion** to mention a colleague, assign follow-up, reply, and resolve a thread.
-6. Use **Change history** to understand who changed a note and when, compare saved versions, or restore an earlier version without deleting history.
-7. Review visit recordings, correct the transcript, confirm clinical findings, and publish the reviewed note.
-
-Patients sign in separately. Their portal receives a deliberately narrower view that excludes internal discussions, AI working material, raw transcripts, audio, and ranking details.
-
-## Architecture
+## 1. Architecture and clinical workflow
 
 ![Nightingale system architecture](./architecture.svg)
 
-The browser application uses React, TypeScript, Vite, TanStack Router and Query, shadcn/ui, and Tiptap. FastAPI serves the application boundary and the production frontend from the same origin. SQLModel and Alembic manage PostgreSQL data. A separate worker processes durable text and voice jobs.
+The browser application uses React, TypeScript, Vite, TanStack Router/Query, shadcn/ui, and Tiptap. FastAPI owns authentication, authorization, validation, the OpenAPI boundary, and same-origin production delivery. SQLModel and Alembic manage PostgreSQL 16. A separate worker claims durable text and voice jobs. Traefik terminates local TLS; Docker Compose provides the reproducible local topology.
 
-The main data chain is shown below:
+The primary workflow is:
+
+1. Staff or Clinician searches the clinic's patient registry and opens a shared record.
+2. Current priorities presents at most five precomputed items plus a separate clinical-review queue.
+3. **View source** resolves a priority or normalized fact to the exact wording in an immutable saved note version.
+4. Human and AI-assisted entries appear together in a longitudinal timeline while retaining their type and review state.
+5. Staff and Clinician edit their permitted sections, discuss selected text, mention or assign a colleague, resolve/reopen threads, compare versions, and restore an earlier version as a new version.
+6. A Clinician resolves high-risk conflicts and approves patient-facing information. Patients use a separate My Care projection that excludes internal comments, raw AI working material, scores, transcripts, and audio.
+
+The warm Current-priorities path reads an encrypted precomputed snapshot rather than invoking a model. An exploratory run against this **dirty working tree** measured 100 warm reads at median 2.602 ms, p95 **3.881 ms**, and p99 4.151 ms, below the 300 ms target. This is useful current evidence, but it is not a release-candidate measurement until it is rebound to a clean revision and image digest.
+
+## 2. Data model, tenancy, and source integrity
 
 ![Nightingale clinic-scoped data model](./schema.svg)
 
-Care notes are stored as entries with immutable saved versions. Comments and current-priority cards point to a specific saved version and text span. Restoring an earlier note creates a new current version rather than deleting later history.
+The main evidence chain is:
 
-## Identity and permissions
+```text
+Clinic → Patient → Entry → immutable EntryVersion
+                         ↘ Comment / Highlight / ClinicalFactAssertion
+                           → ProvenancePointer → exact quote and saved version
+```
 
-Every protected request resolves the signed-in user's active clinic membership on the server. Browser-supplied clinic, role, and author values are not trusted as authority.
+`ClinicMembership` assigns one role within a clinic; `PatientUserLink` grants a patient access only to their own record. Patient identifiers use encrypted values plus clinic-scoped HMACs for exact duplicate detection. Tenant rows carry `clinic_id`; tenant-composite foreign keys prevent cross-clinic relationships, and PostgreSQL row-level security reinforces application checks. Clinical text, comments, Glance payloads, identifiers, redaction maps, transcripts, facts, and audio use clinic-bound AES-256-GCM.
 
-- **Care staff** can document care in the staff section and collaborate with the team.
-- **Clinicians** can document clinical judgement, review AI-assisted material, and publish reviewed visit notes.
-- **Clinic administrators** can manage members and inspect activity but cannot change clinical content.
-- **Patients** can read patient-facing information and submit their own insights or recordings through My Care.
-- **Background workers** receive narrowly scoped access to create derived records for an assigned clinic job.
+Entries do not mutate history. Every save creates an `EntryVersion`; compare-and-swap version checks reject stale writes, and restore creates a new current version. `ProvenancePointer` stores the saved version, offsets, exact quote/context, quote hash, and optional audio time range. The user interface shows the clinically useful source title, author, date, quote, and historical state while hiding internal UUIDs and hashes.
 
-Clinic-scoped foreign keys and PostgreSQL row-level security reinforce application authorization. Browser sessions use secure, same-origin cookies, and protected responses are not stored in shared caches.
+The internal provenance chain is implemented and source jumps were observed in the browser. A strict brief-reading gap remains: the general timeline `EntryPublic` DTO does not yet expose `author_role` and a direct top-level provenance pointer for every AI entry; today those fields are reached indirectly through membership/AI-run and source-version relations. This must be closed before claiming literal DTO-level conformance.
 
-## Source-supported care
+## 3. Roles and browser validation
 
-Current priorities are read from a precomputed snapshot, so opening a patient record does not wait for remote processing. Each priority points to an immutable note version and exact supporting wording. The interface presents the source title, author, date, quoted text, and historical status while keeping internal identifiers and integrity metadata out of the clinical workflow.
+The server resolves the active membership; browser-supplied clinic, role, or actor values are never authority.
 
-AI-assisted entries remain distinguishable from human notes. They carry a review message and do not overwrite human documentation. A clinician correction or publication creates a separate record with its own source links.
+| Role | Implemented boundary | Browser observation in the current local build |
+| --- | --- | --- |
+| Patient | Own patient-facing entries, approved priorities, personal insight/recording; no clinical/admin data | Separate My Care navigation; one approved timeline note and three approved priorities; no raw AI, internal discussion, transcript, or Admin navigation |
+| Staff | Search patients, add staff care notes, discuss/assign, record visits; no clinician-section edits or conflict resolution | 303-record registry with search, six today's visits and 297 previous records; exact AI-source jump; Staff note editable while Clinician note is not; high conflict remains review-only |
+| Clinician | Staff capabilities plus clinical judgement, AI/voice review, conflict correction, and publication | Jordan Wong shows 22 years, 11 entries, three distinct AI-assisted note types, seven linked facts, an unresolved oral-intake conflict, source quote, decision explanation, and correction control |
+| Clinic Admin | Manage membership and clinic AI settings; read-only clinical oversight | Team/invitation/AI settings and database-backed activity log visible; patient record labelled read-only; no add, edit, or resolve controls |
 
-## Team collaboration and note history
+Selected backend P0/P1/Bonus tests reported **101 passed**, and the frontend unit suite reported **75 passed**. Direct browser checks covered Staff Glance-to-source, longitudinal Clinician review, patient-portal isolation, Admin read-only behavior, and Light/Dark/System appearance. A stale browser expectation for “Care timeline” versus “Longitudinal timeline” and product-language assertions around the intentionally exposed Admin AI settings were corrected. The current full Backend + Frontend + Typecheck + Build + Alembic + Playwright release gate is still being rerun; these selected results must not be represented as a final clean-tree gate.
 
-Staff and clinician notes are separate entries, allowing the two sections to progress independently. Concurrent updates to the same entry are compared against the version that was opened. If the note changed in another session, Nightingale preserves the user's draft and asks them to review the latest saved note.
+## 4. Importance learning: exact behavior and limits
 
-Selected-text discussions retain enough source context to reconnect to the intended wording after later edits. Mentions and assignments use clinic member names and roles in the interface. Administrators can inspect discussions as read-only oversight.
+The current mechanism is **deterministic, clinic-level online feature weighting**. It is not an LLM, not a learned neural model, and not a personal user profile.
 
-## Visit recordings
+For each highlight, the base score is:
 
-The recording workflow supports temporary live captions, encrypted local recovery, resumable upload, final transcription, speaker and timing review, confidence indicators, transcript correction, clinical findings, and publication by a clinician. Temporary captions are never treated as the reviewed record.
+```text
+base = 0.30·critical
+     + 0.20·unresolved
+     + 0.15·has_clinical_entity
+     + 0.15·clinician_confirmed
+     + 0.20·exp(-age_days / 90)
 
-The default local configuration keeps remote text and audio processing off. Optional processing integrations are enabled only through explicit deployment configuration. See the [voice pipeline](./VOICE_PIPELINE.md) and [processing inventory](../MODEL_INVENTORY.md) for operational gates and claim boundaries.
+learned = mean(clinic feature weights)
+final = clamp(base + learned, 0, 1)
+```
 
-## Privacy and data lifecycle
+Features use a bounded non-identifying taxonomy: allergy, medication, diagnosis, follow-up, critical risk, and entry type. Free text and identity material are rejected. Feedback deltas are `pin +0.08`, `accept/manual highlight +0.06`, `comment +0.02`, `edit +0.01`, `reject -0.08`, and `dismiss -0.04`; each feature update is damped by `delta / sqrt(1 + observations)` and clamped to `[-0.20, +0.20]`. Negative learning cannot suppress a critical, unresolved, or clinician-confirmed item.
 
-Clinical text, discussions, current-priority payloads, transcripts, findings, and audio are encrypted with clinic-bound authenticated encryption. Text approved for remote processing first passes configured de-identification and residual checks; a failed check stops the remote call and records a review state.
+The database makes the mechanism auditable:
 
-Older eligible payloads can move to encrypted compressed storage while their saved-version metadata, activity record, and source links remain available. Rehydration verifies integrity before returning content to the active record.
+- `importance_feedback_events` records clinic, highlight, actor membership, signal, reason, feature keys, applied delta, idempotency binding, and time.
+- `importance_feature_stats` stores the clinic-wide aggregate weight and positive/negative/observation counts for each feature.
+- `importance_impressions` records viewer membership, highlight, rank, duration, visibility, exposure value, and deduplicated view event for bias analysis.
+- `audit_events` and `domain_events` record visible state changes; snapshots are rebuilt for affected patients after feedback.
 
-## Operations and verification
+The actor/viewer identifiers provide accountability and bias-analysis evidence; they are **not** used to build an individual preference vector. Ranking reads clinic aggregates keyed by `(clinic_id, feature_key)`. Impressions currently remain telemetry and are not consumed by the scoring formula. The current production path performs no randomized exploration or inverse-propensity correction; therefore it must not claim a “10% exploration” experiment. In the UI, **Why this decision?** exposes base components, clinic feedback adjustment, protected status, source, risk floor, confidence state, and what happens when a check fails.
 
-The root [README](../README.md) contains the product workflow, local startup, configuration, and release checks. Additional references include:
+The backend and API contracts support manual/accept/reject/pin signals, but the browser still lacks the brief's exact interaction for selecting an arbitrary phrase inside an AI-assisted note and creating a new manual Highlight. This is the main strict P1 demonstration gap. A clinic-level learning evidence panel for Admin would also make aggregate feature weights and feedback counts easier to inspect without SQL.
 
-- [Voice pipeline](./VOICE_PIPELINE.md)
-- [Deployment guide](../deployment-docker-compose.md)
-- [Attribution](../ATTRIBUTION.txt)
-- [Third-party notices](../THIRD_PARTY_NOTICES.md)
-- [Delivery and historical verification material](./delivery/BUILD_DELIVERY.md)
+## 5. AI trust, real evaluation, voice, and retention
 
-Delivery-specific scenarios, historical measurements, and recording instructions are isolated under [`docs/delivery/`](./delivery/) so that the primary documentation remains focused on clinical users and operators.
+AI content is derived material, never a silent replacement for human documentation. A fact must bind to an immutable source and exact quote before it can enter the decision pipeline. Deterministic risk rules set a floor for allergy, medication status, dose, route, frequency, and severe-condition conflicts; a provider result can raise but not lower that floor. Unsupported, abstained, low/unavailable-confidence, redaction-failed, or unresolved high-risk material goes to clinical review and is blocked from patient publication.
+
+Two real OpenAI evaluation artifacts now exist, and both preserve negative results:
+
+- PriMock57 voice holdout: provider `openai`, model `gpt-4o-transcribe-diarize`, 17 consultations / 2,206 segment decisions, WER 0.2004, medical-entity recall 0.8574, speaker error rate 0.2021, lower-bound accuracy 0.1292 — **Confidence: Low**.
+- ACI-Bench fact extraction: provider `openai`, model `gpt-5.1`, 40 consultations / 176 judged facts, 23 true positives, 155 false negatives, lower-bound accuracy 0.0437 — **Confidence: Low**.
+
+These results validate the evaluation-and-abstention path, not clinical model quality. The correct runtime consequence is Low/Unavailable plus review, not a decorative High label. A fixed 500-example redaction evaluation reports 2,500/2,500 expected PHI spans detected, residual PHI 0, and protected clinical-span damage 0; it covers the configured synthetic classes and is not a universal de-identification guarantee.
+
+Voice capture provides encrypted IndexedDB recovery, resumable encrypted chunks, multi-device finalization, bounded FFmpeg preprocessing, provisional captions, immutable final transcript revisions, speaker/timestamp/overlap review, facts linked to transcript/audio ranges, and Clinician publication. The final reviewed transcript remains authoritative; provisional text is ephemeral. Optional local providers remain profile-specific.
+
+Data decay separates retention from deletion. Older eligible bodies can move to encrypted compressed archive storage while their version metadata, checksum, provenance, and audit rows remain. Rehydration verifies the checksum before restoring content. Critical, unresolved, clinician-confirmed, pinned, or otherwise protected material stays active.
+
+## 6. Assumptions, trade-offs, and completion boundary
+
+- All shipped patients, identifiers, messages, recordings, and benchmark transmissions are synthetic or Mock data.
+- Precomputed snapshots trade write-time work for a fast, predictable 10-second review path.
+- Immutable versions and separate correction records consume more storage but preserve auditability and disagreement history.
+- Clinic-level learning avoids covert personal profiling but cannot model individual preferences; telemetry is retained for later fairness/exposure analysis.
+- Deterministic risk floors and abstention favor false-positive review over silently suppressing unsafe content.
+- Admin-configured provider keys and task-specific fast/careful model routing are operational controls, not proof that a selected model is clinically adequate.
+- The current OpenAI evaluations are explicitly Low; patient publication still requires human approval and source checks.
+
+Before final delivery, run and preserve a clean, revision-bound full gate; add the manual AI-phrase Highlight interaction; expose explicit `author_role` and direct AI provenance in the timeline DTO; and bind the final benchmark, browser report, source SHA/tree state, and OCI image digest into one evidence package. Historical candidate evidence remains under [`docs/delivery/`](./delivery/) and must not be used to attest to later working-tree changes.
