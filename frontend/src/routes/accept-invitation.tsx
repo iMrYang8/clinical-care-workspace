@@ -4,7 +4,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
 import { Eye, EyeOff, LoaderCircle, ShieldCheck } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
-import { z } from "zod"
+import * as z from "zod"
 
 import { normalizeEmail } from "@/components/Auth/ClinicLoginForm"
 import { AuthLayout } from "@/components/Common/AuthLayout"
