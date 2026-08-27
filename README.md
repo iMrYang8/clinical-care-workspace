@@ -28,6 +28,8 @@ Patient records are created by Staff or Clinicians, then optionally connected to
 Requirements: Docker Desktop with Docker Compose, plus free local ports 80, 443, and 8025.
 
 ```bash
+cp .env.example .env
+# Fill the blank secret/password values in .env, then run:
 ./scripts/demo-up.sh
 ```
 

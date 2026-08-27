@@ -17,4 +17,5 @@ backend/app/frontend/
 # Local isolated worktrees
 .worktrees/
 
+.env
 .env.local
