@@ -1,0 +1,45 @@
+{
+  "accuracy_lower_bound": 0.04367105582044981,
+  "confidence_band": "low",
+  "consultation_count": 40,
+  "dataset_manifest_sha256": "09fb98f0f00629095327ddf59c89f4b8d8a4cd8bb3c21efaabe385b3f453f28a",
+  "exact_model_id": "gpt-5.1",
+  "metrics": {
+    "accuracy": 0.073864,
+    "brier": 0.071023,
+    "cluster_bootstrap_95_ci": [
+      0.041176,
+      0.109827
+    ],
+    "coverage": 1.0,
+    "ece": 0.051136,
+    "estimated_accuracy": 0.125,
+    "evidence_source": "original_dialogue",
+    "exact_evidence_fact_count": 101,
+    "false_negative": 155,
+    "false_positive": 78,
+    "precision_by_bucket": {
+      "overall": 0.07386363636363637
+    },
+    "sample_count": 176,
+    "selective_accuracy": 0.073864,
+    "selective_accuracy_coverage": [
+      {
+        "accuracy": 0.07386363636363637,
+        "coverage": 1.0
+      }
+    ],
+    "supported_fact_types": [
+      "allergy",
+      "medication",
+      "dose",
+      "route",
+      "frequency"
+    ],
+    "true_positive": 23
+  },
+  "negative_results_are_preserved": true,
+  "provider": "openai",
+  "sample_count": 176,
+  "task": "clinical_fact_extraction"
+}

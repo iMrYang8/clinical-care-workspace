@@ -311,7 +311,7 @@ try {
   await scene(page, "Scenario A", "Glance resolves to an immutable source span")
   const riskCard = page
     .getByRole("listitem")
-    .filter({ hasText: "Fall risk remains elevated" })
+    .filter({ hasText: "AI doctor draft requires clinician review" })
   await focusTarget(page, riskCard.getByRole("button", { name: "View source" }))
   const sourceDialog = page.getByRole("dialog", { name: /Immutable source/ })
   await sourceDialog.waitFor({ state: "visible" })

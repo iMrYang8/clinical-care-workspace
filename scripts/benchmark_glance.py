@@ -300,7 +300,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="https://localhost")
     parser.add_argument("--persona", default="staff", choices=("staff", "clinician"))
-    parser.add_argument("--patient-display-name", default="Alex Synthetic")
+    parser.add_argument("--patient-display-name", default="Alex Tan")
     parser.add_argument(
         "--patient-id",
         help="Optionally pin the deterministic fixture UUID in addition to its name.",

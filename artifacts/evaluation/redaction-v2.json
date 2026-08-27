@@ -1,0 +1,52 @@
+{
+  "clinical_span_damage_count": 0,
+  "dataset_sha256": "36726d0bf3d2212869ef46b070c13329cc3148558cd34df7d1b50f7c673507ef",
+  "metrics": {
+    "clinical_span_damage": 0,
+    "detected_phi_spans": 2500,
+    "expected_phi_spans": 2500,
+    "false_negatives": 0,
+    "per_class": {
+      "email": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "true_positive": 500
+      },
+      "mrn": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "true_positive": 500
+      },
+      "name": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "true_positive": 500
+      },
+      "nric_fin": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "true_positive": 500
+      },
+      "phone": {
+        "false_negative": 0,
+        "false_positive": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "true_positive": 500
+      }
+    }
+  },
+  "passed": true,
+  "phi_recall": 1.0,
+  "redactor_version": "nightingale-redaction-v2",
+  "residual_phi_count": 0,
+  "sample_count": 500
+}

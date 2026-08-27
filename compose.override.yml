@@ -73,6 +73,8 @@ services:
 
   mailpit:
     image: axllent/mailpit
+    ports:
+      - "127.0.0.1:${LOCAL_MAILPIT_PORT:-8025}:8025"
 
   playwright:
     build:

@@ -129,16 +129,18 @@ The backend Docker image builds the frontend, so the server does not need Bun or
 
 Production prestart runs migrations and role bootstrap but deliberately does
 not seed demo data. Provision the first clinic explicitly after prestart. The
-command is idempotent for identical inputs and prints the clinic ID required by
-clinic-scoped login requests:
+command is idempotent for identical inputs. Choose a unique, user-facing clinic
+code made of 3–12 English letters; it is normalized to uppercase for sign-in:
 
 ```bash
+export NIGHTINGALE_PROVISION_CLINIC_CODE=YOURCLINIC
 export NIGHTINGALE_PROVISION_CLINIC_SLUG=YOUR_CLINIC_SLUG
 export NIGHTINGALE_PROVISION_CLINIC_NAME="YOUR_CLINIC_NAME"
 export NIGHTINGALE_PROVISION_ADMIN_EMAIL=ADMIN_EMAIL
 export NIGHTINGALE_PROVISION_ADMIN_PASSWORD="$(security find-generic-password -w -s NIGHTINGALE_ADMIN_PASSWORD)"
 export NIGHTINGALE_PROVISION_WORKER_EMAIL=WORKER_EMAIL
 docker compose -f compose.yml -f compose.deploy.yml run --rm \
+  -e NIGHTINGALE_PROVISION_CLINIC_CODE \
   -e NIGHTINGALE_PROVISION_CLINIC_SLUG \
   -e NIGHTINGALE_PROVISION_CLINIC_NAME \
   -e NIGHTINGALE_PROVISION_ADMIN_EMAIL \
@@ -147,12 +149,11 @@ docker compose -f compose.yml -f compose.deploy.yml run --rm \
   prestart bash scripts/provision-clinic-admin.sh
 ```
 
-Record the printed `clinic_id`, open `https://${DOMAIN}/login`, and use the
-**Clinic account** form with that ID, `NIGHTINGALE_PROVISION_ADMIN_EMAIL`, and
+Open `https://${DOMAIN}/login`, and use the **Clinic account** form with
+`NIGHTINGALE_PROVISION_CLINIC_CODE`, `NIGHTINGALE_PROVISION_ADMIN_EMAIL`, and
 the password supplied through `NIGHTINGALE_PROVISION_ADMIN_PASSWORD`. The
-production API rejects the development persona buttons; the password form sets
-the secure HttpOnly browser cookie and does not persist a token in browser
-storage.
+password form sets the secure HttpOnly browser cookie and does not persist a
+token in browser storage.
 
 The owner URL exists only in that one-shot container. The backend and
 `ai-worker` receive only the restricted `nightingale_app` URL and verify it is

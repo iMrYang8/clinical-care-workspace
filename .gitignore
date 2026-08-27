@@ -12,6 +12,9 @@ backend/app/frontend/
 /output/pdf/
 /output/demo/raw/
 /datasets/raw/
+/artifacts/evaluation/cache/
 
 # Local isolated worktrees
 .worktrees/
+
+.env.local

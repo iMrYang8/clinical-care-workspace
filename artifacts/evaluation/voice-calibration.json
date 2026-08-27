@@ -1,0 +1,39 @@
+{
+  "accuracy_lower_bound": 0.12924627478850448,
+  "confidence_band": "low",
+  "consultation_count": 17,
+  "dataset_manifest_sha256": "09fb98f0f00629095327ddf59c89f4b8d8a4cd8bb3c21efaabe385b3f453f28a",
+  "exact_model_id": "gpt-4o-transcribe-diarize",
+  "metrics": {
+    "accuracy": 0.143246,
+    "brier": 0.122727,
+    "cer": 0.18561925713982075,
+    "cluster_bootstrap_95_ci": [
+      0.113506,
+      0.170804
+    ],
+    "coverage": 1.0,
+    "ece": 0.000401,
+    "estimated_accuracy": 0.143646408839779,
+    "medical_entity_recall": 0.8574074074074074,
+    "precision_by_bucket": {
+      "overall": 0.14324569356300998
+    },
+    "provider_error_count": 0,
+    "sample_count": 2206,
+    "selective_accuracy": 0.143246,
+    "selective_accuracy_coverage": [
+      {
+        "accuracy": 0.14324569356300998,
+        "coverage": 1.0
+      }
+    ],
+    "speaker_error_rate": 0.20212130948647444,
+    "timestamp_error_ms": 1660.010940154348,
+    "wer": 0.2003965175480108
+  },
+  "negative_results_are_preserved": true,
+  "provider": "openai",
+  "sample_count": 2206,
+  "task": "voice_transcription"
+}
