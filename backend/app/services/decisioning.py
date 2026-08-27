@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal, TypedDict
 
 from sqlmodel import Session, col, select
 
@@ -24,6 +25,17 @@ RISK_RULE_VERSION = "clinical-risk-rules-v2"
 REDACTOR_VERSION = "nightingale-redaction-v2"
 RISK_ORDER = {"standard": 0, "elevated": 1, "high": 2, "critical": 3}
 EVALUATION_MANIFEST_MISSING = "0" * 64
+
+ReviewState = Literal["ready", "review_required", "abstained"]
+
+
+class DecisionPayload(TypedDict):
+    review_state: ReviewState
+    risk: dict[str, object]
+    confidence: dict[str, object]
+    importance: dict[str, object]
+    abstention_reason: str | None
+
 
 _CRITICAL = (
     ("ANAPHYLAXIS", re.compile(r"\b(?:anaphylaxis|anaphylactic)\b", re.I)),
@@ -216,7 +228,7 @@ def create_assertion(
 
 def assessment_review_state(
     assessment: DecisionAssessment | None, highlight: Highlight
-) -> str:
+) -> ReviewState:
     if highlight.unresolved:
         return "review_required"
     if assessment is None:
@@ -241,9 +253,9 @@ def decision_payload(
     assessment: DecisionAssessment | None,
     highlight: Highlight,
     score_components: dict[str, float],
-) -> dict[str, object]:
+) -> DecisionPayload:
     state = assessment_review_state(assessment, highlight)
-    risk = {
+    risk: dict[str, object] = {
         "effective": assessment.effective_risk
         if assessment
         else ("critical" if highlight.critical else "standard"),
@@ -258,25 +270,24 @@ def decision_payload(
         if assessment
         else RISK_RULE_VERSION,
     }
-    confidence = {
+    confidence: dict[str, object] = {
         "band": assessment.confidence_band if assessment else "not_applicable",
         "lower_bound": assessment.confidence_lower_bound if assessment else None,
         "calibration_report_id": str(assessment.calibration_report_id)
         if assessment and assessment.calibration_report_id
         else None,
     }
+    importance: dict[str, object] = {
+        "score": highlight.final_score,
+        "components": score_components,
+        "protected": bool(
+            highlight.critical or highlight.unresolved or highlight.clinician_confirmed
+        ),
+    }
     return {
         "review_state": state,
         "risk": risk,
         "confidence": confidence,
-        "importance": {
-            "score": highlight.final_score,
-            "components": score_components,
-            "protected": bool(
-                highlight.critical
-                or highlight.unresolved
-                or highlight.clinician_confirmed
-            ),
-        },
+        "importance": importance,
         "abstention_reason": assessment.abstention_reason if assessment else None,
     }

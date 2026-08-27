@@ -389,8 +389,14 @@ async def _voice_case(
         repository / "transcripts" / f"{source_id}_patient.TextGrid", "patient"
     )
     references = merge_reference_segments(doctor_ref, patient_ref)
+    raw: dict[str, Any]
     if cache_path.exists():
-        raw = json.loads(cache_path.read_text(encoding="utf-8"))
+        loaded = json.loads(cache_path.read_text(encoding="utf-8"))
+        raw = (
+            loaded
+            if isinstance(loaded, dict)
+            else {"_evaluation_error": "INVALID_CACHE_PAYLOAD"}
+        )
     else:
         audio, _ = stereo_wav(
             audio_root / f"{source_id}_doctor.wav",
@@ -462,7 +468,12 @@ async def _voice_case(
             }
         )
         _write_json(cache_path, raw)
-    predicted_segments = raw.get("segments", [])
+    raw_segments = raw.get("segments")
+    predicted_segments: list[dict[str, Any]] = (
+        [item for item in raw_segments if isinstance(item, dict)]
+        if isinstance(raw_segments, list)
+        else []
+    )
     label_votes: dict[str, Counter[str]] = {}
     matched: list[tuple[Any, dict[str, Any] | None]] = []
     for reference in references:
@@ -662,8 +673,14 @@ async def _fact_case(
         f"{provider.extract_model}\0{row['encounter_id']}\0{dialogue}".encode()
     ).hexdigest()
     cache_path = cache_dir / f"{cache_key}.json"
+    raw: dict[str, Any]
     if cache_path.exists():
-        raw = json.loads(cache_path.read_text(encoding="utf-8"))
+        loaded = json.loads(cache_path.read_text(encoding="utf-8"))
+        raw = (
+            loaded
+            if isinstance(loaded, dict)
+            else {"_evaluation_error": "INVALID_CACHE_PAYLOAD"}
+        )
     else:
         raw = {}
         error_code = "PROVIDER_REQUEST_FAILED"

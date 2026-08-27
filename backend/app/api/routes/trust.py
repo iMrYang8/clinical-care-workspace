@@ -1,6 +1,5 @@
 import hashlib
 import uuid
-from typing import cast
 
 from fastapi import APIRouter, Header, HTTPException
 from sqlmodel import Session, col, select
@@ -497,7 +496,7 @@ def decision_explanation(
         highlight=highlight,
         score_components=score.components,
     )
-    confidence = dict(cast(dict[str, object], payload["confidence"]))
+    confidence = dict(payload["confidence"])
     if assessment and assessment.calibration_report_id:
         report = session.exec(
             select(CalibrationReport).where(
