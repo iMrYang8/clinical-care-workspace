@@ -6,10 +6,10 @@ import type { MePublic } from "@/client"
 import {
   apiErrorMessage,
   authApi,
-  type DemoPersona,
   httpStatus,
   type PasswordLoginInput,
 } from "@/features/api"
+import { roleHome } from "@/features/portalAccess"
 import {
   closeVoiceDatabaseForLogout,
   purgeVoiceDatabase,
@@ -70,14 +70,14 @@ let terminationState: SessionTerminationState = persisted
     ? {
         phase: "failed",
         error:
-          "The server session ended, but this browser restarted before local encrypted audio cleanup completed.",
+          "Your previous sign-out did not finish clearing protected offline recordings on this device.",
         serverEnded: true,
         epoch: restartEpoch,
       }
     : {
         phase: "failed",
         error:
-          "This browser restarted before the server confirmed logout. Retry to finish securely.",
+          "Your previous sign-out was interrupted. Try again to finish securely.",
         serverEnded: false,
         epoch: restartEpoch,
       }
@@ -223,6 +223,11 @@ function newLogoutEpoch() {
 }
 
 let activeServerTermination: Promise<boolean> | undefined
+// Once this document has completed a confirmed logout, a subsequent 401 on
+// the public sign-in route is expected and must not start a second termination
+// cycle. A fresh document still starts with `false`, so an expired cookie on a
+// cold load continues to trigger the secure offline-recording purge.
+let locallyConfirmedSignedOut = false
 
 async function requestServerTermination(): Promise<boolean> {
   if (terminationState.phase === "confirmed") return true
@@ -248,7 +253,7 @@ async function requestServerTermination(): Promise<boolean> {
       publishControlMessage({
         type: "logout-failed",
         epoch,
-        error: `The server did not confirm logout: ${apiErrorMessage(error)}`,
+        error: `Sign-out could not be confirmed. ${apiErrorMessage(error)}`,
       })
       return false
     }
@@ -272,10 +277,11 @@ export function terminateUnauthorizedSession(): Promise<boolean> {
   return requestServerTermination()
 }
 
-const isLoggedIn = async () => {
+export const trustedSessionUser = async (): Promise<MePublic | null> => {
   try {
-    await authApi.me()
-    return true
+    const user = await authApi.me()
+    locallyConfirmedSignedOut = false
+    return user
   } catch (error) {
     if (httpStatus(error) === 401 || httpStatus(error) === 403) {
       // The login route is not exempt: an expired HttpOnly cookie and an old
@@ -286,11 +292,13 @@ const isLoggedIn = async () => {
       // Awaiting here would leave a newly loaded document blank until logout
       // finished and could cancel the fetch when router navigation supersedes
       // the unresolved guard.
-      void terminateUnauthorizedSession()
+      if (!locallyConfirmedSignedOut) void terminateUnauthorizedSession()
     }
-    return false
+    return null
   }
 }
+
+const isLoggedIn = async () => (await trustedSessionUser()) !== null
 
 export function useSecureLogout() {
   const queryClient = useQueryClient()
@@ -322,6 +330,9 @@ export function useSessionTerminationBoundary() {
     closeVoiceDatabaseForLogout()
     if (sessionTermination.phase !== "confirmed") return
     let active = true
+    const loginDestination = window.location.pathname.startsWith("/patient")
+      ? "/patient/login"
+      : "/login"
 
     const finish = async () => {
       try {
@@ -330,7 +341,7 @@ export function useSessionTerminationBoundary() {
         if (active) {
           setTerminationState({
             phase: "failed",
-            error: `The server session ended, but local encrypted audio cleanup did not complete: ${apiErrorMessage(error)}`,
+            error: `Your account was signed out, but protected offline recordings are still being cleared. ${apiErrorMessage(error)}`,
             serverEnded: true,
             epoch: sessionTermination.epoch,
           })
@@ -338,13 +349,18 @@ export function useSessionTerminationBoundary() {
         return
       }
 
+      // The destination's public-session guard runs during navigation. Mark
+      // this document as deliberately signed out before that guard performs
+      // its expected unauthenticated `/me` check, otherwise it starts another
+      // logout cycle and can cancel the navigation.
+      locallyConfirmedSignedOut = true
       try {
-        await navigate({ to: "/login", replace: true })
+        await navigate({ to: loginDestination, replace: true })
       } catch (error) {
         if (active) {
           setTerminationState({
             phase: "failed",
-            error: `The server session ended, but the safe login screen did not open: ${apiErrorMessage(error)}`,
+            error: `Your account was signed out, but the sign-in screen did not open. ${apiErrorMessage(error)}`,
             serverEnded: true,
             epoch: sessionTermination.epoch,
           })
@@ -371,14 +387,6 @@ export function useSessionTerminationBoundary() {
   return secureLogout
 }
 
-export function roleHome(
-  role: MePublic["role"],
-): "/my-care" | "/patients" | "/admin" {
-  if (role === "patient") return "/my-care"
-  if (role === "staff" || role === "clinician") return "/patients"
-  return "/admin"
-}
-
 const useAuth = (options: { loadSession?: boolean } = {}) => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -393,18 +401,6 @@ const useAuth = (options: { loadSession?: boolean } = {}) => {
     enabled: options.loadSession !== false,
   })
 
-  const loginMutation = useMutation({
-    mutationFn: (persona: DemoPersona) => authApi.demoLogin(persona),
-    onSuccess: async () => {
-      const me = await queryClient.fetchQuery({
-        queryKey: ["auth", "me"],
-        queryFn: authApi.me,
-      })
-      await navigate({ to: roleHome(me.role) })
-    },
-    onError: (error) => showErrorToast(error.message),
-  })
-
   const passwordLoginMutation = useMutation({
     mutationFn: (input: PasswordLoginInput) => authApi.passwordLogin(input),
     onSuccess: async () => {
@@ -412,13 +408,13 @@ const useAuth = (options: { loadSession?: boolean } = {}) => {
         queryKey: ["auth", "me"],
         queryFn: authApi.me,
       })
+      locallyConfirmedSignedOut = false
       await navigate({ to: roleHome(me.role) })
     },
-    onError: (error) => showErrorToast(error.message),
+    onError: (error) => showErrorToast(apiErrorMessage(error)),
   })
 
   return {
-    loginMutation,
     passwordLoginMutation,
     logout,
     user: meQuery.data,
@@ -426,5 +422,5 @@ const useAuth = (options: { loadSession?: boolean } = {}) => {
   }
 }
 
-export { isLoggedIn }
+export { isLoggedIn, roleHome }
 export default useAuth

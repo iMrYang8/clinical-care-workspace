@@ -1,8 +1,21 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { AxiosError } from "axios"
+import type { ReactElement } from "react"
 import { describe, expect, it, vi } from "vitest"
 
 import { EntryEditor } from "./EntryEditor"
+
+function renderEditor(component: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return render(component, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  })
+}
 
 function conflictError() {
   const error = new AxiosError("Conflict")
@@ -24,7 +37,7 @@ function conflictError() {
 describe("EntryEditor optimistic concurrency", () => {
   it("keeps the local draft visible after a deterministic 409", async () => {
     const onSave = vi.fn().mockRejectedValue(conflictError())
-    render(
+    renderEditor(
       <EntryEditor
         initialDraft={{
           title: "Initial title",
@@ -40,7 +53,7 @@ describe("EntryEditor optimistic concurrency", () => {
     fireEvent.change(screen.getByLabelText("Entry title"), {
       target: { value: "My unsaved clinical draft" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "Save with If-Match" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
 
     await waitFor(() =>
       expect(screen.getByRole("dialog")).toHaveTextContent("Version conflict"),
@@ -68,7 +81,7 @@ describe("EntryEditor optimistic concurrency", () => {
       onCancel: vi.fn(),
       onSave,
     }
-    const view = render(
+    const view = renderEditor(
       <EntryEditor
         {...props}
         currentVersionId="version-1"
@@ -92,13 +105,13 @@ describe("EntryEditor optimistic concurrency", () => {
     )
 
     expect(await screen.findByRole("dialog")).toHaveTextContent(
-      "newer server version arrived",
+      "changed while your draft was open",
     )
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "My draft based on version one",
     )
     fireEvent.click(screen.getByRole("button", { name: "Keep editing" }))
-    fireEvent.click(screen.getByRole("button", { name: "Save with If-Match" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
 
     await waitFor(() =>
       expect(onSave).toHaveBeenCalledWith(

@@ -1,11 +1,12 @@
 import { Monitor, Moon, Sun } from "lucide-react"
 
-import { type Theme, useTheme } from "@/components/theme-provider"
+import { isTheme, type Theme, useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -22,9 +23,44 @@ const ICON_MAP: Record<Theme, LucideIcon> = {
   dark: Moon,
 }
 
+const THEME_OPTIONS: Array<{
+  value: Theme
+  label: string
+  icon: LucideIcon
+}> = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+]
+
+const ThemeRadioItems = () => {
+  const { setTheme, theme } = useTheme()
+
+  return (
+    <DropdownMenuRadioGroup
+      value={theme}
+      onValueChange={(value) => {
+        if (isTheme(value)) setTheme(value)
+      }}
+      aria-label="Color theme"
+    >
+      {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
+        <DropdownMenuRadioItem
+          data-testid={`${value}-mode`}
+          key={value}
+          value={value}
+        >
+          <Icon className="mr-2 h-4 w-4" />
+          {label}
+        </DropdownMenuRadioItem>
+      ))}
+    </DropdownMenuRadioGroup>
+  )
+}
+
 export const SidebarAppearance = () => {
   const { isMobile } = useSidebar()
-  const { setTheme, theme } = useTheme()
+  const { theme } = useTheme()
   const Icon = ICON_MAP[theme]
 
   return (
@@ -42,24 +78,7 @@ export const SidebarAppearance = () => {
           align="end"
           className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
         >
-          <DropdownMenuItem
-            data-testid="light-mode"
-            onClick={() => setTheme("light")}
-          >
-            <Sun className="mr-2 h-4 w-4" />
-            Light
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            data-testid="dark-mode"
-            onClick={() => setTheme("dark")}
-          >
-            <Moon className="mr-2 h-4 w-4" />
-            Dark
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setTheme("system")}>
-            <Monitor className="mr-2 h-4 w-4" />
-            System
-          </DropdownMenuItem>
+          <ThemeRadioItems />
         </DropdownMenuContent>
       </DropdownMenu>
     </SidebarMenuItem>
@@ -67,37 +86,24 @@ export const SidebarAppearance = () => {
 }
 
 export const Appearance = () => {
-  const { setTheme } = useTheme()
+  const { theme } = useTheme()
+  const Icon = ICON_MAP[theme]
 
   return (
     <div className="flex items-center justify-center">
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
-          <Button data-testid="theme-button" variant="outline" size="icon">
-            <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-            <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-            <span className="sr-only">Toggle theme</span>
+          <Button
+            aria-label={`Appearance: ${theme}`}
+            data-testid="theme-button"
+            variant="outline"
+            size="icon"
+          >
+            <Icon className="h-[1.2rem] w-[1.2rem]" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem
-            data-testid="light-mode"
-            onClick={() => setTheme("light")}
-          >
-            <Sun className="mr-2 h-4 w-4" />
-            Light
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            data-testid="dark-mode"
-            onClick={() => setTheme("dark")}
-          >
-            <Moon className="mr-2 h-4 w-4" />
-            Dark
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setTheme("system")}>
-            <Monitor className="mr-2 h-4 w-4" />
-            System
-          </DropdownMenuItem>
+          <ThemeRadioItems />
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

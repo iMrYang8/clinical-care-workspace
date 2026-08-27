@@ -19,6 +19,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -27,6 +35,7 @@ import {
   type PatientSafeGlance,
   patientSafeApi,
 } from "@/features/api"
+import { formatSingaporeDateTime } from "@/lib/dateTime"
 
 export type PatientSafeApi = {
   patients: () => Promise<PatientPublic[]>
@@ -117,7 +126,7 @@ export function PatientSafeCareNote({
 
   if (patientsQuery.isError || !patient) {
     return (
-      <Alert className="border-red-200 bg-red-50 text-red-900">
+      <Alert className="border-critical/40 bg-critical-muted text-critical-muted-foreground">
         <AlertTitle>My Care did not load</AlertTitle>
         <AlertDescription>
           {apiErrorMessage(
@@ -133,35 +142,32 @@ export function PatientSafeCareNote({
       <div aria-atomic="true" aria-live="polite" className="sr-only">
         {liveMessage}
       </div>
-      <header className="rounded-2xl border border-amber-100 bg-gradient-to-br from-amber-50 to-white p-6 shadow-sm">
+      <header className="rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/10 to-card p-6 shadow-sm">
         <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
           <div className="flex items-center gap-4">
-            <span className="grid size-14 place-items-center rounded-2xl bg-amber-200 text-amber-900">
+            <span className="grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary">
               <UserRound />
             </span>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="font-serif text-3xl font-semibold text-slate-950">
+                <h1 className="font-serif text-3xl font-semibold text-foreground">
                   My Care · {patient.display_name}
                 </h1>
-                <Badge className="bg-amber-100 text-amber-800">
-                  Synthetic data
-                </Badge>
               </div>
-              <p className="mt-1 text-sm text-slate-600">
-                A patient-safe view with published entries and approved sources
-                only.
+              <p className="mt-1 text-sm text-muted-foreground">
+                Review information shared by your care team and add an update of
+                your own.
               </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button asChild className="min-h-11 bg-amber-700">
-              <a href="/my-care/voice/capture">
+            <Button asChild className="min-h-11">
+              <a href="/patient/my-care/voice/capture">
                 <Mic /> Add a recording
               </a>
             </Button>
-            <Badge className="w-fit bg-emerald-100 text-emerald-800">
-              <ShieldCheck /> Patient-facing
+            <Badge className="w-fit bg-success-muted text-success-muted-foreground">
+              <ShieldCheck /> Shared with you
             </Badge>
           </div>
         </div>
@@ -171,7 +177,7 @@ export function PatientSafeCareNote({
         <section aria-labelledby="my-timeline-heading" className="space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary">
                 Shared with me
               </p>
               <h2
@@ -181,20 +187,37 @@ export function PatientSafeCareNote({
                 My timeline
               </h2>
             </div>
-            <Button onClick={() => setComposerOpen((open) => !open)}>
+            <Button onClick={() => setComposerOpen(true)}>
               <Plus /> Add my insight
             </Button>
           </div>
 
-          {composerOpen && (
-            <Card className="border-amber-200 bg-amber-50/60">
-              <CardHeader>
-                <CardTitle className="font-serif">A note from me</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
+          <Dialog
+            open={composerOpen}
+            onOpenChange={(open) =>
+              !insightMutation.isPending && setComposerOpen(open)
+            }
+          >
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle className="font-serif text-2xl">
+                  Add my insight
+                </DialogTitle>
+                <DialogDescription>
+                  Share an update with your care team.
+                </DialogDescription>
+              </DialogHeader>
+              <form
+                className="space-y-4"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  insightMutation.mutate()
+                }}
+              >
                 <div className="grid gap-2">
                   <Label htmlFor="patient-insight-title">Title</Label>
                   <Input
+                    autoFocus
                     id="patient-insight-title"
                     onChange={(event) => setTitle(event.target.value)}
                     placeholder="What would you like the care team to know?"
@@ -204,41 +227,51 @@ export function PatientSafeCareNote({
                 <div className="grid gap-2">
                   <Label htmlFor="patient-insight-content">My insight</Label>
                   <textarea
-                    className="min-h-32 rounded-xl border bg-white p-3 text-sm leading-6 outline-none focus:ring-2 focus:ring-amber-500"
+                    className="min-h-32 rounded-xl border bg-background p-3 text-sm leading-6 text-foreground outline-none focus:ring-2 focus:ring-primary"
                     id="patient-insight-content"
                     onChange={(event) => setContent(event.target.value)}
                     value={content}
                   />
                 </div>
-                <Button
-                  disabled={
-                    !title.trim() ||
-                    !content.trim() ||
-                    insightMutation.isPending
-                  }
-                  onClick={() => insightMutation.mutate()}
-                >
-                  {insightMutation.isPending ? (
-                    <LoaderCircle className="animate-spin" />
-                  ) : (
-                    <Plus />
-                  )}
-                  Add to My Care
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+                <DialogFooter>
+                  <Button
+                    disabled={insightMutation.isPending}
+                    onClick={() => setComposerOpen(false)}
+                    type="button"
+                    variant="outline"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    disabled={
+                      !title.trim() ||
+                      !content.trim() ||
+                      insightMutation.isPending
+                    }
+                    type="submit"
+                  >
+                    {insightMutation.isPending ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <Plus />
+                    )}
+                    Add to My Care
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
 
           {timelineQuery.isLoading && (
-            <LoaderCircle className="animate-spin text-amber-600" />
+            <LoaderCircle className="animate-spin text-primary" />
           )}
           {timelineQuery.data?.length === 0 && (
-            <div className="rounded-2xl border border-dashed bg-white px-6 py-12 text-center">
-              <HeartHandshake className="mx-auto mb-3 size-8 text-amber-600" />
-              <p className="font-medium text-slate-800">
+            <div className="rounded-2xl border border-dashed bg-card px-6 py-12 text-center">
+              <HeartHandshake className="mx-auto mb-3 size-8 text-primary" />
+              <p className="font-medium text-foreground">
                 No published entries yet
               </p>
-              <p className="mt-1 text-sm text-slate-500">
+              <p className="mt-1 text-sm text-muted-foreground">
                 You can still add your own insight above.
               </p>
             </div>
@@ -247,28 +280,53 @@ export function PatientSafeCareNote({
             {timelineQuery.data?.map((entry) => (
               <li key={entry.id}>
                 <article
-                  className="scroll-mt-24 rounded-2xl border bg-white p-5 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  className="scroll-mt-24 rounded-2xl border bg-card p-5 outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   data-patient-version-id={entry.version_id}
                   tabIndex={-1}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge className="bg-amber-100 text-amber-900">
-                      Patient-safe entry
+                    <Badge className="bg-primary/10 text-primary">
+                      Shared care note
                     </Badge>
                     <Badge variant="outline">v{entry.version_no}</Badge>
                   </div>
                   <h3 className="mt-3 font-serif text-xl font-semibold">
                     {entry.title}
                   </h3>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-700">
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-foreground/90">
                     {entry.content}
                   </p>
                   <time
-                    className="mt-3 block text-xs text-slate-500"
+                    className="mt-3 block text-xs text-muted-foreground"
                     dateTime={entry.created_at}
                   >
-                    {new Date(entry.created_at).toLocaleString()}
+                    {formatSingaporeDateTime(entry.created_at)}
                   </time>
+                  {entry.approval_receipt && (
+                    <div className="mt-4 rounded-xl border border-success/30 bg-success-muted/30 p-3 text-sm leading-6">
+                      <p className="font-semibold text-success-muted-foreground">
+                        Reviewed for sharing
+                      </p>
+                      <p className="text-muted-foreground">
+                        Approved by{" "}
+                        {String(
+                          entry.approval_receipt.approved_by ??
+                            "your clinician",
+                        )}
+                        {entry.approval_receipt.approved_at
+                          ? ` on ${formatSingaporeDateTime(String(entry.approval_receipt.approved_at))}`
+                          : ""}
+                        .
+                      </p>
+                      <p className="text-muted-foreground">
+                        Source:{" "}
+                        {String(
+                          entry.approval_receipt.source_title ?? entry.title,
+                        )}{" "}
+                        · {String(entry.approval_receipt.status ?? "active")}
+                      </p>
+                    </div>
+                  )}
                 </article>
               </li>
             ))}
@@ -276,38 +334,38 @@ export function PatientSafeCareNote({
         </section>
 
         <aside className="space-y-4 lg:sticky lg:top-24">
-          <Card className="overflow-hidden border-amber-100 bg-white shadow-sm">
-            <CardHeader className="border-b border-amber-100 bg-gradient-to-br from-amber-50 to-white pb-4">
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">
-                At a glance
+          <Card className="gap-0 overflow-hidden border-primary/30 bg-gradient-to-b from-primary/10 via-card to-card py-0 shadow-sm">
+            <CardHeader className="px-6 py-6">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary">
+                Care overview
               </p>
               <CardTitle className="font-serif text-2xl">
-                Shared care highlights
+                Current priorities
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               {(glanceQuery.data?.cards.length ?? 0) === 0 ? (
                 <div className="px-5 py-8 text-center">
-                  <ShieldCheck className="mx-auto mb-3 size-7 text-amber-600" />
-                  <p className="font-medium text-slate-800">
+                  <ShieldCheck className="mx-auto mb-3 size-7 text-primary" />
+                  <p className="font-medium text-foreground">
                     No shared highlights yet
                   </p>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
                     Care-team approved, source-linked facts will appear here.
                   </p>
                 </div>
               ) : (
                 <ol
                   aria-label="Patient-facing care highlights"
-                  className="divide-y divide-slate-100"
+                  className="divide-y divide-border"
                 >
                   {glanceQuery.data?.cards.slice(0, 5).map((card, index) => (
                     <li className="space-y-3 p-4" key={card.highlight_id}>
                       <div className="flex items-start gap-3">
-                        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-amber-100 text-xs font-bold text-amber-800">
+                        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
                           {index + 1}
                         </span>
-                        <p className="min-w-0 flex-1 font-medium leading-6 text-slate-900">
+                        <p className="min-w-0 flex-1 font-medium leading-6 text-foreground">
                           {card.label}
                         </p>
                       </div>
@@ -326,11 +384,11 @@ export function PatientSafeCareNote({
             </CardContent>
           </Card>
           {source && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <p className="flex items-center gap-2 font-semibold text-amber-950">
-                <Link2 /> Approved source
+            <div className="rounded-2xl border border-warning/40 bg-warning-muted p-4">
+              <p className="flex items-center gap-2 font-semibold text-warning-muted-foreground">
+                <Link2 /> Source details
               </p>
-              <blockquote className="mt-2 text-sm leading-6 text-amber-900">
+              <blockquote className="mt-2 text-sm leading-6 text-warning-muted-foreground">
                 “{source.exact_quote}”
               </blockquote>
             </div>
@@ -338,7 +396,7 @@ export function PatientSafeCareNote({
           {(timelineQuery.isError ||
             glanceQuery.isError ||
             insightMutation.isError) && (
-            <Alert className="border-red-200 bg-red-50 text-red-900">
+            <Alert className="border-critical/40 bg-critical-muted text-critical-muted-foreground">
               <AlertDescription>
                 {apiErrorMessage(
                   timelineQuery.error ??

@@ -25,24 +25,35 @@ async function login(
   page: Page,
   role: "Care staff" | "Clinician" | "Patient" | "Clinic admin",
 ) {
-  await page.goto("/login")
-  await page.getByRole("button", { name: `Continue as ${role}` }).click()
+  const persona = {
+    "Care staff": "staff",
+    Clinician: "clinician",
+    Patient: "patient",
+    "Clinic admin": "admin",
+  }[role]
+  const response = await page.request.post("/api/v1/auth/demo-login", {
+    data: { persona },
+  })
+  expect(response.ok(), await response.text()).toBe(true)
   const destination =
     role === "Patient"
-      ? /\/my-care$/
+      ? "/patient/my-care"
+      : role === "Clinic admin"
+        ? "/admin"
+        : "/patients"
+  await page.goto(destination)
+  await expect(page).toHaveURL(
+    role === "Patient"
+      ? /\/patient\/my-care\/?$/
       : role === "Clinic admin"
         ? /\/admin$/
-        : /\/patients\/?$/
-  await expect(page).toHaveURL(destination)
+        : /\/patients\/?$/,
+  )
 }
 
 async function openAlex(page: Page) {
-  await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
-    .click()
-  await expect(
-    page.getByRole("heading", { name: "Alex Synthetic" }),
-  ).toBeVisible()
+  await page.getByRole("link", { name: "Open care note for Alex Tan" }).click()
+  await expect(page.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
 }
 
 async function api<T = Record<string, unknown>>(
@@ -85,7 +96,7 @@ async function patientAndTimeline(page: Page) {
   const patients = await api<{ data: Patient[] }>(page, "/api/v1/patients")
   expect(patients.status).toBe(200)
   const patient = patients.body.data.find(
-    (candidate) => candidate.display_name === "Alex Synthetic",
+    (candidate) => candidate.display_name === "Alex Tan",
   )
   expect(patient).toBeDefined()
   const timeline = await api<{ data: TimelineEntry[] }>(
@@ -199,28 +210,35 @@ test("[Scenario A] Glance opens the exact immutable timeline span", async ({
   await openAlex(page)
 
   await expect(
-    page.getByText("AI Doctor Consult", { exact: true }),
+    page.getByText("AI-assisted consultation note", { exact: true }),
   ).toBeVisible()
   await expect(
-    page.getByText("AI Nurse Consult", { exact: true }),
+    page.getByText("AI-assisted nursing note", { exact: true }),
   ).toBeVisible()
   await expect(
-    page.getByText("AI Patient Session", { exact: true }),
+    page.getByText("AI-assisted patient summary", { exact: true }),
   ).toBeVisible()
 
   const card = page.getByRole("listitem").filter({
-    hasText: "Fall risk remains elevated",
+    hasText: "AI doctor draft requires clinician review",
   })
   await card.getByRole("button", { name: "View source" }).click()
 
-  const dialog = page.getByRole("dialog", { name: /Immutable source/ })
+  const dialog = page.getByRole("dialog", { name: /Source details/ })
   await expect(dialog).toBeVisible()
+  await expect(dialog.getByText(/AI-assisted draft ·/)).toBeVisible()
+  await expect(
+    dialog.getByText(/Source status: current note version/),
+  ).toBeVisible()
   await expect(dialog.locator("mark[data-source-span]")).toHaveText(
-    "Fall risk remains elevated",
+    "clinician review is required",
   )
   await expect(
     page.locator(
-      'article[aria-label="Manual Clinician: Current care review"][data-entry-version-id]',
+      'article[aria-label="AI-assisted consultation note: AI doctor consult summary"]' +
+        '[data-entry-origin="ai"]' +
+        '[data-entry-type="ai_doctor_consult_summary"]' +
+        "[data-entry-version-id]",
     ),
   ).toHaveCount(1)
 })
@@ -248,21 +266,24 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
   expect(clinicianMembershipId).toBeTruthy()
 
   const staffEntry = page
-    .locator('article[aria-label="Manual Staff: Medication reconciliation"]')
+    .locator('article[aria-label="Care staff note: Medication reconciliation"]')
     .filter({ hasText: "Medication list reviewed" })
-  await staffEntry.getByRole("button", { name: "Versions" }).click()
-  const drawer = page.getByRole("dialog", { name: /Version history/ })
+  await staffEntry.getByRole("button", { name: "Change history" }).click()
+  const drawer = page.getByRole("dialog", { name: /Change history/ })
   const version1 = drawer.getByRole("listitem").filter({
     hasText: "Version 1 · Medication reconciliation",
   })
   const version2 = drawer.getByRole("listitem").filter({
     hasText: "Version 2 · Medication reconciliation",
   })
-  await version1.getByRole("button", { name: "Diff from" }).click()
-  await version2.getByRole("button", { name: "Diff to" }).click()
-  await expect(drawer.getByText("Unified diff")).toBeVisible()
+  await expect(version1.getByText(/^Staff ·/)).toBeVisible()
+  await version1.getByRole("button", { name: "Compare from" }).click()
+  await version2.getByRole("button", { name: "Compare to" }).click()
+  await expect(
+    drawer.getByRole("heading", { name: "Changes", exact: true }),
+  ).toBeVisible()
   await expect(drawer.locator("pre")).toContainText("duplicate evening dose")
-  await version1.getByRole("button", { name: "Revert as new version" }).click()
+  await version1.getByRole("button", { name: "Restore this version" }).click()
   await expect(drawer).toBeHidden()
   await expect(staffEntry).toContainText("Medication list reviewed during")
 
@@ -303,21 +324,27 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
   await expect(staffEntry.getByText(`“${exactQuote}”`)).toBeVisible()
   await staffEntry.getByLabel("Comment", { exact: true }).fill(commentBody)
   await staffEntry
-    .getByLabel("Mention user ID (optional)")
-    .fill(clinicianUserId as string)
+    .getByLabel("Mention (optional)")
+    .selectOption(clinicianUserId as string)
   await staffEntry
-    .getByLabel("Assign membership ID (optional)")
-    .fill(clinicianMembershipId as string)
+    .getByLabel("Assign to (optional)")
+    .selectOption(clinicianMembershipId as string)
+  await expect(staffEntry.getByLabel("Mention (optional)")).toContainText(
+    "Clinician — Clinician",
+  )
+  await expect(staffEntry.getByLabel("Assign to (optional)")).toContainText(
+    "Clinician — Clinician",
+  )
   await staffEntry
-    .getByRole("button", { name: "Save anchored comment" })
+    .getByRole("button", { name: "Add to team discussion" })
     .click()
   await staffEntry.getByRole("button", { name: "Cancel", exact: true }).click()
 
-  await staffEntry.getByRole("button", { name: "Comments" }).click()
+  await staffEntry.getByRole("button", { name: "Team discussion" }).click()
   const comment = page.getByRole("article").filter({ hasText: commentBody })
   await expect(comment).toBeVisible()
-  await expect(comment.getByText(/^Assigned /)).toHaveText(
-    `Assigned ${(clinicianMembershipId as string).slice(0, 8)}`,
+  await expect(comment.getByText(/^Assigned to /)).toHaveText(
+    "Assigned to Clinician",
   )
   const commentsAfterCreate = await api<
     Array<{
@@ -339,8 +366,8 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
 
   const me = await api<{ membership_id: string }>(page, "/api/v1/auth/me")
   await comment.getByRole("button", { name: "Assign to me" }).click()
-  await expect(comment.getByText(/^Assigned /)).toHaveText(
-    `Assigned ${me.body.membership_id.slice(0, 8)}`,
+  await expect(comment.getByText(/^Assigned to /)).toHaveText(
+    "Assigned to Staff",
   )
   await comment.getByRole("button", { name: "Resolve" }).click()
   await expect(comment.getByRole("button", { name: "Resolve" })).toHaveCount(0)
@@ -360,34 +387,40 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
       resolved_at: expect.any(String),
     })
 
-  // Two independently persisted highlights share a bounded feature. Pinning
-  // one through the visible Glance control must lift the learned score of the
-  // other, proving clinic-scoped feedback generalization rather than a preset.
-  const featureKey = `entry_type:scenario_b_${testInfo.repeatEachIndex}_${Date.now()}`
-  const sourceLabel = `Scenario B learning source ${testInfo.repeatEachIndex}-${Date.now()}`
-  const peerLabel = `Scenario B similar peer ${testInfo.repeatEachIndex}-${Date.now()}`
+  // Two independently persisted critical cards share a bounded feature, so
+  // neither can be crowded out of the five-card clinical view. Pinning the
+  // source through the visible control must lift the peer's learned score.
+  const featureKey = `entry_type:medication_review_${testInfo.repeatEachIndex}_${Date.now()}`
+  const sourceLabel = `Medication safety priority ${testInfo.repeatEachIndex}-${Date.now()}`
+  const peerLabel = `Medication review follow-up ${testInfo.repeatEachIndex}-${Date.now()}`
   const sourceContent = revertedStaffEntry?.content ?? ""
-  const startOffset = sourceContent.indexOf(exactQuote)
-  expect(startOffset).toBeGreaterThanOrEqual(0)
-  const anchor = {
-    end_offset: startOffset + exactQuote.length,
-    exact_quote: exactQuote,
-    prefix: sourceContent.slice(Math.max(0, startOffset - 16), startOffset),
-    start_offset: startOffset,
-    suffix: sourceContent.slice(
-      startOffset + exactQuote.length,
-      startOffset + exactQuote.length + 16,
-    ),
+  const anchorFor = (quote: string) => {
+    const quoteStart = sourceContent.indexOf(quote)
+    expect(quoteStart).toBeGreaterThanOrEqual(0)
+    return {
+      end_offset: quoteStart + quote.length,
+      exact_quote: quote,
+      prefix: sourceContent.slice(Math.max(0, quoteStart - 16), quoteStart),
+      start_offset: quoteStart,
+      suffix: sourceContent.slice(
+        quoteStart + quote.length,
+        quoteStart + quote.length + 16,
+      ),
+    }
   }
-  const makeHighlight = async (label: string) => {
+  const makeHighlight = async (
+    label: string,
+    highlightAnchor: ReturnType<typeof anchorFor>,
+    critical = false,
+  ) => {
     const created = await api<{ id: string }>(
       page,
       `/api/v1/entries/${revertedStaffEntry?.id}/highlights`,
       {
         body: {
-          ...anchor,
+          ...highlightAnchor,
           clinician_confirmed: false,
-          critical: false,
+          critical,
           feature_keys: [featureKey],
           label,
           patient_facing: false,
@@ -409,13 +442,19 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
     expect(accepted.status).toBe(200)
     return created.body.id
   }
-  const sourceHighlightId = await makeHighlight(sourceLabel)
-  const peerHighlightId = await makeHighlight(peerLabel)
+  const sourceHighlightId = await makeHighlight(
+    sourceLabel,
+    anchorFor(exactQuote),
+    true,
+  )
+  const peerHighlightId = await makeHighlight(
+    peerLabel,
+    anchorFor("home visit"),
+    true,
+  )
 
   await page.reload()
-  await expect(
-    page.getByRole("heading", { name: "Alex Synthetic" }),
-  ).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
   const beforeGlance = await api<{
     cards: Array<{
       highlight_id: string
@@ -427,7 +466,7 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
     (card) => card.highlight_id === peerHighlightId,
   )
   expect(peerBefore).toBeDefined()
-  await page.getByRole("button", { name: `Pin ${sourceLabel}` }).click()
+  await page.getByRole("button", { name: `Keep ${sourceLabel} at top` }).click()
 
   await expect
     .poll(async () => {
@@ -474,20 +513,18 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
           method: "POST",
         })
       ).status,
-    ).toBe(200)
+    ).toBe(409)
   }
 
   await page.getByTestId("user-menu").click()
-  await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
+  await page.getByRole("menuitem", { name: "Sign out" }).click()
   await expect(page).toHaveURL(/\/login$/)
   await login(page, "Clinic admin")
   await expect(
     page.getByRole("heading", { name: "Clinic administration" }),
   ).toBeVisible()
-  await expect(
-    page.getByText("Metadata-only audit trail", { exact: true }),
-  ).toBeVisible()
-  await expect(page.getByText("entry.reverted").first()).toBeVisible()
+  await expect(page.getByText("Activity log", { exact: true })).toBeVisible()
+  await expect(page.getByText("Earlier note restored").first()).toBeVisible()
   await expect(page.getByText("Medication list reviewed during")).toHaveCount(0)
 })
 
@@ -636,15 +673,11 @@ test("[Scenario D] stale ETag conflicts while independent entries and tenant bou
 
   const otherContext = await browser.newContext({ ignoreHTTPSErrors: true })
   const other = await otherContext.newPage()
-  await other.goto("/login")
-  expect(
-    (
-      await api(other, "/api/v1/auth/demo-login", {
-        body: { persona: "other_staff" },
-        method: "POST",
-      })
-    ).status,
-  ).toBe(200)
+  const otherLogin = await other.request.post("/api/v1/auth/demo-login", {
+    data: { persona: "other_staff" },
+  })
+  expect(otherLogin.ok(), await otherLogin.text()).toBe(true)
+  await other.goto("/patients")
   expect((await api(other, `/api/v1/entries/${original?.id}`)).status).toBe(404)
 
   await Promise.all([
@@ -707,7 +740,7 @@ test("[Scenario E] patient network is narrow, cookie-only, and provider-off is e
 
   await login(page, "Patient")
   await expect(
-    page.getByRole("heading", { name: /My Care · Alex Synthetic/ }),
+    page.getByRole("heading", { name: /My Care · Alex Tan/ }),
   ).toBeVisible()
   const patientData = await patientAndTimeline(page)
   const created = await api<{ id: string }>(page, "/api/v1/voice/sessions", {
@@ -861,9 +894,8 @@ test("[Scenario E] patient network is narrow, cookie-only, and provider-off is e
     storageKeys.some((key) => /(access|auth|bearer|token)/i.test(key)),
   ).toBe(false)
 
-  await page.getByTestId("user-menu").click()
-  await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
-  await expect(page).toHaveURL(/\/login$/)
+  await page.getByRole("button", { name: "Sign out" }).click()
+  await expect(page).toHaveURL(/\/patient\/login$/)
   expect(
     (await page.context().cookies()).some(
       (cookie) => cookie.name === "nightingale_session",

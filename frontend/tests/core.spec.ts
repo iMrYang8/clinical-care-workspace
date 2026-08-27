@@ -1,8 +1,39 @@
 import { randomUUID } from "node:crypto"
 import type { Page } from "@playwright/test"
 import { expect, test } from "@playwright/test"
+import { resolvePatientRouteReference } from "../src/features/routeReferences"
 
 test.use({ storageState: { cookies: [], origins: [] } })
+
+type TestPersona = "patient" | "staff" | "clinician" | "admin"
+
+const personaHome: Record<TestPersona, string> = {
+  patient: "/patient/my-care",
+  staff: "/patients",
+  clinician: "/patients",
+  admin: "/admin",
+}
+
+const rawUuidPattern =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i
+
+function patientIdFromHref(href: string): string {
+  const routeReference = new URL(href, "https://proxy").pathname.split("/")[2]
+  const patient = resolvePatientRouteReference(routeReference)
+  expect(
+    patient,
+    `Expected a public patient reference in ${href}`,
+  ).not.toBeNull()
+  return patient!.id
+}
+
+async function signInAs(page: Page, persona: TestPersona): Promise<void> {
+  const response = await page.request.post("/api/v1/auth/demo-login", {
+    data: { persona },
+  })
+  expect(response.ok(), await response.text()).toBe(true)
+  await page.goto(personaHome[persona])
+}
 
 async function seedQueuedVoiceChunk(
   page: Page,
@@ -93,47 +124,40 @@ async function seedQueuedVoiceChunk(
   )
 }
 
-test("staff opens the real synthetic care note", async ({ page }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+test("care staff open the shared patient record", async ({ page }) => {
+  await signInAs(page, "staff")
 
   await expect(page).toHaveURL(/\/patients\/?$/)
-  await expect(
-    page.getByRole("heading", { name: "Clinical care notes" }),
-  ).toBeVisible()
-  await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
-    .click()
+  await expect(page.getByRole("heading", { name: "Patients" })).toBeVisible()
+  await page.getByRole("link", { name: "Open care note for Alex Tan" }).click()
 
+  await expect(page.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
+  expect(page.url()).not.toMatch(rawUuidPattern)
   await expect(
-    page.getByRole("heading", { name: "Alex Synthetic" }),
+    page.getByRole("heading", {
+      name: "Longitudinal timeline",
+      exact: true,
+    }),
   ).toBeVisible()
-  await expect(page.getByText("Synthetic data").first()).toBeVisible()
   await expect(
-    page.getByRole("heading", { name: "Timeline", exact: true }),
-  ).toBeVisible()
-  await expect(
-    page.getByRole("heading", { name: "What matters now" }),
-  ).toBeVisible()
+    page.getByRole("heading", { name: "Current priorities" }),
+  ).toBeVisible({ timeout: 10_000 })
 })
 
 test("admin has clinic-scoped read-only care-note oversight", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Clinic admin" }).click()
+  await signInAs(page, "admin")
 
   await expect(page).toHaveURL(/\/admin$/)
-  await page.getByRole("link", { name: /Care notes · read-only/ }).click()
+  await page.getByRole("link", { name: "Patients" }).click()
   await expect(page).toHaveURL(/\/patients\/?$/)
-  await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
-    .click()
+  await page.getByRole("link", { name: "Open care note for Alex Tan" }).click()
 
+  await expect(page.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
   await expect(
-    page.getByRole("heading", { name: "Alex Synthetic" }),
+    page.getByText("Clinic administrator · read-only oversight"),
   ).toBeVisible()
-  await expect(page.getByText("admin · read-only oversight")).toBeVisible()
   await expect(
     page.getByRole("button", { name: /Add admin entry/ }),
   ).toHaveCount(0)
@@ -163,17 +187,17 @@ test("production-capable password form signs in with the secure cookie path", as
   page,
 }) => {
   await page.goto("/login")
-  await page
-    .getByLabel("Clinic ID")
-    .fill("b8d64f9f-fb9e-59ce-b160-4da99922c124")
-  await page.getByLabel("Email").fill("staff@nightingale.synthetic")
-  await page.getByLabel("Password").fill("synthetic-demo-only")
+  await page.getByLabel("Clinic code").fill("nightingale")
+  await expect(page.getByLabel("Clinic code")).toHaveValue("NIGHTINGALE")
+  await page.getByLabel("Email").fill("  StAfF@NiGhTiNgAlE.ExAmPlE  ")
+  await page.getByLabel("Password", { exact: true }).fill("synthetic-demo-only")
+  await expect(page.getByLabel("Email")).toHaveValue(
+    "staff@nightingale.example",
+  )
   await page.getByRole("button", { name: "Sign in to clinic" }).click()
 
   await expect(page).toHaveURL(/\/patients\/?$/)
-  await expect(
-    page.getByRole("heading", { name: "Clinical care notes" }),
-  ).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Patients" })).toBeVisible()
   const sessionCookie = (await page.context().cookies()).find(
     (cookie) => cookie.name === "nightingale_session",
   )
@@ -192,34 +216,30 @@ test("production-capable password form signs in with the secure cookie path", as
 })
 
 test("patient view exposes only My Care navigation", async ({ page }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Patient" }).click()
+  await signInAs(page, "patient")
 
-  await expect(page).toHaveURL(/\/my-care$/)
+  await expect(page).toHaveURL(/\/patient\/my-care\/?$/)
   await expect(
-    page.getByRole("heading", { name: /My Care · Alex Synthetic/ }),
+    page.getByRole("heading", { name: /My Care · Alex Tan/ }),
   ).toBeVisible()
-  await expect(page.getByRole("link", { name: "My care" })).toBeVisible()
-  await expect(page.getByRole("link", { name: "Care notes" })).toHaveCount(0)
+  await expect(page.getByText("Patient access")).toBeVisible()
+  await expect(page.getByRole("link", { name: "Patients" })).toHaveCount(0)
   await expect(page.getByText("Internal only")).toHaveCount(0)
 })
 
 test("failed network and CSRF logout stay masked until a confirmed retry", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  await signInAs(page, "staff")
   await expect(page).toHaveURL(/\/patients\/?$/)
 
   const second = await page.context().newPage()
   await second.goto("/patients")
   await second
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getByRole("link", { name: "Open care note for Alex Tan" })
     .click()
-  await expect(
-    second.getByRole("heading", { name: "Alex Synthetic" }),
-  ).toBeVisible()
-  await expect(second.getByText("What matters now")).toBeVisible()
+  await expect(second.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
+  await expect(second.getByText("Current priorities")).toBeVisible()
 
   let attempts = 0
   let csrfStatus: number | undefined
@@ -246,26 +266,24 @@ test("failed network and CSRF logout stay masked until a confirmed retry", async
   })
 
   await page.getByTestId("user-menu").click()
-  await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
+  await page.getByRole("menuitem", { name: "Sign out" }).click()
 
   const boundary = page.getByTestId("session-termination-boundary")
   await expect(
     boundary.getByRole("heading", { name: "Session termination incomplete" }),
   ).toBeVisible()
-  await expect(boundary).toContainText("server did not confirm logout")
+  await expect(boundary).toContainText("Sign-out could not be confirmed")
   await expect(boundary).toContainText("You are not logged out yet")
   await expect(page).toHaveURL(/\/patients\/?$/)
-  await expect(
-    page.getByRole("heading", { name: "Clinical care notes" }),
-  ).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: "Patients" })).toHaveCount(0)
   const secondBoundary = second.getByTestId("session-termination-boundary")
   await expect(
     secondBoundary.getByRole("heading", {
       name: "Session termination incomplete",
     }),
   ).toBeVisible()
-  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
-  await expect(second.getByText("What matters now")).toHaveCount(0)
+  await expect(second.getByText("Alex Tan")).toHaveCount(0)
+  await expect(second.getByText("Current priorities")).toHaveCount(0)
   await expect(second).toHaveURL(/\/patients\/.+/)
   expect(
     (await page.context().cookies()).some(
@@ -282,10 +300,16 @@ test("failed network and CSRF logout stay masked until a confirmed retry", async
   await expect(
     boundary.getByRole("heading", { name: "Session termination incomplete" }),
   ).toBeVisible()
-  await expect(boundary).toContainText("CSRF origin rejected")
+  await expect(boundary).toContainText(
+    "Your account does not have access to this action.",
+  )
+  await expect(boundary).not.toContainText("CSRF origin rejected")
   expect(csrfStatus).toBe(403)
-  await expect(secondBoundary).toContainText("CSRF origin rejected")
-  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  await expect(secondBoundary).toContainText(
+    "Your account does not have access to this action.",
+  )
+  await expect(secondBoundary).not.toContainText("CSRF origin rejected")
+  await expect(second.getByText("Alex Tan")).toHaveCount(0)
   expect(
     (await page.context().cookies()).some(
       (cookie) => cookie.name === "nightingale_session",
@@ -301,29 +325,30 @@ test("failed network and CSRF logout stay masked until a confirmed retry", async
       (cookie) => cookie.name === "nightingale_session",
     ),
   ).toBe(false)
-  expect(
-    await page.evaluate(() =>
-      localStorage.getItem("nightingale_session_termination_pending"),
-    ),
-  ).toBeNull()
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("nightingale_session_termination_pending"),
+      ),
+    )
+    .toBeNull()
   await second.close()
 })
 
 test("confirmed logout masks a second tab and closes its held voice database", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  await signInAs(page, "staff")
   await expect(page).toHaveURL(/\/patients\/?$/)
   const patientHref = await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getByRole("link", { name: "Open care note for Alex Tan" })
     .getAttribute("href")
   expect(patientHref).toBeTruthy()
 
   const second = await page.context().newPage()
   await second.goto(`${patientHref}/voice/capture`)
   await expect(
-    second.getByRole("heading", { name: "Secure voice capture" }),
+    second.getByRole("heading", { name: "Record visit" }),
   ).toBeVisible()
   await expect
     .poll(() =>
@@ -336,14 +361,14 @@ test("confirmed logout masks a second tab and closes its held voice database", a
     .toBe(true)
 
   await page.getByTestId("user-menu").click()
-  await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
+  await page.getByRole("menuitem", { name: "Sign out" }).click()
 
   await expect(page).toHaveURL(/\/login$/)
   await expect(second).toHaveURL(/\/login$/)
   await expect(
-    second.getByRole("heading", { name: "Secure voice capture" }),
+    second.getByRole("heading", { name: "Record visit" }),
   ).toHaveCount(0)
-  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  await expect(second.getByText("Alex Tan")).toHaveCount(0)
   expect(
     (await page.context().cookies()).some(
       (cookie) => cookie.name === "nightingale_session",
@@ -364,16 +389,12 @@ test("confirmed logout masks a second tab and closes its held voice database", a
 test("a removed membership marker masks every tab and deletes its owned voice before another persona", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  await signInAs(page, "staff")
   const patientHref = await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getByRole("link", { name: "Open care note for Alex Tan" })
     .getAttribute("href")
   expect(patientHref).toBeTruthy()
-  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
-    "/",
-  )[2]
-  expect(patientId).toBeTruthy()
+  const patientId = patientIdFromHref(patientHref!)
 
   const second = await page.context().newPage()
   await second.goto("/patients")
@@ -454,9 +475,9 @@ test("a removed membership marker masks every tab and deletes its owned voice be
   )
   await second.goto(`${patientHref}/voice/capture`)
   await expect(
-    second.getByRole("heading", { name: "Encrypted uploads to recover" }),
+    second.getByRole("heading", { name: "Recordings waiting to upload" }),
   ).toBeVisible()
-  await expect(second.getByText("expired-session-fixture")).toBeVisible()
+  await expect(second.getByText("Interrupted recording")).toBeVisible()
 
   let releaseLogout!: () => void
   const logoutGate = new Promise<void>((resolve) => {
@@ -484,7 +505,7 @@ test("a removed membership marker masks every tab and deletes its owned voice be
   const reload = page.reload().catch(() => undefined)
   await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
   await expect(second.getByTestId("session-termination-boundary")).toBeVisible()
-  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  await expect(second.getByText("Alex Tan")).toHaveCount(0)
   releaseLogout()
   await reload
   await expect(page).toHaveURL(/\/login$/)
@@ -500,42 +521,35 @@ test("a removed membership marker masks every tab and deletes its owned voice be
     .toBe(false)
 
   await second.close()
-  await page.getByRole("button", { name: "Continue as Patient" }).click()
+  await signInAs(page, "patient")
   await page.getByRole("link", { name: "Add a recording" }).click()
   await expect(
-    page.getByRole("heading", { name: "Secure voice capture" }),
+    page.getByRole("heading", { name: "Record visit" }),
   ).toBeVisible()
   await expect(
-    page.getByRole("heading", { name: "Encrypted uploads to recover" }),
+    page.getByRole("heading", { name: "Recordings waiting to upload" }),
   ).toHaveCount(0)
-  await expect(page.getByText("expired-session-fixture")).toHaveCount(0)
 })
 
 test("a native voice chunk 401 terminates every tab and purges encrypted recovery", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  await signInAs(page, "staff")
   const patientHref = await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getByRole("link", { name: "Open care note for Alex Tan" })
     .getAttribute("href")
   expect(patientHref).toBeTruthy()
-  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
-    "/",
-  )[2]
-  expect(patientId).toBeTruthy()
+  const patientId = patientIdFromHref(patientHref!)
 
   const second = await page.context().newPage()
   await second.goto(patientHref!)
-  await expect(
-    second.getByRole("heading", { name: "Alex Synthetic" }),
-  ).toBeVisible()
+  await expect(second.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
 
   const captureId = `chunk-401-${randomUUID()}`
   const deviceId = `device-${randomUUID()}`
   await seedQueuedVoiceChunk(page, { captureId, deviceId, patientId })
   await page.goto(`${patientHref}/voice/capture`)
-  await expect(page.getByText(captureId)).toBeVisible()
+  await expect(page.getByText("Interrupted recording")).toBeVisible()
   await expect
     .poll(() =>
       page.evaluate(async () =>
@@ -571,7 +585,7 @@ test("a native voice chunk 401 terminates every tab and purges encrypted recover
 
   await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
   await expect(second.getByTestId("session-termination-boundary")).toBeVisible()
-  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  await expect(second.getByText("Alex Tan")).toHaveCount(0)
   expect(rejectedChunkUploads).toBe(1)
 
   releaseLogout()
@@ -592,22 +606,16 @@ test("a native voice chunk 401 terminates every tab and purges encrypted recover
 test("an authentication-marked seal response terminates direct VoiceService calls", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  await signInAs(page, "staff")
   const patientHref = await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getByRole("link", { name: "Open care note for Alex Tan" })
     .getAttribute("href")
   expect(patientHref).toBeTruthy()
-  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
-    "/",
-  )[2]
-  expect(patientId).toBeTruthy()
+  const patientId = patientIdFromHref(patientHref!)
 
   const second = await page.context().newPage()
   await second.goto(patientHref!)
-  await expect(
-    second.getByRole("heading", { name: "Alex Synthetic" }),
-  ).toBeVisible()
+  await expect(second.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
 
   const captureId = `sealed-403-${randomUUID()}`
   const deviceId = `device-${randomUUID()}`
@@ -618,7 +626,7 @@ test("an authentication-marked seal response terminates direct VoiceService call
     includeChunk: false,
   })
   await page.goto(`${patientHref}/voice/capture`)
-  await expect(page.getByText(captureId)).toBeVisible()
+  await expect(page.getByText("Interrupted recording")).toBeVisible()
   let pendingChunkPuts = 0
   page.on("request", (request) => {
     if (
@@ -657,7 +665,7 @@ test("an authentication-marked seal response terminates direct VoiceService call
 
   await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
   await expect(second.getByTestId("session-termination-boundary")).toBeVisible()
-  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  await expect(second.getByText("Alex Tan")).toHaveCount(0)
   expect(rejectedSeals).toBe(1)
   expect(pendingChunkPuts).toBe(0)
 
@@ -679,16 +687,12 @@ test("an authentication-marked seal response terminates direct VoiceService call
 test("a markerless seal permission 403 keeps the current session and recovery", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  await signInAs(page, "staff")
   const patientHref = await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getByRole("link", { name: "Open care note for Alex Tan" })
     .getAttribute("href")
   expect(patientHref).toBeTruthy()
-  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
-    "/",
-  )[2]
-  expect(patientId).toBeTruthy()
+  const patientId = patientIdFromHref(patientHref!)
 
   const captureId = `seal-rbac-${randomUUID()}`
   const deviceId = `device-${randomUUID()}`
@@ -699,7 +703,7 @@ test("a markerless seal permission 403 keeps the current session and recovery", 
     includeChunk: false,
   })
   await page.goto(`${patientHref}/voice/capture`)
-  await expect(page.getByText(captureId)).toBeVisible()
+  await expect(page.getByText("Interrupted recording")).toBeVisible()
 
   let rejectedSeals = 0
   await page.route(
@@ -718,7 +722,7 @@ test("a markerless seal permission 403 keeps the current session and recovery", 
 
   await expect.poll(() => rejectedSeals).toBe(1)
   await expect(page.getByTestId("session-termination-boundary")).toHaveCount(0)
-  await expect(page.getByText(captureId)).toBeVisible()
+  await expect(page.getByText("Interrupted recording")).toBeVisible()
   expect(
     (await page.context().cookies()).some(
       (cookie) => cookie.name === "nightingale_session",
@@ -736,21 +740,17 @@ test("a markerless seal permission 403 keeps the current session and recovery", 
 test("an authentication-marked native 403 masks all tabs and clears IndexedDB", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
+  await signInAs(page, "staff")
   const patientHref = await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
+    .getByRole("link", { name: "Open care note for Alex Tan" })
     .getAttribute("href")
   expect(patientHref).toBeTruthy()
-  const patientId = new URL(patientHref!, "https://proxy").pathname.split(
-    "/",
-  )[2]
-  expect(patientId).toBeTruthy()
+  const patientId = patientIdFromHref(patientHref!)
 
   const second = await page.context().newPage()
   await second.goto(`${patientHref}/voice/capture`)
   await expect(
-    second.getByRole("heading", { name: "Secure voice capture" }),
+    second.getByRole("heading", { name: "Record visit" }),
   ).toBeVisible()
   await seedQueuedVoiceChunk(second, {
     captureId: `inactive-403-${randomUUID()}`,
@@ -781,7 +781,7 @@ test("an authentication-marked native 403 masks all tabs and clears IndexedDB", 
 
   await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
   await expect(second.getByTestId("session-termination-boundary")).toBeVisible()
-  await expect(second.getByText("Alex Synthetic")).toHaveCount(0)
+  await expect(second.getByText("Alex Tan")).toHaveCount(0)
   expect(rejectedStreams).toBe(1)
 
   releaseLogout()
@@ -811,16 +811,11 @@ test("an ordinary native permission 403 does not terminate the session", async (
       body: JSON.stringify({ detail: "Clinical event role required" }),
     })
   })
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Care staff" }).click()
-  await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
-    .click()
+  await signInAs(page, "staff")
+  await page.getByRole("link", { name: "Open care note for Alex Tan" }).click()
 
   await expect.poll(() => deniedStreams).toBeGreaterThan(0)
-  await expect(
-    page.getByRole("heading", { name: "Alex Synthetic" }),
-  ).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
   await expect(page.getByTestId("session-termination-boundary")).toHaveCount(0)
   expect(
     (await page.context().cookies()).some(
@@ -879,15 +874,11 @@ test("expired cookie on direct login purges old voice before sign-in controls ap
   })
   const navigation = page.goto("/login").catch(() => undefined)
   await expect(page.getByTestId("session-termination-boundary")).toBeVisible()
-  await expect(
-    page.getByRole("button", { name: "Continue as Care staff" }),
-  ).toHaveCount(0)
+  await expect(page.getByTestId("clinical-login-form")).toHaveCount(0)
   releaseLogout()
   await navigation
   await expect(page).toHaveURL(/\/login$/)
-  await expect(
-    page.getByRole("button", { name: "Continue as Care staff" }),
-  ).toBeVisible()
+  await expect(page.getByTestId("clinical-login-form")).toBeVisible()
   expect(
     (await page.context().cookies()).some(
       (cookie) => cookie.name === "nightingale_session",
@@ -908,15 +899,18 @@ test("[Scenario B] recipient accepts a one-time clinic invitation in the public 
   page,
   request,
 }) => {
-  const email = `playwright-invite-${randomUUID()}@example.com`
+  const mailpitBaseUrl =
+    process.env.MAILPIT_BASE_URL ??
+    process.env.MAILPIT_HOST ??
+    "http://localhost:8025"
+  const email = `playwright-invite-${randomUUID().replaceAll("-", "")}@example.com`
   const password = `recipient-${randomUUID()}`
   const leakedRequestUrls: string[] = []
   page.on("request", (networkRequest) => {
     leakedRequestUrls.push(networkRequest.url())
   })
 
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Clinic admin" }).click()
+  await signInAs(page, "admin")
   await expect(page).toHaveURL(/\/admin$/)
   await page.getByLabel("Email").fill(email)
   await page.getByLabel("Display name").fill("Verified Browser Invite")
@@ -929,7 +923,7 @@ test("[Scenario B] recipient accepts a one-time clinic invitation in the public 
     .poll(
       async () => {
         const listResponse = await request.get(
-          "http://mailpit:8025/api/v1/messages",
+          `${mailpitBaseUrl}/api/v1/messages`,
         )
         if (!listResponse.ok()) return false
         const listing = (await listResponse.json()) as {
@@ -943,7 +937,7 @@ test("[Scenario B] recipient accepts a one-time clinic invitation in the public 
         )
         if (!message?.ID) return false
         const detailResponse = await request.get(
-          `http://mailpit:8025/api/v1/message/${message.ID}`,
+          `${mailpitBaseUrl}/api/v1/message/${message.ID}`,
         )
         if (!detailResponse.ok()) return false
         const match = JSON.stringify(await detailResponse.json()).match(
@@ -957,25 +951,29 @@ test("[Scenario B] recipient accepts a one-time clinic invitation in the public 
     .toBe(true)
 
   await page.getByTestId("user-menu").click()
-  await page.getByRole("menuitem", { name: "Log out and clear data" }).click()
+  await page.getByRole("menuitem", { name: "Sign out" }).click()
   await expect(page).toHaveURL(/\/login$/)
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem("nightingale_session_termination_pending"),
+      ),
+    )
+    .toBeNull()
 
   await page.goto(`/accept-invitation#${encodeURIComponent(oneTimeCode)}`)
-  await expect(page).toHaveURL(/\/accept-invitation$/)
+  await expect(page).toHaveURL(/\/accept-invitation(?:#|$)/)
   await expect(page.getByLabel("One-time code")).toHaveValue(oneTimeCode)
   await page.getByLabel("Invited email").fill(email)
   await page.getByLabel("Display name").fill("Recipient Verified Name")
   await page.getByLabel("New password").fill(password)
-  await page
-    .getByRole("button", { name: "Verify and activate membership" })
-    .click()
+  await page.getByLabel("Confirm password").fill(password)
+  await page.getByRole("button", { name: "Activate account" }).click()
   await expect(page).toHaveURL(/\/login$/)
-  await expect(
-    page.getByRole("button", { name: "Continue as Clinic admin" }),
-  ).toBeVisible()
+  await expect(page.getByTestId("clinical-login-form")).toBeVisible()
   expect(leakedRequestUrls.some((url) => url.includes(oneTimeCode))).toBe(false)
 
-  await page.getByRole("button", { name: "Continue as Clinic admin" }).click()
+  await signInAs(page, "admin")
   const acceptedMember = page.getByRole("row").filter({ hasText: email })
   await expect(acceptedMember).toBeVisible()
   await expect(

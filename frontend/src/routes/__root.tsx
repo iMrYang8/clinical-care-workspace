@@ -25,10 +25,10 @@ function RootComponent() {
     <>
       <HeadContent />
       <a
-        className="sr-only z-[100] rounded-md bg-white px-4 py-3 text-teal-900 shadow focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+        className="sr-only z-[100] rounded-md bg-card px-4 py-3 text-foreground shadow focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
         href="#main-content"
       >
-        Skip to care note
+        Skip to main content
       </a>
       <Outlet />
       {import.meta.env.DEV && (

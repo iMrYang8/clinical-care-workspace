@@ -98,19 +98,28 @@ describe("VoiceReviewMode", () => {
 
     expect(await screen.findAllByText("penicillin allergy")).not.toHaveLength(0)
     const publish = screen.getByRole("button", {
-      name: /Publish reviewed result/i,
+      name: /Publish reviewed note/i,
     })
     expect(publish).toBeDisabled()
-    expect(screen.getByText(/Publication disabled/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Update the summary and clinical findings/),
+    ).toBeInTheDocument()
 
     fireEvent.click(screen.getAllByRole("button", { name: "Jump to 0:02" })[0])
     const audio = document.querySelector("audio")
     expect(audio?.currentTime).toBe(2)
 
     fireEvent.click(
-      screen.getByRole("checkbox", { name: /Low confidence \/ overlap only/i }),
+      screen.getByRole("checkbox", {
+        name: /Show uncertain or overlapping speech only/i,
+      }),
     )
-    expect(document.getElementById("voice-segment-mobile-segment-1")).toBeNull()
+    expect(
+      document.getElementById("voice-segment-mobile-segment-1"),
+    ).not.toBeNull()
+    expect(
+      screen.getAllByText("Confidence unavailable").length,
+    ).toBeGreaterThan(0)
 
     fireEvent.click(screen.getAllByRole("button", { name: /allergy/i })[0])
     await waitFor(() => {
@@ -143,9 +152,9 @@ describe("VoiceReviewMode", () => {
           <VoiceReviewMode sessionId="session-1" membershipRole="clinician" />
         </QueryClientProvider>,
       )
-      expect(await screen.findAllByText("confidence unavailable")).toHaveLength(
-        2,
-      )
+      expect(
+        await screen.findAllByText(/Confidence unavailable/i),
+      ).toHaveLength(2)
     } finally {
       transcript.segments[0].confidence = priorConfidence
     }

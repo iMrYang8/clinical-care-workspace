@@ -15,17 +15,17 @@ export function SessionBoundaryError({
 }: SessionBoundaryErrorProps) {
   return (
     <div className="mx-auto grid min-h-[50vh] max-w-xl place-items-center">
-      <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+      <Alert className="border-warning/40 bg-warning/10 text-foreground">
         <ShieldAlert />
         <AlertTitle>Membership could not be resolved</AlertTitle>
         <AlertDescription className="space-y-4">
           <p>{apiErrorMessage(error)}</p>
           <p>
-            No role or clinic has been inferred in the browser. Clear this local
-            session, then choose a server-defined demo persona again.
+            Your clinic membership could not be verified. Clear this local
+            session, then sign in again with your clinic account.
           </p>
           <Button className="min-h-11" onClick={() => void onClear()}>
-            Clear local session
+            Return to sign in
           </Button>
         </AlertDescription>
       </Alert>

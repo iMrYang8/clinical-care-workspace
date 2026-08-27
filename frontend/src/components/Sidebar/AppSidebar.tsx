@@ -1,4 +1,15 @@
-import { ClipboardList, ShieldCheck } from "lucide-react"
+import { useRouterState } from "@tanstack/react-router"
+import {
+  AlertTriangle,
+  ClipboardList,
+  Clock3,
+  FileSearch,
+  ListChecks,
+  MessageCircle,
+  ShieldCheck,
+  UserRound,
+  UserRoundPlus,
+} from "lucide-react"
 
 import { SidebarAppearance } from "@/components/Common/Appearance"
 import { Brand } from "@/components/Nightingale/Brand"
@@ -14,34 +25,71 @@ import { User } from "./User"
 
 export function AppSidebar() {
   const { user: currentUser } = useAuth()
+  const currentPath = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+  const isPatientRecord =
+    currentPath.startsWith("/patients/") && currentPath !== "/patients/new"
 
-  const items: Item[] = currentUser
-    ? currentUser.role === "patient"
-      ? [{ icon: ClipboardList, title: "My care", path: "/my-care" }]
-      : currentUser.role === "staff" || currentUser.role === "clinician"
-        ? [{ icon: ClipboardList, title: "Care notes", path: "/patients" }]
-        : currentUser.role === "admin"
-          ? [
-              {
-                icon: ClipboardList,
-                title: "Care notes · read-only",
-                path: "/patients",
-              },
-              { icon: ShieldCheck, title: "Administration", path: "/admin" },
-            ]
-          : []
+  const workspaceItems: Item[] = currentUser
+    ? currentUser.role === "staff" || currentUser.role === "clinician"
+      ? [
+          { icon: ClipboardList, title: "Patients", path: "/patients" },
+          {
+            icon: UserRoundPlus,
+            title: "Add patient",
+            path: "/patients/new",
+          },
+        ]
+      : currentUser.role === "admin"
+        ? [
+            { icon: ClipboardList, title: "Patients", path: "/patients" },
+            { icon: ShieldCheck, title: "Administration", path: "/admin" },
+          ]
+        : []
+    : []
+
+  const patientItems: Item[] = isPatientRecord
+    ? [
+        {
+          icon: UserRound,
+          title: "Patient overview",
+          href: "#patient-overview",
+        },
+        {
+          icon: AlertTriangle,
+          title: "Clinical review",
+          href: "#clinical-conflicts",
+        },
+        {
+          icon: ListChecks,
+          title: "Current priorities",
+          href: "#current-priorities",
+        },
+        { icon: Clock3, title: "Timeline", href: "#timeline" },
+        {
+          icon: FileSearch,
+          title: "Source-linked facts",
+          href: "#structured-context",
+        },
+        {
+          icon: MessageCircle,
+          title: "Team discussion",
+          href: "#team-discussion",
+        },
+      ]
     : []
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="px-4 py-5 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-0">
         <Brand />
-        <span className="mx-1 mt-3 w-fit rounded-full bg-amber-100 px-2 py-1 text-[0.65rem] font-bold uppercase tracking-[0.14em] text-amber-800 group-data-[collapsible=icon]:hidden">
-          Synthetic data
-        </span>
       </SidebarHeader>
       <SidebarContent>
-        <Main items={items} />
+        <Main items={workspaceItems} label="Workspace" />
+        {patientItems.length > 0 && (
+          <Main items={patientItems} label="Current patient" />
+        )}
       </SidebarContent>
       <SidebarFooter>
         <SidebarAppearance />

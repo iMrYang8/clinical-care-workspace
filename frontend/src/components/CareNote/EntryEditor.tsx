@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query"
 import { EditorContent, useEditor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import { Link2, LoaderCircle, MessageSquarePlus, Save, X } from "lucide-react"
@@ -10,6 +11,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   apiErrorMessage,
+  clinicalApi,
+  type TeamMemberOption,
   type VersionConflict,
   versionConflictFrom,
 } from "@/features/api"
@@ -53,6 +56,16 @@ function textDocument(content: string) {
   }
 }
 
+const roleLabel: Record<TeamMemberOption["role"], string> = {
+  staff: "Care staff",
+  clinician: "Clinician",
+  admin: "Clinic admin",
+}
+
+function memberLabel(member: TeamMemberOption): string {
+  return `${member.full_name?.trim() || roleLabel[member.role]} — ${roleLabel[member.role]}`
+}
+
 export function EntryEditor({
   initialDraft,
   versionId,
@@ -73,6 +86,16 @@ export function EntryEditor({
   const [assignmentMembershipId, setAssignmentMembershipId] = useState("")
   const [commentPending, setCommentPending] = useState(false)
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
+  const teamQuery = useQuery({
+    queryKey: ["team", "members"],
+    queryFn: clinicalApi.teamMembers,
+    enabled: Boolean(onCreateComment),
+    staleTime: 5 * 60 * 1000,
+  })
+  const teamMembers = teamQuery.data ?? []
+  const assignableMembers = teamMembers.filter(
+    (member) => member.role === "staff" || member.role === "clinician",
+  )
 
   const editor = useEditor({
     // Content is the backend's canonical plaintext projection. Disable visual
@@ -98,7 +121,7 @@ export function EntryEditor({
     editorProps: {
       attributes: {
         class:
-          "min-h-44 rounded-b-xl px-4 py-3 text-[0.95rem] leading-7 text-slate-800 outline-none focus-visible:ring-2 focus-visible:ring-teal-600",
+          "min-h-44 rounded-b-xl px-4 py-3 text-[0.95rem] leading-7 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary",
         "aria-label": "Care note content",
       },
     },
@@ -117,7 +140,7 @@ export function EntryEditor({
     setConflict({
       code: "VERSION_CONFLICT",
       message:
-        "A newer server version arrived while this draft was open. The original If-Match value remains frozen.",
+        "This note changed while your draft was open. Review the latest saved note before continuing.",
       current_version_id: currentVersionId,
     })
   }, [baseVersionId, currentVersionId])
@@ -140,7 +163,7 @@ export function EntryEditor({
     if (!editor) return
     if (draft.content !== initialDraft.content) {
       setError(
-        "Save this text as a new immutable version before anchoring a comment.",
+        "Save your changes before starting a discussion on selected text.",
       )
       return
     }
@@ -199,9 +222,9 @@ export function EntryEditor({
       </div>
 
       <div>
-        <div className="flex min-h-14 flex-wrap items-center gap-2 rounded-t-xl border border-b-0 bg-slate-50 p-2">
-          <span className="px-2 text-xs text-slate-500">
-            Canonical clinical text · source-safe offsets
+        <div className="flex min-h-14 flex-wrap items-center gap-2 rounded-t-xl border border-b-0 bg-muted/40 p-2">
+          <span className="px-2 text-xs text-muted-foreground">
+            Select text to discuss with the care team
           </span>
           {onCreateComment && (
             <Button
@@ -215,23 +238,24 @@ export function EntryEditor({
             </Button>
           )}
         </div>
-        <div className="rounded-b-xl border bg-white">
+        <div className="rounded-b-xl border bg-background">
           <EditorContent editor={editor} />
         </div>
         {activeCommentId && (
-          <p className="mt-2 flex items-center gap-1 text-xs text-teal-700">
-            <Link2 className="size-3" /> Active comment{" "}
-            {activeCommentId.slice(0, 8)}
+          <p className="mt-2 flex items-center gap-1 text-xs text-primary">
+            <Link2 className="size-3" /> Discussion linked to selected text
           </p>
         )}
       </div>
 
       {captured && (
-        <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50 p-4">
+        <div className="space-y-3 rounded-xl border border-ai/40 bg-ai-muted p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-semibold text-violet-950">Anchored comment</p>
-              <p className="mt-1 line-clamp-2 text-sm text-violet-800">
+              <p className="font-semibold text-ai-muted-foreground">
+                Team discussion
+              </p>
+              <p className="mt-1 line-clamp-2 text-sm text-ai-muted-foreground">
                 “{captured.anchor.exact_quote}”
               </p>
             </div>
@@ -248,7 +272,7 @@ export function EntryEditor({
           <div className="grid gap-2">
             <Label htmlFor={`comment-${baseVersionId}`}>Comment</Label>
             <textarea
-              className="min-h-24 rounded-lg border bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              className="min-h-24 rounded-lg border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
               id={`comment-${baseVersionId}`}
               onChange={(event) => setCommentBody(event.target.value)}
               placeholder="Add clinical context or a question…"
@@ -258,29 +282,51 @@ export function EntryEditor({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor={`mention-${baseVersionId}`}>
-                Mention user ID (optional)
+                Mention (optional)
               </Label>
-              <Input
+              <select
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 id={`mention-${baseVersionId}`}
                 onChange={(event) => setMentionUserId(event.target.value)}
-                placeholder="Validated by clinic membership"
                 value={mentionUserId}
-              />
+              >
+                <option value="">No mention</option>
+                {assignableMembers.map((member) => (
+                  <option key={member.user_id} value={member.user_id}>
+                    {memberLabel(member)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="grid gap-2">
               <Label htmlFor={`assign-${baseVersionId}`}>
-                Assign membership ID (optional)
+                Assign to (optional)
               </Label>
-              <Input
+              <select
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 id={`assign-${baseVersionId}`}
                 onChange={(event) =>
                   setAssignmentMembershipId(event.target.value)
                 }
-                placeholder="Staff or clinician membership"
                 value={assignmentMembershipId}
-              />
+              >
+                <option value="">No assignment</option>
+                {assignableMembers.map((member) => (
+                  <option
+                    key={member.membership_id}
+                    value={member.membership_id}
+                  >
+                    {memberLabel(member)}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
+          {teamQuery.isError && (
+            <p className="text-sm text-destructive">
+              The care-team directory is temporarily unavailable.
+            </p>
+          )}
           <Button
             disabled={!commentBody.trim() || commentPending}
             onClick={submitComment}
@@ -291,15 +337,15 @@ export function EntryEditor({
             ) : (
               <MessageSquarePlus />
             )}
-            Save anchored comment
+            Add to team discussion
           </Button>
         </div>
       )}
 
-      <label className="flex min-h-11 items-center gap-3 rounded-xl border bg-slate-50 px-3 py-2 text-sm text-slate-700">
+      <label className="flex min-h-11 items-center gap-3 rounded-xl border bg-muted/40 px-3 py-2 text-sm text-foreground">
         <input
           checked={draft.patient_facing}
-          className="size-4 accent-teal-700"
+          className="size-4 accent-primary"
           onChange={(event) =>
             setDraft((current) => ({
               ...current,
@@ -308,11 +354,14 @@ export function EntryEditor({
           }
           type="checkbox"
         />
-        Patient-facing after clinical review
+        Request patient sharing
       </label>
 
       {error && (
-        <Alert className="border-red-200 bg-red-50 text-red-900" role="alert">
+        <Alert
+          className="border-critical/40 bg-critical-muted text-critical-muted-foreground"
+          role="alert"
+        >
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
@@ -327,7 +376,7 @@ export function EntryEditor({
           type="button"
         >
           {isSaving ? <LoaderCircle className="animate-spin" /> : <Save />}
-          Save with If-Match
+          Save changes
         </Button>
       </div>
 

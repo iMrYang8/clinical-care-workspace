@@ -5,6 +5,7 @@ import type {
   ClinicalGlancePublic,
   CommentCreate,
   CommentPublic,
+  DecisionExplanationPublic,
   DiffPublic,
   EntryCreate,
   EntryPatch,
@@ -19,6 +20,7 @@ import type {
   PatientPublic,
   PatientTimelineEntry,
   ProvenanceResolved,
+  TeamMemberPublic,
 } from "@/client"
 import {
   AdminService,
@@ -26,6 +28,7 @@ import {
   CollaborationService,
   EntriesService,
   PatientsService,
+  TeamService,
   TrustService,
 } from "@/client"
 import {
@@ -39,6 +42,172 @@ export type ClinicalRole = MePublic["role"]
 export type ClinicalTimelineEntry = PatientTimelineEntry & {
   origin: string
   author_id: string | null
+}
+
+export type PatientIdentityInput = {
+  display_name: string
+  date_of_birth: string
+  medical_record_number: string
+  identity_document_type: "nric_fin" | "passport" | "other"
+  identity_document_number: string
+}
+
+export type PatientDuplicateCandidate = {
+  patient_id: string
+  display_name: string
+  date_of_birth: string | null
+  medical_record_number: string | null
+  masked_identity_document: string | null
+}
+
+export type PatientDuplicateCheck = {
+  status: "clear" | "possible_match" | "exact_match"
+  candidates: PatientDuplicateCandidate[]
+  duplicate_confirmation_token?: string | null
+}
+
+export type PatientDetail = PatientPublic & {
+  date_of_birth: string | null
+  medical_record_number: string | null
+  identity_document_type: string | null
+  masked_identity_document: string | null
+  portal_access_state: "not_invited" | "pending" | "active" | "deactivated"
+  status: string
+}
+
+export type ClinicalConflict = {
+  id: string
+  patient_id: string
+  fact_type: string
+  normalized_key: string
+  severity: "high" | "critical" | string
+  status: string
+  left_entry_id: string
+  right_entry_id: string
+  left_pointer_id: string | null
+  right_pointer_id: string | null
+  resolution: string | null
+  created_at: string
+}
+
+export type ClinicalFactAssertion = {
+  id: string
+  fact_type: string
+  subject: string
+  normalized_value: string
+  clinical_status: string
+  effective_time: string | null
+  origin: "human" | "ai" | "voice" | string
+  source_entry_version_id: string
+  provenance_pointer_id: string
+}
+
+async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await authenticatedFetch(
+    `${import.meta.env.VITE_API_URL ?? ""}${url}`,
+    { credentials: "same-origin", ...init },
+  )
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(
+      (payload as { detail?: string } | null)?.detail ??
+        `Request failed with ${response.status}`,
+    )
+  }
+  return (await response.json()) as T
+}
+
+async function duplicateCheck(
+  body: PatientIdentityInput,
+): Promise<PatientDuplicateCheck> {
+  return jsonRequest("/api/v1/patients/duplicate-check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+async function createPatientRecord(
+  body: PatientIdentityInput & { duplicate_confirmation_token?: string },
+): Promise<PatientDetail> {
+  return jsonRequest("/api/v1/patients", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify(body),
+  })
+}
+
+async function patientDetail(patientId: string): Promise<PatientDetail> {
+  return jsonRequest(`/api/v1/patients/${patientId}`)
+}
+
+async function invitePatient(patientId: string, email: string): Promise<void> {
+  await jsonRequest(`/api/v1/patients/${patientId}/portal-invitations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  })
+}
+
+async function patientConflicts(
+  patientId: string,
+): Promise<ClinicalConflict[]> {
+  return jsonRequest(`/api/v1/patients/${patientId}/conflicts`)
+}
+
+async function patientClinicalFacts(
+  patientId: string,
+): Promise<ClinicalFactAssertion[]> {
+  return jsonRequest(`/api/v1/patients/${patientId}/clinical-facts`)
+}
+
+async function resolveConflict(
+  conflictId: string,
+  correctionEntryId: string,
+  resolution: string,
+): Promise<ClinicalConflict> {
+  return jsonRequest(`/api/v1/conflicts/${conflictId}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      correction_entry_id: correctionEntryId,
+      resolution,
+    }),
+  })
+}
+
+export type PatientInvitationPreview = {
+  clinic_name: string
+  patient_display_name: string
+  email: string
+  account_exists: boolean
+}
+
+async function previewPatientInvitation(body: {
+  token: string
+  email: string
+}): Promise<PatientInvitationPreview> {
+  return jsonRequest("/api/v1/auth/patient-invitations/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+async function acceptPatientInvitation(body: {
+  token: string
+  email: string
+  password: string
+  full_name?: string
+}): Promise<void> {
+  await jsonRequest("/api/v1/auth/patient-invitations/accept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
 }
 
 // Deliberately narrower than GlancePublic. The patient view never receives
@@ -71,22 +240,31 @@ export function httpStatus(error: unknown): number | undefined {
 
 export function apiErrorMessage(error: unknown): string {
   if (error instanceof AxiosError) {
-    const payload = error.response?.data as
-      | {
-          detail?: string | { message?: string } | Array<{ msg?: string }>
-          message?: string
-        }
-      | undefined
-    if (typeof payload?.detail === "string") return payload.detail
-    if (Array.isArray(payload?.detail)) {
-      return payload.detail[0]?.msg ?? error.message
+    const status = error.response?.status
+    if (status === undefined) {
+      return "Nightingale could not reach the clinic service. Check your connection and try again."
     }
-    if (payload?.detail && "message" in payload.detail) {
-      return payload.detail.message ?? error.message
+    if (status === 400 || status === 422) {
+      return "Review the information you entered and try again."
     }
-    return payload?.message ?? error.message
+    if (status === 401) {
+      return "Your account details could not be verified. Sign in again."
+    }
+    if (status === 403) {
+      return "Your account does not have access to this action."
+    }
+    if (status === 404) {
+      return "This care information is no longer available."
+    }
+    if (status === 409) {
+      return "This care information changed in another session. Refresh and try again."
+    }
+    if (status === 429) {
+      return "Too many requests were made. Wait a moment and try again."
+    }
+    return "Nightingale could not complete this request. Try again."
   }
-  return error instanceof Error ? error.message : "Unexpected request error"
+  return "Nightingale could not complete this request. Try again."
 }
 
 export function versionConflictFrom(error: unknown): VersionConflict | null {
@@ -116,19 +294,25 @@ async function demoLogin(persona: DemoPersona): Promise<void> {
 }
 
 export type PasswordLoginInput = {
-  clinicId: string
+  clinicCode: string
   email: string
   password: string
 }
 
 async function passwordLogin(input: PasswordLoginInput): Promise<void> {
   await AuthService.passwordLogin({
-    headers: { "X-Clinic-ID": input.clinicId },
+    headers: { "X-Clinic-Code": input.clinicCode.toUpperCase() },
     body: {
-      username: input.email,
+      username: input.email.trim().toLowerCase(),
       password: input.password,
     },
   })
+}
+
+export type TeamMemberOption = TeamMemberPublic
+
+async function teamMembers(): Promise<TeamMemberOption[]> {
+  return (await TeamService.teamMembers()).data.data
 }
 
 async function me(): Promise<MePublic> {
@@ -177,8 +361,72 @@ async function auditEvents(): Promise<AuditEventPublic[]> {
   return (await AdminService.auditEvents()).data.data
 }
 
+export type ClinicAISetting = {
+  provider: "openai"
+  api_key_configured: boolean
+  api_key_last4: string | null
+  credential_source: "clinic" | "environment" | "none"
+  fast_model: string
+  careful_model: string
+  transcribe_model: string
+  updated_at: string | null
+}
+
+export type ClinicAISettingUpdate = {
+  api_key?: string | null
+  clear_api_key?: boolean
+  fast_model: string
+  careful_model: string
+  transcribe_model: string
+}
+
+async function clinicAISettings(): Promise<ClinicAISetting> {
+  return jsonRequest("/api/v1/admin/ai-settings")
+}
+
+async function updateClinicAISettings(
+  body: ClinicAISettingUpdate,
+): Promise<ClinicAISetting> {
+  return jsonRequest("/api/v1/admin/ai-settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
 async function patients(): Promise<PatientPublic[]> {
   return (await PatientsService.patients()).data.data
+}
+
+export type PatientDirectoryItem = PatientPublic & {
+  date_of_birth: string | null
+  medical_record_number: string | null
+  same_name_count: number
+  today_visit_at: string | null
+  today_visit_status: string | null
+  today_visit_type: string | null
+  last_activity_at: string | null
+}
+
+export type PatientDirectoryPage = {
+  data: PatientDirectoryItem[]
+  count: number
+  offset: number
+  limit: number
+}
+
+async function patientDirectory(input: {
+  search?: string
+  visitScope?: "all" | "today" | "previous"
+  offset?: number
+  limit?: number
+}): Promise<PatientDirectoryPage> {
+  const query = new URLSearchParams()
+  if (input.search) query.set("search", input.search)
+  if (input.visitScope) query.set("visit_scope", input.visitScope)
+  query.set("offset", String(input.offset ?? 0))
+  query.set("limit", String(input.limit ?? 24))
+  return jsonRequest(`/api/v1/patients?${query.toString()}`)
 }
 
 async function patientTimeline(
@@ -350,6 +598,12 @@ async function resolveComment(commentId: string): Promise<CommentPublic> {
   ).data
 }
 
+async function unresolveComment(commentId: string): Promise<CommentPublic> {
+  return jsonRequest(`/api/v1/comments/${commentId}/unresolve`, {
+    method: "POST",
+  })
+}
+
 async function assignComment(
   commentId: string,
   body: AssignmentUpdate,
@@ -374,6 +628,68 @@ async function rejectHighlight(highlightId: string): Promise<HighlightPublic> {
 
 async function pinHighlight(highlightId: string): Promise<HighlightPublic> {
   return (await TrustService.pin({ path: { highlight_id: highlightId } })).data
+}
+
+export type DismissReason =
+  | "not_relevant"
+  | "outdated"
+  | "already_addressed"
+  | "too_busy_to_review"
+
+async function dismissHighlight(
+  highlightId: string,
+  reason: DismissReason,
+): Promise<HighlightPublic> {
+  return (
+    await TrustService.feedback({
+      path: { highlight_id: highlightId },
+      body: { signal: "dismiss", reason },
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    })
+  ).data
+}
+
+async function decisionExplanation(
+  highlightId: string,
+): Promise<DecisionExplanationPublic> {
+  return (
+    await TrustService.decisionExplanation({
+      path: { highlight_id: highlightId },
+    })
+  ).data
+}
+
+async function requestHighlightReview(
+  highlightId: string,
+  reason: string,
+): Promise<HighlightPublic> {
+  return (
+    await TrustService.requestReview({
+      path: { highlight_id: highlightId },
+      body: { reason },
+    })
+  ).data
+}
+
+async function recordImportanceImpression(input: {
+  highlightId: string
+  viewEventId: string
+  rank: number
+  exposureProbability: number
+  visibleRatio: number
+  visibleDurationMs: number
+}): Promise<void> {
+  await TrustService.recordImportanceImpression({
+    body: {
+      highlight_id: input.highlightId,
+      view_event_id: input.viewEventId,
+      rank: input.rank,
+      surface: "current_priorities",
+      exposure_probability: input.exposureProbability,
+      visible_ratio: input.visibleRatio,
+      visible_duration_ms: input.visibleDurationMs,
+    },
+  })
 }
 
 async function resolveProvenance(
@@ -449,11 +765,17 @@ export const authApi = {
   logout,
   acceptInvitation,
 }
+export const patientInvitationApi = {
+  preview: previewPatientInvitation,
+  accept: acceptPatientInvitation,
+}
 export const adminApi = {
   memberships,
   createMembership,
   deactivateMembership,
   auditEvents,
+  clinicAISettings,
+  updateClinicAISettings,
 }
 export const patientSafeApi = {
   me,
@@ -464,7 +786,9 @@ export const patientSafeApi = {
   createInsight: createPatientInsight,
 }
 export const clinicalApi = {
+  teamMembers,
   patients,
+  patientDirectory,
   timeline: clinicalTimeline,
   glance,
   createEntry,
@@ -476,9 +800,21 @@ export const clinicalApi = {
   createComment,
   reply,
   resolveComment,
+  unresolveComment,
   assignComment,
   acceptHighlight,
   rejectHighlight,
   pinHighlight,
+  dismissHighlight,
+  decisionExplanation,
+  requestHighlightReview,
+  recordImportanceImpression,
   resolveProvenance,
+  duplicateCheck,
+  createPatientRecord,
+  patientDetail,
+  invitePatient,
+  patientClinicalFacts,
+  patientConflicts,
+  resolveConflict,
 }

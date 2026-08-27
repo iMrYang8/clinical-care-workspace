@@ -38,25 +38,25 @@ export function VersionConflictDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-serif text-2xl">
-            <TriangleAlert className="text-amber-600" /> Version conflict
+            <TriangleAlert className="text-warning" /> Version conflict
           </DialogTitle>
           <DialogDescription>
             Another session saved this entry first. Nightingale did not
             overwrite it, and your draft is still here.
           </DialogDescription>
         </DialogHeader>
-        <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+        <Alert className="border-warning/40 bg-warning-muted text-warning-muted-foreground">
           <AlertTitle>
             {conflict?.message ?? "The care note changed."}
           </AlertTitle>
           <AlertDescription>
-            Current server version:{" "}
-            {conflict?.current_version_id ?? "available after refresh"}
+            Review the latest saved note before deciding how to update your
+            draft.
           </AlertDescription>
         </Alert>
-        <div className="max-h-56 overflow-auto rounded-xl border bg-slate-50 p-4">
-          <p className="font-semibold text-slate-900">{draftTitle}</p>
-          <pre className="mt-2 whitespace-pre-wrap font-sans text-sm leading-6 text-slate-700">
+        <div className="max-h-56 overflow-auto rounded-xl border bg-muted/40 p-4">
+          <p className="font-semibold text-foreground">{draftTitle}</p>
+          <pre className="mt-2 whitespace-pre-wrap font-sans text-sm leading-6 text-foreground/90">
             {draftContent}
           </pre>
         </div>

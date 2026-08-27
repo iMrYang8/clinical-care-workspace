@@ -1,6 +1,18 @@
 import { expect, type Page, test } from "@playwright/test"
+import { recordingCodeFromSessionId } from "../src/features/routeReferences"
 
 test.use({ storageState: { cookies: [], origins: [] } })
+
+const rawUuidPattern =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i
+
+async function signInAsClinician(page: Page): Promise<void> {
+  const response = await page.request.post("/api/v1/auth/demo-login", {
+    data: { persona: "clinician" },
+  })
+  expect(response.ok(), await response.text()).toBe(true)
+  await page.goto("/patients")
+}
 
 async function joinUploadAndSealSecondDevice(
   page: Page,
@@ -111,6 +123,20 @@ async function joinUploadAndSealSecondDevice(
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/v1/voice/sessions", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue()
+      return
+    }
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    await route.continue({
+      postData: JSON.stringify({
+        ...body,
+        synthetic_fixture: true,
+        fixture_id: "code-switch-overlap-v1",
+      }),
+    })
+  })
   await page.addInitScript(() => {
     const wav = new Uint8Array(44 + 16_000 * 2 * 11)
     const view = new DataView(wav.buffer)
@@ -212,13 +238,9 @@ test.beforeEach(async ({ page }) => {
 test("[Scenario F] two-device recovery proves review evidence and clinician publish", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Clinician" }).click()
-  await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
-    .click()
+  await signInAsClinician(page)
+  await page.getByRole("link", { name: "Open care note for Alex Tan" }).click()
   await page.getByRole("link", { name: "Record visit" }).click()
-  await page.getByLabel("Synthetic fixture transcript").check()
   const sessionCreated = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -231,7 +253,7 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
     patient_id: string
   }
   await expect(page.getByText("Recording", { exact: true })).toBeVisible()
-  await expect(page.getByText("1/1 chunks acknowledged")).toBeVisible()
+  await expect(page.getByText("Recording and uploading securely")).toBeVisible()
   const secondDevice = await joinUploadAndSealSecondDevice(
     page,
     session.id,
@@ -253,20 +275,24 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
     window.dispatchEvent(new Event("offline"))
   })
   await page.getByRole("button", { name: "Stop & finalize" }).click()
-  await expect(page.getByText(/encrypted chunks remain/i)).toBeVisible()
+  await expect(page.getByText(/remains securely saved/i)).toBeVisible()
   await page.reload()
-  await expect(page.getByText("Encrypted uploads to recover")).toBeVisible()
+  await expect(page.getByText("Recordings waiting to upload")).toBeVisible()
 
   await page.evaluate(() => localStorage.removeItem("voice-force-offline"))
   await page.reload()
   await page.getByRole("button", { name: "Resume upload" }).click()
   await expect(page).toHaveURL(/\/voice\/.+\/review/)
+  await expect(page).toHaveURL(
+    new RegExp(`/voice/${recordingCodeFromSessionId(session.id)}/review$`),
+  )
+  expect(page.url()).not.toMatch(rawUuidPattern)
   await expect(page.getByTestId("voice-review-mode")).toBeVisible()
   await expect(
-    page.getByRole("heading", { name: "Transcript, summary & evidence" }),
+    page.getByRole("heading", { name: "Review visit recording" }),
   ).toBeVisible()
   await expect(
-    page.getByText("Structured facts", { exact: true }),
+    page.getByText("Clinical findings", { exact: true }).first(),
   ).toBeVisible()
 
   await expect
@@ -313,7 +339,9 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
   expect(revision.segments).toHaveLength(2)
   expect(revision.segments).toMatchObject([
     {
-      confidence: 0.96,
+      // Provider self-reported confidence is intentionally discarded. The
+      // trusted band is supplied only by a matching calibration report.
+      confidence: null,
       detected_language: "en",
       end_ms: 5200,
       overlap_group_id: null,
@@ -321,7 +349,7 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
       start_ms: 0,
     },
     {
-      confidence: 0.68,
+      confidence: null,
       detected_language: "zh",
       end_ms: 10200,
       overlap_group_id: "overlap-1",
@@ -343,18 +371,15 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
   expect(factSegment?.speaker_id).toBe("SPEAKER_00")
 
   const desktopTranscript = page.getByTestId("transcript-panel-desktop")
-  await expect(desktopTranscript.getByText("SPEAKER_00")).toBeVisible()
-  await expect(desktopTranscript.getByText("SPEAKER_01")).toBeVisible()
+  await expect(desktopTranscript.getByText("Speaker 1")).toBeVisible()
+  await expect(desktopTranscript.getByText("Speaker 2")).toBeVisible()
   await expect(desktopTranscript.getByText("en", { exact: true })).toBeVisible()
   await expect(desktopTranscript.getByText("zh", { exact: true })).toBeVisible()
   await expect(
-    desktopTranscript.getByText("96%", { exact: true }),
-  ).toBeVisible()
+    desktopTranscript.getByText("Confidence unavailable", { exact: true }),
+  ).toHaveCount(2)
   await expect(
-    desktopTranscript.getByText("68%", { exact: true }),
-  ).toBeVisible()
-  await expect(
-    desktopTranscript.getByText("overlap", { exact: true }),
+    desktopTranscript.getByText("Overlapping speech", { exact: true }),
   ).toBeVisible()
   await expect(
     desktopTranscript.getByText(/Patient reports a penicillin allergy/),
@@ -419,10 +444,14 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
     ),
   ).toBeLessThan(4.95)
 
-  const lowConfidence = page.getByLabel("Low confidence / overlap only")
+  const lowConfidence = page.getByLabel(
+    "Show uncertain or overlapping speech only",
+  )
   await lowConfidence.check()
-  await expect(desktopTranscript.getByText("SPEAKER_00")).toHaveCount(0)
-  await expect(desktopTranscript.getByText("SPEAKER_01")).toBeVisible()
+  // Uncalibrated segments abstain as Confidence unavailable and therefore
+  // remain in the review filter rather than being hidden as if trustworthy.
+  await expect(desktopTranscript.getByText("Speaker 1")).toBeVisible()
+  await expect(desktopTranscript.getByText("Speaker 2")).toBeVisible()
   const factButton = page
     .locator('[data-testid="facts-panel"]:visible')
     .getByRole("button", { name: /allergy/i })
@@ -440,17 +469,15 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
     .toBeLessThan(1)
 
   const publish = page.getByRole("button", {
-    name: /Publish reviewed result/i,
+    name: /Publish reviewed note/i,
   })
   await expect(publish).toBeEnabled()
   await publish.click()
   await expect(
-    page.getByText(
-      "Clinician-reviewed result published as an immutable derived entry.",
-    ),
+    page.getByText("The reviewed visit note was added to the care record."),
   ).toBeVisible()
   await expect(
-    page.getByText("published", { exact: true }).last(),
+    page.getByText("Published", { exact: true }).last(),
   ).toBeVisible()
   const published = await page.evaluate(async (sessionId) => {
     const response = await fetch(`/api/v1/voice/sessions/${sessionId}`, {
@@ -479,16 +506,9 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
 test("local storage failure stops capture without poisoning recovery", async ({
   page,
 }) => {
-  await page.goto("/login")
-  await page.getByRole("button", { name: "Continue as Clinician" }).click()
-  await page
-    .getByRole("link", { name: "Open care note for Alex Synthetic" })
-    .click()
+  await signInAsClinician(page)
+  await page.getByRole("link", { name: "Open care note for Alex Tan" }).click()
   await page.getByRole("link", { name: "Record visit" }).click()
-  await page.getByLabel("Synthetic fixture transcript").check()
-  await page.getByRole("button", { name: "Start recording" }).click()
-  await expect(page.getByText("1/1 chunks acknowledged")).toBeVisible()
-
   await page.evaluate(() => {
     const originalAdd = IDBObjectStore.prototype.add
     IDBObjectStore.prototype.add = function (value, key) {
@@ -503,15 +523,31 @@ test("local storage failure stops capture without poisoning recovery", async ({
         : originalAdd.call(this, value, key)
     }
   })
-  await page.getByRole("button", { name: "Stop & finalize" }).click()
+  await page.getByRole("button", { name: "Start recording" }).click()
 
-  await expect(page.getByText(/Local encrypted storage failed/i)).toBeVisible()
+  await expect(page.getByText(/Secure local storage failed/i)).toBeVisible()
   await expect(
     page.getByRole("button", { name: "Stop & finalize" }),
   ).toHaveCount(0)
-  await expect(page.getByText("Encrypted uploads to recover")).toBeVisible()
-  await page.getByRole("button", { name: "Resume upload" }).click()
+  await expect(page.getByText("Recordings waiting to upload")).toBeVisible()
+  await expect(page.getByText("no audio stored").first()).toBeVisible()
+  await expect(page.getByRole("button", { name: "Resume upload" })).toHaveCount(
+    0,
+  )
+  const abandon = page.getByRole("button", { name: "Abandon empty device" })
+  await expect(abandon.first()).toBeVisible()
+  await abandon.first().click({ force: true })
+  await expect(abandon).toHaveCount(0)
+  await expect(page.getByText("Recordings waiting to upload")).toHaveCount(0)
+
+  // Reload restores the browser storage implementation. A fresh recording can
+  // start, proving the failed write did not leave recovery in a poisoned state.
+  await page.reload()
+  await page.getByRole("button", { name: "Start recording" }).click()
+  await expect(page.getByText("Recording and uploading securely")).toBeVisible()
+  await page.getByRole("button", { name: "Stop & finalize" }).click()
   await expect(page).toHaveURL(/\/voice\/.+\/review/)
+  expect(page.url()).not.toMatch(rawUuidPattern)
 })
 
 for (const failure of ["recorder constructor", "capture IndexedDB"] as const) {
@@ -528,10 +564,9 @@ for (const failure of ["recorder constructor", "capture IndexedDB"] as const) {
       }
     })
 
-    await page.goto("/login")
-    await page.getByRole("button", { name: "Continue as Clinician" }).click()
+    await signInAsClinician(page)
     await page
-      .getByRole("link", { name: "Open care note for Alex Synthetic" })
+      .getByRole("link", { name: "Open care note for Alex Tan" })
       .click()
     await page.getByRole("link", { name: "Record visit" }).click()
 
@@ -558,7 +593,9 @@ for (const failure of ["recorder constructor", "capture IndexedDB"] as const) {
 
     await page.getByRole("button", { name: "Start recording" }).click()
 
-    await expect(page.getByText(/Synthetic .* failed/i)).toBeVisible()
+    await expect(
+      page.getByText(/Recording could not start\. Check the recording code/i),
+    ).toBeVisible()
     await expect.poll(() => deletes.length).toBe(1)
     await expect(
       page.getByRole("button", { name: "Abandon empty device" }),

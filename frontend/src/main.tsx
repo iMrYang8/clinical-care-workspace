@@ -35,7 +35,7 @@ declare module "@tanstack/react-router" {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ThemeProvider defaultTheme="light" storageKey="nightingale-ui-theme">
+    <ThemeProvider defaultTheme="system" storageKey="nightingale-ui-theme">
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
         <Toaster richColors closeButton />

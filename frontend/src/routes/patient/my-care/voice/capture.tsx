@@ -1,15 +1,16 @@
 import { useQuery } from "@tanstack/react-query"
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { LoaderCircle } from "lucide-react"
-import { useEffect } from "react"
+
 import { SessionBoundaryError } from "@/components/Nightingale/SessionBoundaryError"
 import { VoiceCapture } from "@/components/Voice/VoiceCapture"
 import { patientSafeApi } from "@/features/api"
-import useAuth, { roleHome } from "@/hooks/useAuth"
+import { recordingCodeFromSessionId } from "@/features/routeReferences"
+import useAuth from "@/hooks/useAuth"
 
-export const Route = createFileRoute("/_layout/my-care_/voice/capture")({
+export const Route = createFileRoute("/patient/my-care/voice/capture")({
   component: PatientVoiceCaptureRoute,
-  head: () => ({ meta: [{ title: "My voice recording · Nightingale" }] }),
+  head: () => ({ meta: [{ title: "Record an update · Nightingale" }] }),
 })
 
 function PatientVoiceCaptureRoute() {
@@ -20,11 +21,7 @@ function PatientVoiceCaptureRoute() {
     queryFn: patientSafeApi.patients,
     enabled: user?.role === "patient",
   })
-  useEffect(() => {
-    if (user && user.role !== "patient") {
-      void navigate({ to: roleHome(user.role), replace: true })
-    }
-  }, [navigate, user])
+
   if (meQuery.isError || patients.isError) {
     return (
       <SessionBoundaryError
@@ -34,9 +31,7 @@ function PatientVoiceCaptureRoute() {
     )
   }
   if (user?.role !== "patient" || !patients.data?.[0]) {
-    return (
-      <LoaderCircle className="mx-auto mt-24 animate-spin text-amber-700" />
-    )
+    return <LoaderCircle className="mx-auto mt-24 animate-spin text-primary" />
   }
   return (
     <VoiceCapture
@@ -50,8 +45,8 @@ function PatientVoiceCaptureRoute() {
       }}
       onFinalized={(sessionId) =>
         void navigate({
-          to: "/my-care/voice/$sessionId",
-          params: { sessionId },
+          to: "/patient/my-care/voice/$sessionId",
+          params: { sessionId: recordingCodeFromSessionId(sessionId) },
         })
       }
     />

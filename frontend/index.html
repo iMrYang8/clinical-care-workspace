@@ -2,8 +2,39 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      ;(() => {
+        const storageKey = "nightingale-ui-theme"
+        let theme = "system"
+
+        try {
+          const storedTheme = window.localStorage.getItem(storageKey)
+          if (
+            storedTheme === "light" ||
+            storedTheme === "dark" ||
+            storedTheme === "system"
+          ) {
+            theme = storedTheme
+          }
+        } catch {
+          // Use the system preference when browser storage is unavailable.
+        }
+
+        const resolvedTheme =
+          theme === "system" &&
+          window.matchMedia?.("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : theme === "dark"
+              ? "dark"
+              : "light"
+        const root = document.documentElement
+        root.classList.add(resolvedTheme)
+        root.dataset.theme = theme
+        root.style.colorScheme = resolvedTheme
+      })()
+    </script>
     <title>Nightingale</title>
     <link rel="icon" type="image/x-icon" href="/assets/images/favicon.png" />
   </head>

@@ -18,11 +18,11 @@ function RoleHomeRedirect() {
   }, [navigate, user])
 
   return (
-    <div className="grid min-h-[50vh] place-items-center text-slate-500">
+    <div className="grid min-h-[50vh] place-items-center text-muted-foreground">
       {meQuery.isError ? (
         <div className="space-y-4 text-center">
-          <p>Membership could not be resolved.</p>
-          <Button onClick={logout}>Clear local session</Button>
+          <p>Your clinic account could not be opened.</p>
+          <Button onClick={logout}>Return to sign in</Button>
         </div>
       ) : (
         <p className="flex items-center gap-2">

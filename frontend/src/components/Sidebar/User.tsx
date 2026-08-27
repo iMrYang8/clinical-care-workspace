@@ -23,11 +23,19 @@ interface UserInfoProps {
   email?: string
 }
 
+const roleLabels: Record<MePublic["role"], string> = {
+  patient: "Patient",
+  staff: "Care staff",
+  clinician: "Clinician",
+  admin: "Clinic administrator",
+  worker: "Care service",
+}
+
 function UserInfo({ fullName, email }: UserInfoProps) {
   return (
     <div className="flex items-center gap-2.5 w-full min-w-0">
       <Avatar className="size-8">
-        <AvatarFallback className="bg-zinc-600 text-white">
+        <AvatarFallback className="bg-primary text-primary-foreground">
           {getInitials(fullName || "User")}
         </AvatarFallback>
       </Avatar>
@@ -44,6 +52,7 @@ export function User({ user }: { user?: MePublic }) {
   const { isMobile, setOpenMobile } = useSidebar()
 
   if (!user) return null
+  const clinicName = user.clinic_name
 
   const handleLogout = async () => {
     if (isMobile) setOpenMobile(false)
@@ -75,11 +84,12 @@ export function User({ user }: { user?: MePublic }) {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-              {user.role} · clinic scoped
+              {roleLabels[user.role]}
+              {clinicName ? ` · ${clinicName}` : ""}
             </DropdownMenuLabel>
             <DropdownMenuItem onClick={handleLogout}>
               <LogOut />
-              Log out and clear data
+              Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

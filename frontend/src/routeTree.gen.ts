@@ -12,14 +12,26 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as AcceptInvitationRouteImport } from './routes/accept-invitation'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as MyCareRouteImport } from './routes/my-care'
+import { Route as PatientRouteImport } from './routes/patient'
+import { Route as PlatformRouteImport } from './routes/platform'
 import { Route as LayoutIndexRouteImport } from './routes/_layout/index'
 import { Route as LayoutAdminRouteImport } from './routes/_layout/admin'
-import { Route as LayoutMyCareRouteImport } from './routes/_layout/my-care'
+import { Route as PatientAcceptInvitationRouteImport } from './routes/patient/accept-invitation'
+import { Route as PatientLoginRouteImport } from './routes/patient/login'
+import { Route as PatientMyCareRouteImport } from './routes/patient/my-care'
+import { Route as PlatformIndexRouteImport } from './routes/platform/index'
+import { Route as PlatformLoginRouteImport } from './routes/platform/login'
 import { Route as LayoutPatientsIndexRouteImport } from './routes/_layout/patients.index'
 import { Route as LayoutPatientsPatientIdRouteImport } from './routes/_layout/patients.$patientId'
-import { Route as LayoutMyCareVoiceSessionIdRouteImport } from './routes/_layout/my-care_.voice.$sessionId'
-import { Route as LayoutMyCareVoiceCaptureRouteImport } from './routes/_layout/my-care_.voice.capture'
+import { Route as LayoutPatientsNewRouteImport } from './routes/_layout/patients.new'
+import { Route as MyCareVoiceSessionIdRouteImport } from './routes/my-care_.voice.$sessionId'
+import { Route as MyCareVoiceCaptureRouteImport } from './routes/my-care_.voice.capture'
+import { Route as PatientMyCareIndexRouteImport } from './routes/patient/my-care/index'
+import { Route as PlatformClinicsClinicCodeRouteImport } from './routes/platform/clinics.$clinicCode'
 import { Route as LayoutVoiceSessionIdReviewRouteImport } from './routes/_layout/voice.$sessionId.review'
+import { Route as PatientMyCareVoiceSessionIdRouteImport } from './routes/patient/my-care/voice/$sessionId'
+import { Route as PatientMyCareVoiceCaptureRouteImport } from './routes/patient/my-care/voice/capture'
 import { Route as LayoutPatientsPatientIdVoiceCaptureRouteImport } from './routes/_layout/patients_.$patientId.voice.capture'
 
 const LayoutRoute = LayoutRouteImport.update({
@@ -36,6 +48,21 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MyCareRoute = MyCareRouteImport.update({
+  id: '/my-care',
+  path: '/my-care',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientRoute = PatientRouteImport.update({
+  id: '/patient',
+  path: '/patient',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlatformRoute = PlatformRouteImport.update({
+  id: '/platform',
+  path: '/platform',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LayoutIndexRoute = LayoutIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -46,10 +73,30 @@ const LayoutAdminRoute = LayoutAdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => LayoutRoute,
 } as any)
-const LayoutMyCareRoute = LayoutMyCareRouteImport.update({
+const PatientAcceptInvitationRoute = PatientAcceptInvitationRouteImport.update({
+  id: '/accept-invitation',
+  path: '/accept-invitation',
+  getParentRoute: () => PatientRoute,
+} as any)
+const PatientLoginRoute = PatientLoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => PatientRoute,
+} as any)
+const PatientMyCareRoute = PatientMyCareRouteImport.update({
   id: '/my-care',
   path: '/my-care',
-  getParentRoute: () => LayoutRoute,
+  getParentRoute: () => PatientRoute,
+} as any)
+const PlatformIndexRoute = PlatformIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PlatformRoute,
+} as any)
+const PlatformLoginRoute = PlatformLoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => PlatformRoute,
 } as any)
 const LayoutPatientsIndexRoute = LayoutPatientsIndexRouteImport.update({
   id: '/patients/',
@@ -61,23 +108,49 @@ const LayoutPatientsPatientIdRoute = LayoutPatientsPatientIdRouteImport.update({
   path: '/patients/$patientId',
   getParentRoute: () => LayoutRoute,
 } as any)
-const LayoutMyCareVoiceSessionIdRoute =
-  LayoutMyCareVoiceSessionIdRouteImport.update({
-    id: '/my-care_/voice/$sessionId',
-    path: '/my-care/voice/$sessionId',
-    getParentRoute: () => LayoutRoute,
-  } as any)
-const LayoutMyCareVoiceCaptureRoute =
-  LayoutMyCareVoiceCaptureRouteImport.update({
-    id: '/my-care_/voice/capture',
-    path: '/my-care/voice/capture',
-    getParentRoute: () => LayoutRoute,
+const LayoutPatientsNewRoute = LayoutPatientsNewRouteImport.update({
+  id: '/patients/new',
+  path: '/patients/new',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const MyCareVoiceSessionIdRoute = MyCareVoiceSessionIdRouteImport.update({
+  id: '/my-care_/voice/$sessionId',
+  path: '/my-care/voice/$sessionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MyCareVoiceCaptureRoute = MyCareVoiceCaptureRouteImport.update({
+  id: '/my-care_/voice/capture',
+  path: '/my-care/voice/capture',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PatientMyCareIndexRoute = PatientMyCareIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PatientMyCareRoute,
+} as any)
+const PlatformClinicsClinicCodeRoute =
+  PlatformClinicsClinicCodeRouteImport.update({
+    id: '/clinics/$clinicCode',
+    path: '/clinics/$clinicCode',
+    getParentRoute: () => PlatformRoute,
   } as any)
 const LayoutVoiceSessionIdReviewRoute =
   LayoutVoiceSessionIdReviewRouteImport.update({
     id: '/voice/$sessionId/review',
     path: '/voice/$sessionId/review',
     getParentRoute: () => LayoutRoute,
+  } as any)
+const PatientMyCareVoiceSessionIdRoute =
+  PatientMyCareVoiceSessionIdRouteImport.update({
+    id: '/voice/$sessionId',
+    path: '/voice/$sessionId',
+    getParentRoute: () => PatientMyCareRoute,
+  } as any)
+const PatientMyCareVoiceCaptureRoute =
+  PatientMyCareVoiceCaptureRouteImport.update({
+    id: '/voice/capture',
+    path: '/voice/capture',
+    getParentRoute: () => PatientMyCareRoute,
   } as any)
 const LayoutPatientsPatientIdVoiceCaptureRoute =
   LayoutPatientsPatientIdVoiceCaptureRouteImport.update({
@@ -90,26 +163,48 @@ export interface FileRoutesByFullPath {
   '/': typeof LayoutIndexRoute
   '/accept-invitation': typeof AcceptInvitationRoute
   '/login': typeof LoginRoute
+  '/my-care': typeof MyCareRoute
+  '/patient': typeof PatientRouteWithChildren
+  '/platform': typeof PlatformRouteWithChildren
   '/admin': typeof LayoutAdminRoute
-  '/my-care': typeof LayoutMyCareRoute
+  '/patient/accept-invitation': typeof PatientAcceptInvitationRoute
+  '/patient/login': typeof PatientLoginRoute
+  '/patient/my-care': typeof PatientMyCareRouteWithChildren
+  '/platform/login': typeof PlatformLoginRoute
+  '/platform/': typeof PlatformIndexRoute
   '/patients/$patientId': typeof LayoutPatientsPatientIdRoute
+  '/patients/new': typeof LayoutPatientsNewRoute
+  '/my-care/voice/$sessionId': typeof MyCareVoiceSessionIdRoute
+  '/my-care/voice/capture': typeof MyCareVoiceCaptureRoute
+  '/platform/clinics/$clinicCode': typeof PlatformClinicsClinicCodeRoute
   '/patients/': typeof LayoutPatientsIndexRoute
-  '/my-care/voice/$sessionId': typeof LayoutMyCareVoiceSessionIdRoute
-  '/my-care/voice/capture': typeof LayoutMyCareVoiceCaptureRoute
+  '/patient/my-care/': typeof PatientMyCareIndexRoute
   '/voice/$sessionId/review': typeof LayoutVoiceSessionIdReviewRoute
+  '/patient/my-care/voice/$sessionId': typeof PatientMyCareVoiceSessionIdRoute
+  '/patient/my-care/voice/capture': typeof PatientMyCareVoiceCaptureRoute
   '/patients/$patientId/voice/capture': typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 export interface FileRoutesByTo {
   '/accept-invitation': typeof AcceptInvitationRoute
   '/login': typeof LoginRoute
+  '/my-care': typeof MyCareRoute
+  '/patient': typeof PatientRouteWithChildren
   '/admin': typeof LayoutAdminRoute
-  '/my-care': typeof LayoutMyCareRoute
+  '/patient/accept-invitation': typeof PatientAcceptInvitationRoute
+  '/patient/login': typeof PatientLoginRoute
+  '/platform/login': typeof PlatformLoginRoute
   '/': typeof LayoutIndexRoute
+  '/platform': typeof PlatformIndexRoute
   '/patients/$patientId': typeof LayoutPatientsPatientIdRoute
+  '/patients/new': typeof LayoutPatientsNewRoute
+  '/my-care/voice/$sessionId': typeof MyCareVoiceSessionIdRoute
+  '/my-care/voice/capture': typeof MyCareVoiceCaptureRoute
+  '/platform/clinics/$clinicCode': typeof PlatformClinicsClinicCodeRoute
   '/patients': typeof LayoutPatientsIndexRoute
-  '/my-care/voice/$sessionId': typeof LayoutMyCareVoiceSessionIdRoute
-  '/my-care/voice/capture': typeof LayoutMyCareVoiceCaptureRoute
+  '/patient/my-care': typeof PatientMyCareIndexRoute
   '/voice/$sessionId/review': typeof LayoutVoiceSessionIdReviewRoute
+  '/patient/my-care/voice/$sessionId': typeof PatientMyCareVoiceSessionIdRoute
+  '/patient/my-care/voice/capture': typeof PatientMyCareVoiceCaptureRoute
   '/patients/$patientId/voice/capture': typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 export interface FileRoutesById {
@@ -117,14 +212,26 @@ export interface FileRoutesById {
   '/_layout': typeof LayoutRouteWithChildren
   '/accept-invitation': typeof AcceptInvitationRoute
   '/login': typeof LoginRoute
+  '/my-care': typeof MyCareRoute
+  '/patient': typeof PatientRouteWithChildren
+  '/platform': typeof PlatformRouteWithChildren
   '/_layout/admin': typeof LayoutAdminRoute
-  '/_layout/my-care': typeof LayoutMyCareRoute
+  '/patient/accept-invitation': typeof PatientAcceptInvitationRoute
+  '/patient/login': typeof PatientLoginRoute
+  '/patient/my-care': typeof PatientMyCareRouteWithChildren
+  '/platform/login': typeof PlatformLoginRoute
   '/_layout/': typeof LayoutIndexRoute
+  '/platform/': typeof PlatformIndexRoute
   '/_layout/patients/$patientId': typeof LayoutPatientsPatientIdRoute
+  '/_layout/patients/new': typeof LayoutPatientsNewRoute
+  '/my-care_/voice/$sessionId': typeof MyCareVoiceSessionIdRoute
+  '/my-care_/voice/capture': typeof MyCareVoiceCaptureRoute
+  '/platform/clinics/$clinicCode': typeof PlatformClinicsClinicCodeRoute
   '/_layout/patients/': typeof LayoutPatientsIndexRoute
-  '/_layout/my-care_/voice/$sessionId': typeof LayoutMyCareVoiceSessionIdRoute
-  '/_layout/my-care_/voice/capture': typeof LayoutMyCareVoiceCaptureRoute
+  '/patient/my-care/': typeof PatientMyCareIndexRoute
   '/_layout/voice/$sessionId/review': typeof LayoutVoiceSessionIdReviewRoute
+  '/patient/my-care/voice/$sessionId': typeof PatientMyCareVoiceSessionIdRoute
+  '/patient/my-care/voice/capture': typeof PatientMyCareVoiceCaptureRoute
   '/_layout/patients_/$patientId/voice/capture': typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 export interface FileRouteTypes {
@@ -133,40 +240,74 @@ export interface FileRouteTypes {
     | '/'
     | '/accept-invitation'
     | '/login'
-    | '/admin'
     | '/my-care'
+    | '/patient'
+    | '/platform'
+    | '/admin'
+    | '/patient/accept-invitation'
+    | '/patient/login'
+    | '/patient/my-care'
+    | '/platform/login'
+    | '/platform/'
     | '/patients/$patientId'
-    | '/patients/'
+    | '/patients/new'
     | '/my-care/voice/$sessionId'
     | '/my-care/voice/capture'
+    | '/platform/clinics/$clinicCode'
+    | '/patients/'
+    | '/patient/my-care/'
     | '/voice/$sessionId/review'
+    | '/patient/my-care/voice/$sessionId'
+    | '/patient/my-care/voice/capture'
     | '/patients/$patientId/voice/capture'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/accept-invitation'
     | '/login'
-    | '/admin'
     | '/my-care'
+    | '/patient'
+    | '/admin'
+    | '/patient/accept-invitation'
+    | '/patient/login'
+    | '/platform/login'
     | '/'
+    | '/platform'
     | '/patients/$patientId'
-    | '/patients'
+    | '/patients/new'
     | '/my-care/voice/$sessionId'
     | '/my-care/voice/capture'
+    | '/platform/clinics/$clinicCode'
+    | '/patients'
+    | '/patient/my-care'
     | '/voice/$sessionId/review'
+    | '/patient/my-care/voice/$sessionId'
+    | '/patient/my-care/voice/capture'
     | '/patients/$patientId/voice/capture'
   id:
     | '__root__'
     | '/_layout'
     | '/accept-invitation'
     | '/login'
+    | '/my-care'
+    | '/patient'
+    | '/platform'
     | '/_layout/admin'
-    | '/_layout/my-care'
+    | '/patient/accept-invitation'
+    | '/patient/login'
+    | '/patient/my-care'
+    | '/platform/login'
     | '/_layout/'
+    | '/platform/'
     | '/_layout/patients/$patientId'
+    | '/_layout/patients/new'
+    | '/my-care_/voice/$sessionId'
+    | '/my-care_/voice/capture'
+    | '/platform/clinics/$clinicCode'
     | '/_layout/patients/'
-    | '/_layout/my-care_/voice/$sessionId'
-    | '/_layout/my-care_/voice/capture'
+    | '/patient/my-care/'
     | '/_layout/voice/$sessionId/review'
+    | '/patient/my-care/voice/$sessionId'
+    | '/patient/my-care/voice/capture'
     | '/_layout/patients_/$patientId/voice/capture'
   fileRoutesById: FileRoutesById
 }
@@ -174,6 +315,11 @@ export interface RootRouteChildren {
   LayoutRoute: typeof LayoutRouteWithChildren
   AcceptInvitationRoute: typeof AcceptInvitationRoute
   LoginRoute: typeof LoginRoute
+  MyCareRoute: typeof MyCareRoute
+  PatientRoute: typeof PatientRouteWithChildren
+  PlatformRoute: typeof PlatformRouteWithChildren
+  MyCareVoiceSessionIdRoute: typeof MyCareVoiceSessionIdRoute
+  MyCareVoiceCaptureRoute: typeof MyCareVoiceCaptureRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -199,6 +345,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/my-care': {
+      id: '/my-care'
+      path: '/my-care'
+      fullPath: '/my-care'
+      preLoaderRoute: typeof MyCareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient': {
+      id: '/patient'
+      path: '/patient'
+      fullPath: '/patient'
+      preLoaderRoute: typeof PatientRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/platform': {
+      id: '/platform'
+      path: '/platform'
+      fullPath: '/platform'
+      preLoaderRoute: typeof PlatformRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_layout/': {
       id: '/_layout/'
       path: '/'
@@ -213,12 +380,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutAdminRouteImport
       parentRoute: typeof LayoutRoute
     }
-    '/_layout/my-care': {
-      id: '/_layout/my-care'
+    '/patient/accept-invitation': {
+      id: '/patient/accept-invitation'
+      path: '/accept-invitation'
+      fullPath: '/patient/accept-invitation'
+      preLoaderRoute: typeof PatientAcceptInvitationRouteImport
+      parentRoute: typeof PatientRoute
+    }
+    '/patient/login': {
+      id: '/patient/login'
+      path: '/login'
+      fullPath: '/patient/login'
+      preLoaderRoute: typeof PatientLoginRouteImport
+      parentRoute: typeof PatientRoute
+    }
+    '/patient/my-care': {
+      id: '/patient/my-care'
       path: '/my-care'
-      fullPath: '/my-care'
-      preLoaderRoute: typeof LayoutMyCareRouteImport
-      parentRoute: typeof LayoutRoute
+      fullPath: '/patient/my-care'
+      preLoaderRoute: typeof PatientMyCareRouteImport
+      parentRoute: typeof PatientRoute
+    }
+    '/platform/': {
+      id: '/platform/'
+      path: '/'
+      fullPath: '/platform/'
+      preLoaderRoute: typeof PlatformIndexRouteImport
+      parentRoute: typeof PlatformRoute
+    }
+    '/platform/login': {
+      id: '/platform/login'
+      path: '/login'
+      fullPath: '/platform/login'
+      preLoaderRoute: typeof PlatformLoginRouteImport
+      parentRoute: typeof PlatformRoute
     }
     '/_layout/patients/': {
       id: '/_layout/patients/'
@@ -234,19 +429,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutPatientsPatientIdRouteImport
       parentRoute: typeof LayoutRoute
     }
-    '/_layout/my-care_/voice/$sessionId': {
-      id: '/_layout/my-care_/voice/$sessionId'
-      path: '/my-care/voice/$sessionId'
-      fullPath: '/my-care/voice/$sessionId'
-      preLoaderRoute: typeof LayoutMyCareVoiceSessionIdRouteImport
+    '/_layout/patients/new': {
+      id: '/_layout/patients/new'
+      path: '/patients/new'
+      fullPath: '/patients/new'
+      preLoaderRoute: typeof LayoutPatientsNewRouteImport
       parentRoute: typeof LayoutRoute
     }
-    '/_layout/my-care_/voice/capture': {
-      id: '/_layout/my-care_/voice/capture'
+    '/my-care_/voice/$sessionId': {
+      id: '/my-care_/voice/$sessionId'
+      path: '/my-care/voice/$sessionId'
+      fullPath: '/my-care/voice/$sessionId'
+      preLoaderRoute: typeof MyCareVoiceSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/my-care_/voice/capture': {
+      id: '/my-care_/voice/capture'
       path: '/my-care/voice/capture'
       fullPath: '/my-care/voice/capture'
-      preLoaderRoute: typeof LayoutMyCareVoiceCaptureRouteImport
-      parentRoute: typeof LayoutRoute
+      preLoaderRoute: typeof MyCareVoiceCaptureRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/patient/my-care/': {
+      id: '/patient/my-care/'
+      path: '/'
+      fullPath: '/patient/my-care/'
+      preLoaderRoute: typeof PatientMyCareIndexRouteImport
+      parentRoute: typeof PatientMyCareRoute
+    }
+    '/platform/clinics/$clinicCode': {
+      id: '/platform/clinics/$clinicCode'
+      path: '/clinics/$clinicCode'
+      fullPath: '/platform/clinics/$clinicCode'
+      preLoaderRoute: typeof PlatformClinicsClinicCodeRouteImport
+      parentRoute: typeof PlatformRoute
     }
     '/_layout/voice/$sessionId/review': {
       id: '/_layout/voice/$sessionId/review'
@@ -254,6 +470,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/voice/$sessionId/review'
       preLoaderRoute: typeof LayoutVoiceSessionIdReviewRouteImport
       parentRoute: typeof LayoutRoute
+    }
+    '/patient/my-care/voice/$sessionId': {
+      id: '/patient/my-care/voice/$sessionId'
+      path: '/voice/$sessionId'
+      fullPath: '/patient/my-care/voice/$sessionId'
+      preLoaderRoute: typeof PatientMyCareVoiceSessionIdRouteImport
+      parentRoute: typeof PatientMyCareRoute
+    }
+    '/patient/my-care/voice/capture': {
+      id: '/patient/my-care/voice/capture'
+      path: '/voice/capture'
+      fullPath: '/patient/my-care/voice/capture'
+      preLoaderRoute: typeof PatientMyCareVoiceCaptureRouteImport
+      parentRoute: typeof PatientMyCareRoute
     }
     '/_layout/patients_/$patientId/voice/capture': {
       id: '/_layout/patients_/$patientId/voice/capture'
@@ -267,24 +497,20 @@ declare module '@tanstack/react-router' {
 
 interface LayoutRouteChildren {
   LayoutAdminRoute: typeof LayoutAdminRoute
-  LayoutMyCareRoute: typeof LayoutMyCareRoute
   LayoutIndexRoute: typeof LayoutIndexRoute
   LayoutPatientsPatientIdRoute: typeof LayoutPatientsPatientIdRoute
+  LayoutPatientsNewRoute: typeof LayoutPatientsNewRoute
   LayoutPatientsIndexRoute: typeof LayoutPatientsIndexRoute
-  LayoutMyCareVoiceSessionIdRoute: typeof LayoutMyCareVoiceSessionIdRoute
-  LayoutMyCareVoiceCaptureRoute: typeof LayoutMyCareVoiceCaptureRoute
   LayoutVoiceSessionIdReviewRoute: typeof LayoutVoiceSessionIdReviewRoute
   LayoutPatientsPatientIdVoiceCaptureRoute: typeof LayoutPatientsPatientIdVoiceCaptureRoute
 }
 
 const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutAdminRoute: LayoutAdminRoute,
-  LayoutMyCareRoute: LayoutMyCareRoute,
   LayoutIndexRoute: LayoutIndexRoute,
   LayoutPatientsPatientIdRoute: LayoutPatientsPatientIdRoute,
+  LayoutPatientsNewRoute: LayoutPatientsNewRoute,
   LayoutPatientsIndexRoute: LayoutPatientsIndexRoute,
-  LayoutMyCareVoiceSessionIdRoute: LayoutMyCareVoiceSessionIdRoute,
-  LayoutMyCareVoiceCaptureRoute: LayoutMyCareVoiceCaptureRoute,
   LayoutVoiceSessionIdReviewRoute: LayoutVoiceSessionIdReviewRoute,
   LayoutPatientsPatientIdVoiceCaptureRoute:
     LayoutPatientsPatientIdVoiceCaptureRoute,
@@ -293,10 +519,62 @@ const LayoutRouteChildren: LayoutRouteChildren = {
 const LayoutRouteWithChildren =
   LayoutRoute._addFileChildren(LayoutRouteChildren)
 
+interface PatientMyCareRouteChildren {
+  PatientMyCareIndexRoute: typeof PatientMyCareIndexRoute
+  PatientMyCareVoiceSessionIdRoute: typeof PatientMyCareVoiceSessionIdRoute
+  PatientMyCareVoiceCaptureRoute: typeof PatientMyCareVoiceCaptureRoute
+}
+
+const PatientMyCareRouteChildren: PatientMyCareRouteChildren = {
+  PatientMyCareIndexRoute: PatientMyCareIndexRoute,
+  PatientMyCareVoiceSessionIdRoute: PatientMyCareVoiceSessionIdRoute,
+  PatientMyCareVoiceCaptureRoute: PatientMyCareVoiceCaptureRoute,
+}
+
+const PatientMyCareRouteWithChildren = PatientMyCareRoute._addFileChildren(
+  PatientMyCareRouteChildren,
+)
+
+interface PatientRouteChildren {
+  PatientAcceptInvitationRoute: typeof PatientAcceptInvitationRoute
+  PatientLoginRoute: typeof PatientLoginRoute
+  PatientMyCareRoute: typeof PatientMyCareRouteWithChildren
+}
+
+const PatientRouteChildren: PatientRouteChildren = {
+  PatientAcceptInvitationRoute: PatientAcceptInvitationRoute,
+  PatientLoginRoute: PatientLoginRoute,
+  PatientMyCareRoute: PatientMyCareRouteWithChildren,
+}
+
+const PatientRouteWithChildren =
+  PatientRoute._addFileChildren(PatientRouteChildren)
+
+interface PlatformRouteChildren {
+  PlatformLoginRoute: typeof PlatformLoginRoute
+  PlatformIndexRoute: typeof PlatformIndexRoute
+  PlatformClinicsClinicCodeRoute: typeof PlatformClinicsClinicCodeRoute
+}
+
+const PlatformRouteChildren: PlatformRouteChildren = {
+  PlatformLoginRoute: PlatformLoginRoute,
+  PlatformIndexRoute: PlatformIndexRoute,
+  PlatformClinicsClinicCodeRoute: PlatformClinicsClinicCodeRoute,
+}
+
+const PlatformRouteWithChildren = PlatformRoute._addFileChildren(
+  PlatformRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   LayoutRoute: LayoutRouteWithChildren,
   AcceptInvitationRoute: AcceptInvitationRoute,
   LoginRoute: LoginRoute,
+  MyCareRoute: MyCareRoute,
+  PatientRoute: PatientRouteWithChildren,
+  PlatformRoute: PlatformRouteWithChildren,
+  MyCareVoiceSessionIdRoute: MyCareVoiceSessionIdRoute,
+  MyCareVoiceCaptureRoute: MyCareVoiceCaptureRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

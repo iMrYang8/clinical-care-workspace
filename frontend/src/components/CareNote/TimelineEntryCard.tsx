@@ -11,7 +11,15 @@ import type { CommentCreate, CommentPublic, MePublic } from "@/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import type { ClinicalTimelineEntry } from "@/features/api"
+import { formatSingaporeDateTime } from "@/lib/dateTime"
 import { type EntryDraft, EntryEditor } from "./EntryEditor"
 
 export type SourceFocus = {
@@ -24,6 +32,8 @@ export type SourceFocus = {
 type TimelineEntryCardProps = {
   entry: ClinicalTimelineEntry
   currentUser: MePublic
+  authorName?: string | null
+  authorRole?: "staff" | "clinician" | "admin" | null
   sourceFocus?: SourceFocus | null
   onSave: (entry: ClinicalTimelineEntry, draft: EntryDraft) => Promise<void>
   onCreateComment: (
@@ -35,45 +45,60 @@ type TimelineEntryCardProps = {
 }
 
 const sectionStyle: Record<string, string> = {
-  staff: "border-blue-200 bg-blue-50 text-blue-800",
-  clinician: "border-teal-200 bg-teal-50 text-teal-800",
-  patient: "border-amber-200 bg-amber-50 text-amber-900",
-  system: "border-violet-200 bg-violet-50 text-violet-800",
+  staff: "border-ai/40 bg-ai-muted text-ai-muted-foreground",
+  clinician: "border-primary/40 bg-primary/10 text-primary",
+  patient: "border-warning/40 bg-warning-muted text-warning-muted-foreground",
+  system: "border-ai/40 bg-ai-muted text-ai-muted-foreground",
 }
 
 const entryTypeLabels: Record<string, string> = {
-  manual_staff_note: "Manual Staff",
-  manual_clinician_note: "Manual Clinician",
-  manual_patient_insight: "Manual Patient",
-  ai_doctor_consult_summary: "AI Doctor Consult",
-  ai_nurse_consult_summary: "AI Nurse Consult",
-  ai_patient_session_summary: "AI Patient Session",
-  voice_transcript_source: "Voice Transcript Source",
-  voice_reviewed_result: "Reviewed Voice Result",
-  legacy_review_required: "Legacy · Review Required",
-  system_record: "System Record",
+  manual_staff_note: "Care staff note",
+  manual_clinician_note: "Clinical note",
+  manual_patient_insight: "Patient insight",
+  ai_doctor_consult_summary: "AI-assisted consultation note",
+  ai_nurse_consult_summary: "AI-assisted nursing note",
+  ai_patient_session_summary: "AI-assisted patient summary",
+  voice_transcript_source: "Visit transcript",
+  voice_reviewed_result: "Reviewed visit note",
+  legacy_review_required: "Review required",
+  system_record: "Care activity",
 }
 
 function originLabel(entry: ClinicalTimelineEntry): string {
-  return entryTypeLabels[entry.entry_type] ?? entry.entry_type
+  return entryTypeLabels[entry.entry_type] ?? "Care note"
 }
 
 function highlightedContent(
   entry: ClinicalTimelineEntry,
   focus?: SourceFocus | null,
 ) {
-  if (!focus || focus.entryVersionId !== entry.version_id) return entry.content
-  const points = Array.from(entry.content)
+  const redundantPrefix =
+    entry.origin === "ai"
+      ? [
+          "AI-assisted nursing draft: ",
+          "AI-assisted patient-session draft: ",
+          "AI-assisted review extracted that ",
+        ].find((prefix) => entry.content.startsWith(prefix))
+      : undefined
+  const offset = redundantPrefix?.length ?? 0
+  const rawContent = entry.content.slice(offset)
+  const displayContent = rawContent
+    ? rawContent.charAt(0).toLocaleUpperCase() + rawContent.slice(1)
+    : rawContent
+  if (!focus || focus.entryVersionId !== entry.version_id) return displayContent
+  const points = Array.from(displayContent)
+  const startOffset = Math.max(0, focus.startOffset - offset)
+  const endOffset = Math.max(startOffset, focus.endOffset - offset)
   return (
     <>
-      {points.slice(0, focus.startOffset).join("")}
+      {points.slice(0, startOffset).join("")}
       <mark
-        className="rounded bg-amber-200 px-0.5 text-slate-950"
+        className="rounded bg-warning-muted px-0.5 text-warning-muted-foreground"
         data-source-span
       >
-        {points.slice(focus.startOffset, focus.endOffset).join("")}
+        {points.slice(startOffset, endOffset).join("")}
       </mark>
-      {points.slice(focus.endOffset).join("")}
+      {points.slice(endOffset).join("")}
     </>
   )
 }
@@ -81,6 +106,8 @@ function highlightedContent(
 export function TimelineEntryCard({
   entry,
   currentUser,
+  authorName,
+  authorRole,
   sourceFocus,
   onSave,
   onCreateComment,
@@ -96,6 +123,25 @@ export function TimelineEntryCard({
       (currentUser.role === "clinician" && entry.section === "clinician"))
   const focused = sourceFocus?.entryId === entry.id
   const editing = editingEntry !== null
+  const authorRoleLabel =
+    authorRole === "clinician"
+      ? "Clinician"
+      : authorRole === "staff"
+        ? "Care staff"
+        : authorRole === "admin"
+          ? "Clinic administrator"
+          : null
+  const authorLine =
+    entry.origin === "system"
+      ? "Care service"
+      : entry.section === "patient"
+        ? "Patient-reported"
+        : authorName &&
+            authorRoleLabel &&
+            authorName.toLocaleLowerCase() !==
+              authorRoleLabel.toLocaleLowerCase()
+          ? `${authorName} · ${authorRoleLabel}`
+          : (authorName ?? authorRoleLabel ?? "Care team member")
 
   useEffect(() => {
     if (!focused) return
@@ -106,18 +152,20 @@ export function TimelineEntryCard({
   return (
     <article
       aria-label={`${originLabel(entry)}: ${entry.title}`}
-      className="scroll-mt-24 outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-4"
+      className="scroll-mt-24 outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-4 focus-visible:ring-offset-background"
       data-entry-id={entry.id}
+      data-entry-origin={entry.origin}
+      data-entry-type={entry.entry_type}
       data-entry-version-id={entry.version_id}
       ref={cardRef}
       tabIndex={-1}
     >
       <Card
-        className={`overflow-hidden bg-white shadow-sm transition ${
-          focused ? "border-amber-400 shadow-amber-100" : "border-slate-200"
+        className={`overflow-hidden bg-card shadow-sm transition ${
+          focused ? "border-warning shadow-warning/10" : "border-border"
         }`}
       >
-        <CardHeader className="space-y-3 border-b bg-slate-50/70 pb-4">
+        <CardHeader className="space-y-3 border-b bg-muted/40 pb-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -131,18 +179,24 @@ export function TimelineEntryCard({
                 </Badge>
                 <Badge variant="outline">v{entry.version_no}</Badge>
                 {entry.patient_facing && (
-                  <Badge className="bg-emerald-100 text-emerald-800">
+                  <Badge className="bg-success-muted text-success-muted-foreground">
                     Patient-facing
                   </Badge>
                 )}
               </div>
-              <h3 className="font-serif text-xl font-semibold text-slate-950">
+              <h3 className="font-serif text-xl font-semibold text-foreground">
                 {entry.title}
               </h3>
-              <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+              <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                 <Clock3 className="size-3" />
+                {entry.origin !== "ai" && (
+                  <>
+                    <span>{authorLine}</span>
+                    <span aria-hidden="true">·</span>
+                  </>
+                )}
                 <time dateTime={entry.occurred_at}>
-                  {new Date(entry.occurred_at).toLocaleString()}
+                  {formatSingaporeDateTime(entry.occurred_at)}
                 </time>
               </p>
             </div>
@@ -161,20 +215,43 @@ export function TimelineEntryCard({
                 size="sm"
                 variant="ghost"
               >
-                <FileClock /> Versions
+                <FileClock /> Change history
               </Button>
               <Button
                 onClick={() => onOpenComments(entry)}
                 size="sm"
                 variant="ghost"
               >
-                <MessageCircle /> Comments
+                <MessageCircle /> Team discussion
               </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="p-5">
-          {editingEntry ? (
+          <p className="whitespace-pre-wrap text-[0.95rem] leading-7 text-foreground/90">
+            {highlightedContent(entry, sourceFocus)}
+          </p>
+          {entry.origin === "ai" && (
+            <div className="mt-4 rounded-xl border border-ai/40 bg-ai-muted p-3 text-sm leading-6 text-ai-muted-foreground">
+              AI-assisted draft. Review the cited source before using it for
+              care decisions.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <Dialog
+        open={editing}
+        onOpenChange={(open) => !open && setEditingEntry(null)}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-2xl">Edit note</DialogTitle>
+            <DialogDescription>
+              Save changes as a new version. Previous versions remain in change
+              history.
+            </DialogDescription>
+          </DialogHeader>
+          {editingEntry && (
             <EntryEditor
               currentVersionId={entry.version_id}
               initialDraft={{
@@ -194,20 +271,9 @@ export function TimelineEntryCard({
               }}
               versionId={editingEntry.version_id}
             />
-          ) : (
-            <p className="whitespace-pre-wrap text-[0.95rem] leading-7 text-slate-700">
-              {highlightedContent(entry, sourceFocus)}
-            </p>
           )}
-          {(entry.origin === "ai" || entry.origin === "system") && (
-            <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50 p-3 text-sm leading-6 text-violet-900">
-              AI system record · immutable. Clinical correction creates a
-              separate superseding or conflicting entry; this text is never
-              edited in place.
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        </DialogContent>
+      </Dialog>
     </article>
   )
 }

@@ -17,17 +17,17 @@ export function SessionTerminationScreen({
   const serverEnded = state.phase === "failed" && state.serverEnded
   return (
     <main
-      className="grid min-h-svh place-items-center bg-slate-950 p-6"
+      className="grid min-h-svh place-items-center bg-background p-6"
       data-testid="session-termination-boundary"
     >
       <Alert
-        className="max-w-xl border-amber-300/40 bg-white text-slate-950 shadow-2xl"
+        className="max-w-xl border-warning/40 bg-card text-card-foreground shadow-2xl"
         role={pending ? "status" : "alert"}
       >
         {pending ? (
-          <LoaderCircle className="animate-spin text-teal-700" />
+          <LoaderCircle className="animate-spin text-primary" />
         ) : (
-          <ShieldAlert className="text-amber-700" />
+          <ShieldAlert className="text-warning" />
         )}
         <h1 className="col-start-2 min-h-4 text-lg font-medium tracking-tight">
           {pending
@@ -36,23 +36,23 @@ export function SessionTerminationScreen({
               ? "Local cleanup incomplete"
               : "Session termination incomplete"}
         </h1>
-        <AlertDescription className="space-y-4 text-slate-700">
+        <AlertDescription className="space-y-4 text-muted-foreground">
           {pending ? (
             <p>
               {state.phase === "confirmed"
-                ? "The server logout is confirmed. Nightingale is closing this tab's encrypted offline store before opening the login screen."
-                : "Care information is hidden while Nightingale waits for the server to delete the secure session cookie."}
+                ? "Sign out is confirmed. Nightingale is finishing local cleanup before opening the login screen."
+                : "Care information is hidden while Nightingale securely signs you out."}
             </p>
           ) : (
             <>
               <p>{state.error}</p>
               {serverEnded ? (
-                <p className="font-medium text-slate-950">
-                  The server session is logged out, but local encrypted data may
-                  remain. Care information stays hidden until cleanup succeeds.
+                <p className="font-medium text-foreground">
+                  Your account is signed out, but local cleanup still needs to
+                  finish. Care information stays hidden until it succeeds.
                 </p>
               ) : (
-                <p className="font-medium text-slate-950">
+                <p className="font-medium text-foreground">
                   You are not logged out yet. Care information remains hidden;
                   retry before leaving this shared device.
                 </p>

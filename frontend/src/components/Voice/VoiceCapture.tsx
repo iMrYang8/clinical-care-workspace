@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  Copy,
   Link2,
   LoaderCircle,
   Mic,
@@ -17,6 +18,10 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  recordingCodeFromSessionId,
+  sessionIdFromRecordingCode,
+} from "@/features/routeReferences"
 import {
   connectLiveTranscript,
   type LiveCaptionStatus,
@@ -38,6 +43,11 @@ import {
   finalizeCapture,
   uploadPendingChunks,
 } from "@/features/voice/voiceApi"
+
+export {
+  recordingCodeFromSessionId,
+  sessionIdFromRecordingCode,
+} from "@/features/routeReferences"
 
 type CaptureKind = "patient" | "clinical"
 
@@ -76,7 +86,6 @@ export function VoiceCapture({
     "idle" | "requesting" | "recording" | "uploading" | "finalizing" | "queued"
   >("idle")
   const [existingSessionId, setExistingSessionId] = useState("")
-  const [syntheticFixture, setSyntheticFixture] = useState(false)
   const [activeSessionId, setActiveSessionId] = useState<string>()
   const [captureId, setCaptureId] = useState<string>()
   const [permission, setPermission] = useState<
@@ -94,8 +103,6 @@ export function VoiceCapture({
   >([])
   const [message, setMessage] = useState<string>()
   const [liveStatus, setLiveStatus] = useState<LiveCaptionStatus>("not_started")
-  const [liveReasonCode, setLiveReasonCode] = useState<string>()
-  const [liveProvider, setLiveProvider] = useState<string>()
   const [provisionalTranscript, setProvisionalTranscript] = useState("")
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -139,7 +146,9 @@ export function VoiceCapture({
       if (!navigator.onLine) {
         if (mountedRef.current) {
           if (!activelyRecording) setState("queued")
-          setMessage("Offline: encrypted chunks remain on this device.")
+          setMessage(
+            "Offline: this recording remains securely saved on this device.",
+          )
         }
         return false
       }
@@ -149,17 +158,19 @@ export function VoiceCapture({
         if (mountedRef.current) {
           setUploadedChunks((count) => count + result.uploaded)
           if (result.remaining === 0)
-            setMessage("All encrypted queue items acknowledged.")
+            setMessage("Recording data is securely uploaded.")
         }
         // A periodically acknowledged chunk is not a stopped capture. Keep the
         // active recorder out of the recovery/finalization path until Stop has
         // fired and every dataavailable callback is durably persisted.
         await refreshRecovery(activelyRecording ? localId : undefined)
         return result.remaining === 0
-      } catch (error) {
+      } catch {
         if (mountedRef.current) {
           if (!activelyRecording) setState("queued")
-          setMessage(error instanceof Error ? error.message : "Upload paused")
+          setMessage(
+            "Upload paused. This recording remains securely saved on this device.",
+          )
         }
         return false
       }
@@ -218,7 +229,7 @@ export function VoiceCapture({
       if (!mountedRef.current) return
       setState("queued")
       setMessage(
-        `Local encrypted storage failed; recording stopped. Previously persisted chunks remain recoverable. ${failure.message}`,
+        "Secure local storage failed, so recording stopped. Previously saved recording data can still be recovered.",
       )
       void refreshRecovery()
     },
@@ -286,14 +297,12 @@ export function VoiceCapture({
     setState("requesting")
     setMessage(undefined)
     setLiveStatus("not_started")
-    setLiveReasonCode(undefined)
-    setLiveProvider(undefined)
     setProvisionalTranscript("")
     let joinedSessionId: string | undefined
     let joinedDeviceId: string | undefined
     let localCapturePersisted = false
     try {
-      const requestedSessionId = existingSessionId.trim()
+      const requestedSessionId = sessionIdFromRecordingCode(existingSessionId)
       let serverSessionId: string | undefined
       if (requestedSessionId) {
         const existing = (
@@ -327,8 +336,8 @@ export function VoiceCapture({
             body: {
               patient_id: patientId,
               capture_kind: captureKind,
-              synthetic_fixture: syntheticFixture,
-              fixture_id: syntheticFixture ? "code-switch-overlap-v1" : null,
+              synthetic_fixture: false,
+              fixture_id: null,
             },
           })
         ).data.id
@@ -353,6 +362,7 @@ export function VoiceCapture({
       ).data
       joinedSessionId = serverSessionId
       joinedDeviceId = joined.id
+      setActiveSessionId(serverSessionId)
       if (isStale()) {
         await releaseCaptureHardware()
         await VoiceService.abandonDevice({
@@ -387,7 +397,6 @@ export function VoiceCapture({
         await abandonEmptyCapture(local.id).catch(() => undefined)
         return
       }
-      setActiveSessionId(serverSessionId)
       setCaptureId(local.id)
       chunkStartedAtRef.current = 0
       writeErrorRef.current = null
@@ -415,12 +424,6 @@ export function VoiceCapture({
         onStatus: (event) => {
           if (isStale()) return
           setLiveStatus(event.status)
-          setLiveReasonCode(event.reasonCode)
-          setLiveProvider(
-            event.provider && event.model
-              ? `${event.provider} · ${event.model}`
-              : event.provider,
-          )
         },
         onDelta: (text) => {
           if (!isStale()) setProvisionalTranscript((current) => current + text)
@@ -442,6 +445,7 @@ export function VoiceCapture({
       await releaseCaptureHardware()
       await closeLiveTranscript()
       recorderRef.current = null
+      setActiveSessionId(undefined)
       // Joining creates a server-side track that participates in the
       // multi-device seal barrier. If recorder construction or the first
       // durable IndexedDB write fails, compensate immediately: without a
@@ -461,7 +465,9 @@ export function VoiceCapture({
       }
       setState("idle")
       setMessage(
-        error instanceof Error ? error.message : "Recording could not start",
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Microphone access was not granted. Allow access and try again."
+          : "Recording could not start. Check the recording code and connection, then try again.",
       )
       await refreshRecovery()
     }
@@ -476,8 +482,6 @@ export function VoiceCapture({
       // Provisional text is intentionally ephemeral. Stop displaying it as
       // soon as the durable finalize path takes ownership of the recording.
       setLiveStatus("not_started")
-      setLiveReasonCode(undefined)
-      setLiveProvider(undefined)
       setProvisionalTranscript("")
     }
     try {
@@ -498,23 +502,22 @@ export function VoiceCapture({
       const result = await finalizeCapture(captureId)
       if (mountedRef.current) {
         setCaptureId(undefined)
+        setActiveSessionId(undefined)
         setState("idle")
         setMessage(
-          `Recording accepted. Processing is ${result.state}; any live captions were provisional and the final transcript will replace them.`,
+          "Recording accepted and is being prepared for clinical review. Live captions remain temporary until review is complete.",
         )
       }
       await refreshRecovery()
       if (mountedRef.current) onFinalized?.(result.session_id)
-    } catch (error) {
+    } catch {
       if (mountedRef.current) {
         setState("queued")
         const storageFailure = writeErrorRef.current
         setMessage(
           storageFailure
-            ? `Local encrypted storage failed; recording stopped. Previously persisted chunks remain recoverable. ${storageFailure.message}`
-            : error instanceof Error
-              ? error.message
-              : "Finalization paused",
+            ? "Secure local storage failed, so recording stopped. Previously saved recording data can still be recovered."
+            : "Review preparation paused. This recording remains securely saved and can be retried.",
         )
       }
       await refreshRecovery()
@@ -537,16 +540,19 @@ export function VoiceCapture({
         const result = await finalizeCapture(localId)
         if (mountedRef.current) {
           setCaptureId(undefined)
+          setActiveSessionId(undefined)
           onFinalized?.(result.session_id)
-          setMessage("Recovered queue uploaded and finalized.")
+          setMessage("Recording uploaded and sent for clinical review.")
           setState("idle")
         }
         await refreshRecovery()
       }
-    } catch (error) {
+    } catch {
       if (mountedRef.current) {
         setState("queued")
-        setMessage(error instanceof Error ? error.message : "Recovery paused")
+        setMessage(
+          "Upload recovery paused. The recording remains securely saved.",
+        )
       }
     }
   }
@@ -562,18 +568,14 @@ export function VoiceCapture({
       if (mountedRef.current) {
         setState("idle")
         setMessage(
-          "Empty device removed; other joined tracks can now finalize.",
+          "Empty recording removed. Other participants can now finish.",
         )
       }
       await refreshRecovery()
-    } catch (error) {
+    } catch {
       if (mountedRef.current) {
         setState("queued")
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : "Empty device removal paused",
-        )
+        setMessage("Empty recording removal paused. Please try again.")
       }
     }
   }
@@ -582,21 +584,25 @@ export function VoiceCapture({
 
   return (
     <div className="space-y-4" data-testid="voice-capture">
-      <Card className="border-teal-100 shadow-sm">
+      <Card className="border-primary/20 bg-card shadow-sm">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2 text-xl">
-              <Mic className="text-teal-700" />
-              <h1>Secure voice capture</h1>
+              <Mic className="text-primary" />
+              <h1>Record visit</h1>
             </CardTitle>
             <div className="flex gap-2">
-              <Badge variant="outline">{captureKind}</Badge>
+              <Badge variant="outline">
+                {captureKind === "clinical"
+                  ? "Clinical recording"
+                  : "Patient update"}
+              </Badge>
               {offline ? (
-                <Badge className="bg-amber-100 text-amber-900">
+                <Badge className="bg-warning-muted text-warning-muted-foreground">
                   <WifiOff className="mr-1 size-3" /> Offline
                 </Badge>
               ) : (
-                <Badge className="bg-emerald-100 text-emerald-900">
+                <Badge className="bg-success-muted text-success-muted-foreground">
                   <UploadCloud className="mr-1 size-3" /> Online
                 </Badge>
               )}
@@ -604,85 +610,70 @@ export function VoiceCapture({
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="max-w-xl space-y-2">
             <div className="space-y-2">
               <Label htmlFor="existing-session">
-                Join a second device (optional)
+                Join an existing visit recording (optional)
               </Label>
               <Input
                 id="existing-session"
                 value={existingSessionId}
                 onChange={(event) => setExistingSessionId(event.target.value)}
-                placeholder="Paste voice session ID"
+                placeholder="Enter the recording code"
                 disabled={state !== "idle"}
               />
-              <p className="text-xs text-slate-500">
-                <Link2 className="mr-1 inline size-3" /> Both devices upload
-                separate tracks. Alignment is track-start only and overlap
-                remains reviewable.
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label className="flex min-h-11 items-center gap-3 rounded-md border px-3">
-                <input
-                  type="checkbox"
-                  checked={syntheticFixture}
-                  onChange={(event) =>
-                    setSyntheticFixture(event.target.checked)
-                  }
-                  disabled={state !== "idle" || Boolean(existingSessionId)}
-                />
-                Synthetic fixture transcript (local demo only)
-              </Label>
-              <p className="text-xs text-slate-500">
-                Ordinary audio never receives a fixture transcript when ASR is
-                unavailable. Record at least 11 seconds so every fixed fixture
-                timestamp and evidence range fits the assembled audio.
+              <p className="text-xs text-muted-foreground">
+                <Link2 className="mr-1 inline size-3" /> Use the code shared by
+                the first device to record the same visit together.
               </p>
             </div>
           </div>
 
-          <div className="rounded-lg border bg-slate-50 p-4">
+          <div className="rounded-lg border bg-muted/40 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="font-medium">{inputLabel}</p>
-                <p className="text-xs text-slate-500">
-                  Permission: {permission} · session:{" "}
-                  {activeSessionId ?? "not started"}
+                <p className="text-xs text-muted-foreground">
+                  Microphone access:{" "}
+                  {permission === "granted"
+                    ? "Ready"
+                    : permission === "denied"
+                      ? "Blocked"
+                      : "Not requested"}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {clipping && <Badge variant="destructive">Clipping</Badge>}
                 {noise && (
-                  <Badge className="bg-amber-100 text-amber-900">
+                  <Badge className="bg-review-required-muted text-review-required-muted-foreground">
                     Low signal
                   </Badge>
                 )}
                 {state === "recording" && (
-                  <Badge className="bg-rose-100 text-rose-900">
+                  <Badge className="bg-critical-muted text-critical-muted-foreground">
                     <Radio className="mr-1 size-3 animate-pulse" /> Recording
                   </Badge>
                 )}
                 {liveStatus === "available" && (
-                  <Badge className="bg-sky-100 text-sky-900">
+                  <Badge className="bg-ai-muted text-ai-muted-foreground">
                     Live captions · provisional
                   </Badge>
                 )}
                 {liveStatus === "unavailable" && (
-                  <Badge className="bg-slate-200 text-slate-800">
+                  <Badge className="bg-muted text-muted-foreground">
                     Live captions unavailable
                   </Badge>
                 )}
                 {liveStatus === "needs_review" && (
-                  <Badge className="bg-amber-100 text-amber-900">
+                  <Badge className="bg-review-required-muted text-review-required-muted-foreground">
                     Live captions interrupted · review
                   </Badge>
                 )}
               </div>
             </div>
-            <div className="mt-3 h-2 overflow-hidden rounded bg-slate-200">
+            <div className="mt-3 h-2 overflow-hidden rounded bg-muted">
               <div
-                className="h-full bg-teal-600 transition-[width]"
+                className="h-full bg-primary transition-[width]"
                 style={{ width: `${Math.min(100, inputLevel * 220)}%` }}
               />
             </div>
@@ -690,34 +681,28 @@ export function VoiceCapture({
 
           {liveStatus !== "not_started" && (
             <div
-              className="rounded-lg border border-sky-100 bg-sky-50/60 p-4"
+              className="rounded-lg border border-ai/40 bg-ai-muted/50 p-4"
               aria-live="polite"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-medium text-sky-950">
-                  Temporary live transcript
+                <p className="font-medium text-ai-muted-foreground">
+                  Live captions
                 </p>
-                <span className="text-xs text-sky-800">
-                  Not the clinical record · finalization replaces this view
+                <span className="text-xs text-ai-muted-foreground">
+                  Temporary text · review the final recording
                 </span>
               </div>
               {provisionalTranscript ? (
-                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">
+                <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">
                   {provisionalTranscript}
                 </p>
               ) : (
-                <p className="mt-2 text-sm text-slate-600">
+                <p className="mt-2 text-sm text-muted-foreground">
                   {liveStatus === "connecting"
-                    ? "Connecting to the clinic-scoped caption channel…"
+                    ? "Connecting to the secure caption service…"
                     : liveStatus === "available"
                       ? "Listening for provisional speech text…"
                       : "Recording continues securely without live text."}
-                </p>
-              )}
-              {(liveProvider || liveReasonCode) && (
-                <p className="mt-2 text-xs text-slate-500">
-                  {liveProvider ?? "live transport"}
-                  {liveReasonCode ? ` · ${liveReasonCode}` : ""}
                 </p>
               )}
             </div>
@@ -725,12 +710,16 @@ export function VoiceCapture({
 
           <div className="flex flex-wrap items-center gap-3">
             {state === "recording" ? (
-              <Button className="min-h-11 min-w-32 bg-rose-700" onClick={stop}>
+              <Button
+                className="min-h-11 min-w-32"
+                onClick={stop}
+                variant="destructive"
+              >
                 <Square className="mr-2 size-4" /> Stop & finalize
               </Button>
             ) : (
               <Button
-                className="min-h-11 min-w-32 bg-teal-700"
+                className="min-h-11 min-w-32"
                 onClick={start}
                 disabled={busy}
               >
@@ -742,13 +731,44 @@ export function VoiceCapture({
                 Start recording
               </Button>
             )}
-            <span className="text-sm text-slate-600">
-              {uploadedChunks}/{capturedChunks} chunks acknowledged
+            <span className="text-sm text-muted-foreground">
+              {state === "recording"
+                ? "Recording and uploading securely"
+                : capturedChunks > 0 && uploadedChunks >= capturedChunks
+                  ? "Recording data uploaded"
+                  : "Ready to record"}
             </span>
           </div>
 
+          {activeSessionId && state === "recording" && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3">
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Recording code
+                </p>
+                <p className="font-mono text-sm tracking-wide text-muted-foreground">
+                  {recordingCodeFromSessionId(activeSessionId)}
+                </p>
+              </div>
+              <Button
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(recordingCodeFromSessionId(activeSessionId))
+                    .then(() => setMessage("Recording code copied."))
+                    .catch(() =>
+                      setMessage("Select the recording code and copy it."),
+                    )
+                }}
+                type="button"
+                variant="outline"
+              >
+                <Copy /> Copy code
+              </Button>
+            </div>
+          )}
+
           {message && (
-            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-muted p-3 text-sm text-warning-muted-foreground">
               {state === "idle" ? (
                 <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
               ) : (
@@ -764,7 +784,7 @@ export function VoiceCapture({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              <h2>Encrypted uploads to recover</h2>
+              <h2>Recordings waiting to upload</h2>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -773,10 +793,12 @@ export function VoiceCapture({
                 className="flex flex-wrap items-center justify-between gap-2 rounded border p-3"
                 key={capture.id}
               >
-                <span className="break-all text-sm">
-                  {capture.id}
+                <span className="text-sm">
+                  Interrupted recording
                   {capture.empty && (
-                    <span className="ml-2 text-amber-800">no audio stored</span>
+                    <span className="ml-2 text-warning-muted-foreground">
+                      no audio stored
+                    </span>
                   )}
                 </span>
                 <Button

@@ -15,6 +15,21 @@ const ACTIVE_VOICE_STATES = new Set([
   "extracting",
 ])
 
+const PATIENT_STATUS: Record<string, string> = {
+  created: "Ready to record",
+  recording: "Recording",
+  finalizing: "Saving recording",
+  assembling: "Preparing audio",
+  preprocessing: "Preparing audio",
+  transcribing: "Creating transcript",
+  redacting: "Protecting your information",
+  extracting: "Preparing care-team review",
+  ready: "Care-team review",
+  needs_review: "Care-team review required",
+  published: "Shared with you",
+  failed: "Needs attention",
+}
+
 export function PatientVoiceStatus({ sessionId }: { sessionId: string }) {
   const query = useQuery({
     queryKey: ["patient-voice-status", sessionId],
@@ -26,9 +41,7 @@ export function PatientVoiceStatus({ sessionId }: { sessionId: string }) {
       ACTIVE_VOICE_STATES.has(current.state.data?.state ?? "") ? 3_000 : false,
   })
   if (query.isLoading) {
-    return (
-      <LoaderCircle className="mx-auto mt-20 animate-spin text-amber-700" />
-    )
+    return <LoaderCircle className="mx-auto mt-20 animate-spin text-primary" />
   }
   if (!query.data) return <p>This recording is not available.</p>
   return (
@@ -36,18 +49,18 @@ export function PatientVoiceStatus({ sessionId }: { sessionId: string }) {
       <CardHeader>
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2">
-            <Mic2 className="text-amber-700" /> My recording
+            <Mic2 className="text-primary" /> My recording
           </CardTitle>
-          <Badge>{query.data.state}</Badge>
+          <Badge>{PATIENT_STATUS[query.data.state] ?? "Processing"}</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-muted-foreground">
           Your care team reviews final results before a patient-facing summary
           is published.
         </p>
         {query.data.patient_summary && (
-          <p className="rounded-lg bg-amber-50 p-4 leading-7">
+          <p className="rounded-lg bg-primary/10 p-4 leading-7">
             {query.data.patient_summary}
           </p>
         )}

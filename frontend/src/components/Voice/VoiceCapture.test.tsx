@@ -1,7 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { VoiceCapture } from "./VoiceCapture"
+import {
+  recordingCodeFromSessionId,
+  sessionIdFromRecordingCode,
+  VoiceCapture,
+} from "./VoiceCapture"
 
 const clientMocks = vi.hoisted(() => ({
   sessionStatus: vi.fn(),
@@ -55,6 +59,17 @@ function fakeStream() {
     } as unknown as MediaStream,
   }
 }
+
+describe("recording share codes", () => {
+  it("round-trips a session identifier without displaying UUID syntax", () => {
+    const sessionId = "550e8400-e29b-41d4-a716-446655440000"
+    const recordingCode = recordingCodeFromSessionId(sessionId)
+
+    expect(recordingCode).toMatch(/^[0-9A-HJKMNP-TV-Z-]{31}$/)
+    expect(recordingCode).not.toContain(sessionId)
+    expect(sessionIdFromRecordingCode(recordingCode)).toBe(sessionId)
+  })
+})
 
 describe("VoiceCapture lifecycle", () => {
   const recorderConstructed = vi.fn()
