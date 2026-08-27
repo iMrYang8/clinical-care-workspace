@@ -3916,6 +3916,36 @@ export type collaborationResolveResponses = {
 
 export type collaborationResolveResponse = collaborationResolveResponses[keyof collaborationResolveResponses];
 
+export type collaborationUnresolveData = {
+    body?: never;
+    path: {
+        /**
+         * Comment Id
+         */
+        comment_id: string;
+    };
+    query?: never;
+    url: '/api/v1/comments/{comment_id}/unresolve';
+};
+
+export type collaborationUnresolveErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type collaborationUnresolveError = collaborationUnresolveErrors[keyof collaborationUnresolveErrors];
+
+export type collaborationUnresolveResponses = {
+    /**
+     * Successful Response
+     */
+    200: CommentPublic;
+};
+
+export type collaborationUnresolveResponse = collaborationUnresolveResponses[keyof collaborationUnresolveResponses];
+
 export type collaborationAssignData = {
     body: AssignmentUpdate;
     path: {
