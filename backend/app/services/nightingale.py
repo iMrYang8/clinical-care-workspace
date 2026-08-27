@@ -280,9 +280,7 @@ def list_patients(
                 0 if row.today_visit_at is not None else 1,
                 row.today_visit_at.timestamp()
                 if row.today_visit_at is not None
-                else -(
-                    row.last_activity_at.timestamp() if row.last_activity_at else 0
-                ),
+                else -(row.last_activity_at.timestamp() if row.last_activity_at else 0),
                 row.display_name.casefold(),
                 str(row.id),
             )

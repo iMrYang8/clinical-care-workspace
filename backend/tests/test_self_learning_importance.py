@@ -299,16 +299,14 @@ def test_dismiss_feedback_is_negative_idempotent_and_resource_bound(
         ).all()
         audits = session.exec(
             select(AuditEvent).where(
-                    AuditEvent.resource_id == uuid.UUID(first["id"]),
-                    AuditEvent.action
-                    == "highlight.feedback.dismiss.not_relevant",
+                AuditEvent.resource_id == uuid.UUID(first["id"]),
+                AuditEvent.action == "highlight.feedback.dismiss.not_relevant",
             )
         ).all()
         domain_events = session.exec(
             select(DomainEvent).where(
-                    DomainEvent.aggregate_id == uuid.UUID(first["id"]),
-                    DomainEvent.event_type
-                    == "highlight.feedback.dismiss.not_relevant",
+                DomainEvent.aggregate_id == uuid.UUID(first["id"]),
+                DomainEvent.event_type == "highlight.feedback.dismiss.not_relevant",
             )
         ).all()
         assert len(feedback_events) == 1

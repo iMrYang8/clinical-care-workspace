@@ -362,9 +362,7 @@ def test_patient_directory_search_pagination_and_same_name_warning(
     assert page.json()["count"] >= 303
     assert len(page.json()["data"]) == 24
     assert page.json()["offset"] == 0
-    today = client.get(
-        "/api/v1/patients/?visit_scope=today&limit=100", headers=headers
-    )
+    today = client.get("/api/v1/patients/?visit_scope=today&limit=100", headers=headers)
     assert today.status_code == 200, today.text
     assert today.json()["count"] == 6
     assert all(item["today_visit_at"] for item in today.json()["data"])
