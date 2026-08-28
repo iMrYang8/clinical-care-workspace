@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog"
 import type { ClinicalTimelineEntry } from "@/features/api"
 import { formatSingaporeDateTime } from "@/lib/dateTime"
+import { AiManualHighlight, aiDisplayProjection } from "./AiManualHighlight"
 import { type EntryDraft, EntryEditor } from "./EntryEditor"
 
 export type SourceFocus = {
@@ -72,23 +73,25 @@ function highlightedContent(
   entry: ClinicalTimelineEntry,
   focus?: SourceFocus | null,
 ) {
-  const redundantPrefix =
+  const projection =
     entry.origin === "ai"
-      ? [
-          "AI-assisted nursing draft: ",
-          "AI-assisted patient-session draft: ",
-          "AI-assisted review extracted that ",
-        ].find((prefix) => entry.content.startsWith(prefix))
-      : undefined
-  const offset = redundantPrefix?.length ?? 0
-  const rawContent = entry.content.slice(offset)
-  const displayContent = rawContent
-    ? rawContent.charAt(0).toLocaleUpperCase() + rawContent.slice(1)
-    : rawContent
+      ? aiDisplayProjection(entry.content)
+      : {
+          content: entry.content,
+          rawOffsetUtf16: 0,
+          rawOffsetCodePoints: 0,
+        }
+  const displayContent = projection.content
   if (!focus || focus.entryVersionId !== entry.version_id) return displayContent
   const points = Array.from(displayContent)
-  const startOffset = Math.max(0, focus.startOffset - offset)
-  const endOffset = Math.max(startOffset, focus.endOffset - offset)
+  const startOffset = Math.max(
+    0,
+    focus.startOffset - projection.rawOffsetCodePoints,
+  )
+  const endOffset = Math.max(
+    startOffset,
+    focus.endOffset - projection.rawOffsetCodePoints,
+  )
   return (
     <>
       {points.slice(0, startOffset).join("")}
@@ -123,6 +126,7 @@ export function TimelineEntryCard({
       (currentUser.role === "clinician" && entry.section === "clinician"))
   const focused = sourceFocus?.entryId === entry.id
   const editing = editingEntry !== null
+  const aiProjection = aiDisplayProjection(entry.content)
   const authorRoleLabel =
     authorRole === "clinician"
       ? "Clinician"
@@ -228,13 +232,36 @@ export function TimelineEntryCard({
           </div>
         </CardHeader>
         <CardContent className="p-5">
-          <p className="whitespace-pre-wrap text-[0.95rem] leading-7 text-foreground/90">
-            {highlightedContent(entry, sourceFocus)}
-          </p>
+          <AiManualHighlight
+            enabled={currentUser.role === "clinician" && entry.origin === "ai"}
+            entryId={entry.id}
+            entryType={entry.entry_type}
+            entryVersionId={entry.version_id}
+            patientId={entry.patient_id}
+            rawContent={entry.content}
+            rawOffsetUtf16={aiProjection.rawOffsetUtf16}
+          >
+            <p
+              className={`whitespace-pre-wrap text-[0.95rem] leading-7 text-foreground/90 ${
+                entry.origin === "ai" && aiProjection.rawOffsetUtf16 > 0
+                  ? "first-letter:uppercase"
+                  : ""
+              }`}
+            >
+              {highlightedContent(entry, sourceFocus)}
+            </p>
+          </AiManualHighlight>
           {entry.origin === "ai" && (
             <div className="mt-4 rounded-xl border border-ai/40 bg-ai-muted p-3 text-sm leading-6 text-ai-muted-foreground">
               AI-assisted draft. Review the cited source before using it for
               care decisions.
+              {currentUser.role === "clinician" && (
+                <>
+                  {" "}
+                  Select exact wording above to add a clinician-confirmed
+                  priority.
+                </>
+              )}
             </div>
           )}
         </CardContent>
