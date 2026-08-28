@@ -299,7 +299,9 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
   const commentBody = `Scenario B anchored review ${testInfo.repeatEachIndex}-${Date.now()}`
   const exactQuote = "Medication list reviewed"
   await staffEntry.getByRole("button", { name: "Edit" }).click()
-  const editor = staffEntry.getByLabel("Care note content")
+  const editDialog = page.getByRole("dialog", { name: "Edit note" })
+  await expect(editDialog).toBeVisible()
+  const editor = editDialog.getByLabel("Care note content")
   await editor.evaluate((root, quote) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
     let node = walker.nextNode()
@@ -320,25 +322,25 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
     }
     throw new Error(`Could not select ${quote}`)
   }, exactQuote)
-  await staffEntry.getByRole("button", { name: "Comment on selection" }).click()
-  await expect(staffEntry.getByText(`“${exactQuote}”`)).toBeVisible()
-  await staffEntry.getByLabel("Comment", { exact: true }).fill(commentBody)
-  await staffEntry
+  await editDialog.getByRole("button", { name: "Comment on selection" }).click()
+  await expect(editDialog.getByText(`“${exactQuote}”`)).toBeVisible()
+  await editDialog.getByLabel("Comment", { exact: true }).fill(commentBody)
+  await editDialog
     .getByLabel("Mention (optional)")
     .selectOption(clinicianUserId as string)
-  await staffEntry
+  await editDialog
     .getByLabel("Assign to (optional)")
     .selectOption(clinicianMembershipId as string)
-  await expect(staffEntry.getByLabel("Mention (optional)")).toContainText(
+  await expect(editDialog.getByLabel("Mention (optional)")).toContainText(
     "Clinician — Clinician",
   )
-  await expect(staffEntry.getByLabel("Assign to (optional)")).toContainText(
+  await expect(editDialog.getByLabel("Assign to (optional)")).toContainText(
     "Clinician — Clinician",
   )
-  await staffEntry
+  await editDialog
     .getByRole("button", { name: "Add to team discussion" })
     .click()
-  await staffEntry.getByRole("button", { name: "Cancel", exact: true }).click()
+  await editDialog.getByRole("button", { name: "Cancel", exact: true }).click()
 
   await staffEntry.getByRole("button", { name: "Team discussion" }).click()
   const comment = page.getByRole("article").filter({ hasText: commentBody })

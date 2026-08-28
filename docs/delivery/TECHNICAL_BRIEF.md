@@ -105,7 +105,7 @@ Run `./scripts/demo-up.sh`, accept the local certificate warning at `https://loc
 - **E — Patient safety:** patient navigation and captured network responses contain no raw AI, internal comment, scoring internals, transcript/facts, or audio; provider-off state is explicit.
 - **F — Voice review:** two-device synthetic WAV capture, forced outage, encrypted reload recovery, finalization, Review Mode, fact-to-audio navigation, and Clinician publication.
 
-The repository also includes a reproducible silent walkthrough at [`output/demo/Nightingale_Demo.mp4`](../../output/demo/Nightingale_Demo.mp4), covering visible evidence, immutable history, Admin read-only oversight, patient-safe projection, and synthetic voice-review paths.
+The release package includes a reproducible, English-captioned silent walkthrough. It covers visible evidence, immutable history, Admin read-only oversight, patient-safe projection, and synthetic voice-review paths. Captions are both burned into `artifacts/Nightingale_Demo.mp4` and supplied as `artifacts/Nightingale_Demo.en.srt`.
 
 ## 6 · Provenance, licensing, and claim boundaries
 

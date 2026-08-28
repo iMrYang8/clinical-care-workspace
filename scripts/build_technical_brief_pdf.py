@@ -683,7 +683,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
     c.drawString(MARGIN + 12, 129, "DELIVERY CONTENTS")
     draw_paragraph(
         c,
-        "Runnable source + full Git history bundle + synthetic seed/importer + Scenario A-F runbook + under-90-second silent demo + editable diagrams + machine-readable evidence + full notices + this brief. Remote publication remains an operator action if no authenticated GitHub session is available.",
+        "Runnable source + full Git history bundle + synthetic seed/importer + Scenario A-F runbook + English-captioned silent final demo + editable diagrams + machine-readable evidence + full notices + this brief. Remote publication remains an operator action if no authenticated GitHub session is available.",
         MARGIN + 12,
         120,
         PAGE_W - 2 * MARGIN - 24,

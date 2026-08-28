@@ -69,20 +69,21 @@ export AI_PROVIDER=openai REMOTE_TEXT_EGRESS_ENABLED=true
 # also set explicit model IDs and a working required Presidio model before use
 ```
 
-To regenerate the checked-in, **silent synthetic** UI walkthrough (Scenario A
-Glance/provenance, version history, Admin read-only oversight, Scenario E
-patient-safe My Care, and Scenario F voice Review Mode), run:
+To regenerate the legacy short synthetic walkthrough, run:
 
 ```bash
 BUN_BIN="$(command -v bun)" ./scripts/record-demo.sh
 ```
 
-The recorder resets only this checkout-scoped local Compose project, drives the
+The legacy recorder resets only this checkout-scoped local Compose project, drives the
 real TLS application with Playwright at 1280×720, and asks host FFmpeg to write
 `output/demo/Nightingale_Demo.mp4` as H.264. The microphone and transcript are
 the explicitly labelled synthetic fixtures; no backend responses are stubbed.
 Set `NIGHTINGALE_RECORD_KEEP_STATE=1` only when deliberately recording the
-already-running synthetic state.
+already-running synthetic state. The final release uses the isolated
+13-chapter English workflow in `scripts/record_final_demo_en.mjs`, renders a
+1920×1080 H.264 video without an audio stream, and supplies both burned-in and
+sidecar English captions.
 
 ## What is implemented
 

@@ -11,6 +11,10 @@ backend/app/frontend/
 /tmp/
 /output/pdf/
 /output/demo/raw/
+# Final recordings are reproducible release artifacts. Keep both the local
+# Chinese rollback copy and the generated English-captioned files out of Git;
+# package-release.sh copies only the explicitly selected English deliverables.
+/output/demo/Nightingale_Final_Demo_*
 /datasets/raw/
 /artifacts/evaluation/cache/
 
