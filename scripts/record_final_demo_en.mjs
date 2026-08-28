@@ -1075,12 +1075,14 @@ await runSegment(page, 5, async () => {
 			.getByRole("dialog", { name: /Source details/ })
 			.filter({ visible: true })
 			.last();
-		if (await dialog.isVisible().catch(() => false)) {
-			const mark = dialog.locator("mark[data-source-span]");
-			if (await mark.isVisible().catch(() => false))
-				await moveTo(page, mark, "Exact conflicting wording");
-			await closeVisibleDialog(page);
-		}
+		await dialog.waitFor({ state: "visible", timeout: 5000 });
+		const mark = dialog.locator("mark[data-source-span]");
+		if (await mark.isVisible().catch(() => false))
+			await moveTo(page, mark, "Exact conflicting wording");
+		await closeVisibleDialog(page);
+		await page
+			.locator('[data-slot="dialog-overlay"][data-state="open"]')
+			.waitFor({ state: "hidden", timeout: 5000 });
 	}
 	const why = page
 		.getByText("Why this decision?", { exact: true })
