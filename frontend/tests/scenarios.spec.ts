@@ -764,7 +764,8 @@ test("[Scenario D] stale ETag conflicts while independent entries and tenant bou
 
   const created = await api<TimelineEntry>(first, "/api/v1/entries", {
     body: {
-      content: "Independent synthetic entry for concurrent delivery proof.",
+      content:
+        "Independent follow-up entry recorded during concurrent chart review.",
       patient_facing: false,
       patient_id: firstData.patient.id,
       section: "staff",
