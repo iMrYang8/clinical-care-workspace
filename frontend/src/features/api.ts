@@ -102,6 +102,52 @@ export type ClinicalFactAssertion = {
   provenance_pointer_id: string
 }
 
+export type PatientSharingRequest = {
+  id: string
+  patient_id: string
+  entry_id: string
+  entry_version_id: string
+  entry_title: string
+  entry_section: string
+  entry_origin: string
+  requested_by_name: string
+  status:
+    | "pending"
+    | "approved"
+    | "rejected"
+    | "superseded"
+    | "withdrawn"
+    | string
+  created_at: string
+  reviewed_at: string | null
+  reviewed_by_name: string | null
+  publication_id: string | null
+}
+
+export type PatientPublication = {
+  id: string
+  patient_id: string
+  entry_id: string
+  entry_version_id: string
+  entry_title: string
+  approved_by_name: string
+  approval_policy_version: string
+  approved_at: string
+  withdrawn_at: string | null
+  items: Array<{
+    support_state: string
+    confidence_band: string
+  }>
+}
+
+export type PatientPublicationReceipt = {
+  entry_title: string
+  approved_by_name: string
+  approved_at: string
+  withdrawn_at: string | null
+  status: "active" | "withdrawn"
+}
+
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(
     `${import.meta.env.VITE_API_URL ?? ""}${url}`,
@@ -109,10 +155,18 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   )
   if (!response.ok) {
     const payload = await response.json().catch(() => null)
-    throw new Error(
-      (payload as { detail?: string } | null)?.detail ??
-        `Request failed with ${response.status}`,
-    )
+    const detail = (payload as { detail?: unknown } | null)?.detail
+    const detailMessage =
+      typeof detail === "string"
+        ? detail
+        : detail && typeof detail === "object"
+          ? String(
+              (detail as { message?: unknown; code?: unknown }).message ??
+                (detail as { code?: unknown }).code ??
+                "",
+            )
+          : ""
+    throw new Error(detailMessage || `Request failed with ${response.status}`)
   }
   return (await response.json()) as T
 }
@@ -177,6 +231,62 @@ async function resolveConflict(
       resolution,
     }),
   })
+}
+
+async function requestPatientSharing(
+  entryId: string,
+  entryVersionId: string,
+): Promise<PatientSharingRequest> {
+  return jsonRequest(`/api/v1/entries/${entryId}/patient-sharing-requests`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entry_version_id: entryVersionId }),
+  })
+}
+
+async function patientSharingRequests(
+  patientId: string,
+): Promise<PatientSharingRequest[]> {
+  return jsonRequest(`/api/v1/patients/${patientId}/patient-sharing-requests`)
+}
+
+async function patientPublications(
+  patientId: string,
+): Promise<PatientPublication[]> {
+  return jsonRequest(`/api/v1/patients/${patientId}/patient-publications`)
+}
+
+async function approvePatientSharing(
+  requestId: string,
+): Promise<PatientPublication> {
+  return jsonRequest(`/api/v1/patient-sharing-requests/${requestId}/approve`, {
+    method: "POST",
+  })
+}
+
+async function withdrawPatientPublication(
+  publicationId: string,
+): Promise<PatientPublication> {
+  return jsonRequest(`/api/v1/patient-publications/${publicationId}/withdraw`, {
+    method: "POST",
+  })
+}
+
+export function patientSharingErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : ""
+  if (message.includes("UNRESOLVED_CLINICAL_CONFLICT"))
+    return "Resolve the high-risk clinical conflict before sharing this note."
+  if (message.includes("REDACTION_EVALUATION_REQUIRED"))
+    return "Patient sharing is paused until the clinic redaction check passes."
+  if (message.includes("DECISION_ASSESSMENT_NOT_PUBLISHABLE"))
+    return "This AI-assisted content needs a supported clinical assessment before sharing."
+  if (message.includes("CLAIM_LEVEL_PROVENANCE_REQUIRED"))
+    return "Each clinical claim needs an exact source before sharing."
+  if (message.includes("Review the latest version"))
+    return "This note changed after the request. Ask care staff to submit the latest version."
+  if (message.includes("already"))
+    return "This sharing request has already been reviewed."
+  return "Patient sharing could not be completed. Review the note and try again."
 }
 
 export type PatientInvitationPreview = {
@@ -479,6 +589,12 @@ async function patientSafeGlance(
   }
 }
 
+async function patientPublicationReceipts(
+  patientId: string,
+): Promise<PatientPublicationReceipt[]> {
+  return jsonRequest(`/api/v1/patients/${patientId}/publication-receipts`)
+}
+
 async function createEntry(
   body: EntryCreate,
 ): Promise<EntryPublic | PatientTimelineEntry> {
@@ -507,6 +623,8 @@ async function createPatientInsight(
     patient_id: created.patient_id,
     section: created.section,
     entry_type: created.entry_type,
+    author_role: created.author_role,
+    provenance: created.provenance,
     patient_facing: created.patient_facing,
     version_id: created.version_id,
     version_no: created.version_no,
@@ -782,6 +900,7 @@ export const patientSafeApi = {
   patients,
   timeline: patientTimeline,
   glance: patientSafeGlance,
+  publicationReceipts: patientPublicationReceipts,
   resolveProvenance,
   createInsight: createPatientInsight,
 }
@@ -817,4 +936,9 @@ export const clinicalApi = {
   patientClinicalFacts,
   patientConflicts,
   resolveConflict,
+  requestPatientSharing,
+  patientSharingRequests,
+  patientPublications,
+  approvePatientSharing,
+  withdrawPatientPublication,
 }

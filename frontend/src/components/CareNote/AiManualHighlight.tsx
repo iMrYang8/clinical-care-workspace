@@ -13,8 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { apiErrorMessage } from "@/features/api"
 import {
   type CanonicalAnchor,
@@ -71,13 +69,6 @@ export function anchorFromDomRange(
   return anchor
 }
 
-function suggestedLabel(exactQuote: string): string {
-  const normalized = exactQuote.replace(/\s+/g, " ").trim()
-  return normalized.length <= 120
-    ? normalized
-    : `${normalized.slice(0, 117).trimEnd()}…`
-}
-
 type AiManualHighlightProps = {
   children: ReactNode
   enabled: boolean
@@ -103,37 +94,33 @@ export function AiManualHighlight({
   const sourceRef = useRef<HTMLFieldSetElement>(null)
   const [anchor, setAnchor] = useState<CanonicalAnchor | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [label, setLabel] = useState("")
   const [selectionError, setSelectionError] = useState<string | null>(null)
   const [savedMessage, setSavedMessage] = useState("")
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      if (!anchor || !label.trim()) {
-        throw new RangeError(
-          "A source selection and priority label are required",
-        )
+      if (!anchor) {
+        throw new RangeError("A source selection is required")
       }
+      const exactLabel = anchor.exact_quote.replace(/\s+/g, " ").trim()
       const created = (
         await TrustService.createHighlight({
           path: { entry_id: entryId },
           body: {
             entry_version_id: entryVersionId,
             ...anchor,
-            label: label.trim(),
+            label: exactLabel,
             patient_facing: false,
             feature_keys: [`entry_type:${entryType}`],
             clinician_confirmed: true,
           },
         })
       ).data
-      return (await TrustService.accept({ path: { highlight_id: created.id } }))
-        .data
+      return created
     },
     onSuccess: async (created) => {
       setDialogOpen(false)
       setAnchor(null)
-      setLabel("")
       setSavedMessage(`Added to Current priorities: ${created.label}`)
       window.getSelection()?.removeAllRanges()
       await queryClient.invalidateQueries({
@@ -155,8 +142,13 @@ export function AiManualHighlight({
         sourceRef.current,
         selection.getRangeAt(0),
       )
+      const exactLabel = nextAnchor.exact_quote.replace(/\s+/g, " ").trim()
+      if (exactLabel.length > 500) {
+        throw new RangeError(
+          "Select 500 characters or fewer for one source-linked priority",
+        )
+      }
       setAnchor(nextAnchor)
-      setLabel(suggestedLabel(nextAnchor.exact_quote))
       setSelectionError(null)
       setSavedMessage("")
     } catch (caught) {
@@ -236,23 +228,11 @@ export function AiManualHighlight({
               <blockquote className="rounded-xl border-l-4 border-primary bg-muted/50 p-3 text-sm leading-6 text-foreground">
                 “{anchor.exact_quote}”
               </blockquote>
-              <div className="space-y-2">
-                <Label htmlFor={`priority-label-${entryId}`}>
-                  Priority label
-                </Label>
-                <Input
-                  autoFocus
-                  id={`priority-label-${entryId}`}
-                  maxLength={500}
-                  onChange={(event) => setLabel(event.target.value)}
-                  required
-                  value={label}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Use a short clinical description that the care team can scan
-                  quickly.
-                </p>
-              </div>
+              <p className="text-xs leading-5 text-muted-foreground">
+                The priority uses the selected source wording exactly. To
+                paraphrase or correct it, create a separate clinical note so the
+                new judgement has its own author and history.
+              </p>
               {createMutation.isError && (
                 <Alert className="border-critical/40 bg-critical-muted text-critical-muted-foreground">
                   <AlertDescription>
@@ -269,10 +249,7 @@ export function AiManualHighlight({
                 >
                   Cancel
                 </Button>
-                <Button
-                  disabled={createMutation.isPending || !label.trim()}
-                  type="submit"
-                >
+                <Button disabled={createMutation.isPending} type="submit">
                   {createMutation.isPending ? (
                     <LoaderCircle className="animate-spin" />
                   ) : (

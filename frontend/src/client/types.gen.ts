@@ -827,6 +827,34 @@ export type EntryPatch = {
 };
 
 /**
+ * EntryProvenancePublic
+ *
+ * Direct immutable source metadata for a derived timeline entry.
+ *
+ * AI summaries point at the source message/version consumed by the AI run.
+ * ``exact_quote`` is therefore the exact source message, not a claim that the
+ * generated summary itself is an exact quotation.
+ */
+export type EntryProvenancePublic = {
+    /**
+     * Source Entry Id
+     */
+    source_entry_id: string | null;
+    /**
+     * Source Entry Version Id
+     */
+    source_entry_version_id: string | null;
+    /**
+     * Exact Quote
+     */
+    exact_quote: string | null;
+    /**
+     * Status
+     */
+    status: 'resolved' | 'archived' | 'unavailable';
+};
+
+/**
  * EntryPublic
  */
 export type EntryPublic = {
@@ -854,6 +882,11 @@ export type EntryPublic = {
      * Entry Type
      */
     entry_type: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'legacy_review_required' | 'system_record';
+    /**
+     * Author Role
+     */
+    author_role: 'patient' | 'staff' | 'clinician' | 'system';
+    provenance?: EntryProvenancePublic | null;
     /**
      * Patient Facing
      */
@@ -1727,6 +1760,10 @@ export type PatientPublicationCreate = {
      * Entry Version Id
      */
     entry_version_id: string;
+    /**
+     * Sharing Request Id
+     */
+    sharing_request_id?: string | null;
 };
 
 /**
@@ -1742,9 +1779,21 @@ export type PatientPublicationPublic = {
      */
     patient_id: string;
     /**
+     * Entry Id
+     */
+    entry_id: string;
+    /**
      * Entry Version Id
      */
     entry_version_id: string;
+    /**
+     * Supersedes Publication Id
+     */
+    supersedes_publication_id?: string | null;
+    /**
+     * Entry Title
+     */
+    entry_title: string;
     /**
      * Approved By Name
      */
@@ -1767,6 +1816,32 @@ export type PatientPublicationPublic = {
     items?: Array<{
         [key: string]: unknown;
     }>;
+};
+
+/**
+ * PatientPublicationReceiptPublic
+ */
+export type PatientPublicationReceiptPublic = {
+    /**
+     * Entry Title
+     */
+    entry_title: string;
+    /**
+     * Approved By Name
+     */
+    approved_by_name: string;
+    /**
+     * Approved At
+     */
+    approved_at: string;
+    /**
+     * Withdrawn At
+     */
+    withdrawn_at: string | null;
+    /**
+     * Status
+     */
+    status: 'active' | 'withdrawn';
 };
 
 /**
@@ -1800,6 +1875,18 @@ export type PatientSharingRequestPublic = {
      */
     entry_version_id: string;
     /**
+     * Entry Title
+     */
+    entry_title: string;
+    /**
+     * Entry Section
+     */
+    entry_section: string;
+    /**
+     * Entry Origin
+     */
+    entry_origin: string;
+    /**
      * Requested By Name
      */
     requested_by_name: string;
@@ -1815,6 +1902,14 @@ export type PatientSharingRequestPublic = {
      * Reviewed At
      */
     reviewed_at: string | null;
+    /**
+     * Reviewed By Name
+     */
+    reviewed_by_name?: string | null;
+    /**
+     * Publication Id
+     */
+    publication_id?: string | null;
 };
 
 /**
@@ -1851,6 +1946,11 @@ export type PatientTimelineEntry = {
      * Entry Type
      */
     entry_type: 'manual_staff_note' | 'manual_clinician_note' | 'manual_patient_insight' | 'ai_doctor_consult_summary' | 'ai_nurse_consult_summary' | 'ai_patient_session_summary' | 'voice_transcript_source' | 'voice_reviewed_result' | 'legacy_review_required' | 'system_record';
+    /**
+     * Author Role
+     */
+    author_role: 'patient' | 'staff' | 'clinician' | 'system';
+    provenance?: EntryProvenancePublic | null;
     /**
      * Patient Facing
      */
@@ -3529,6 +3629,38 @@ export type patientsPatientTimelineResponses = {
 
 export type patientsPatientTimelineResponse = patientsPatientTimelineResponses[keyof patientsPatientTimelineResponses];
 
+export type patientsPatientPublicationReceiptsData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/publication-receipts';
+};
+
+export type patientsPatientPublicationReceiptsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientsPatientPublicationReceiptsError = patientsPatientPublicationReceiptsErrors[keyof patientsPatientPublicationReceiptsErrors];
+
+export type patientsPatientPublicationReceiptsResponses = {
+    /**
+     * Response Patients-Patient Publication Receipts
+     *
+     * Successful Response
+     */
+    200: Array<PatientPublicationReceiptPublic>;
+};
+
+export type patientsPatientPublicationReceiptsResponse = patientsPatientPublicationReceiptsResponses[keyof patientsPatientPublicationReceiptsResponses];
+
 export type patientsPatientGlanceData = {
     body?: never;
     path: {
@@ -4421,6 +4553,38 @@ export type trustListPatientSharingRequestsResponses = {
 
 export type trustListPatientSharingRequestsResponse = trustListPatientSharingRequestsResponses[keyof trustListPatientSharingRequestsResponses];
 
+export type trustListPatientPublicationsData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/patient-publications';
+};
+
+export type trustListPatientPublicationsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustListPatientPublicationsError = trustListPatientPublicationsErrors[keyof trustListPatientPublicationsErrors];
+
+export type trustListPatientPublicationsResponses = {
+    /**
+     * Response Trust-List Patient Publications
+     *
+     * Successful Response
+     */
+    200: Array<PatientPublicationPublic>;
+};
+
+export type trustListPatientPublicationsResponse = trustListPatientPublicationsResponses[keyof trustListPatientPublicationsResponses];
+
 export type trustPublishForPatientData = {
     body: PatientPublicationCreate;
     path: {
@@ -4450,6 +4614,36 @@ export type trustPublishForPatientResponses = {
 };
 
 export type trustPublishForPatientResponse = trustPublishForPatientResponses[keyof trustPublishForPatientResponses];
+
+export type trustApprovePatientSharingRequestData = {
+    body?: never;
+    path: {
+        /**
+         * Request Id
+         */
+        request_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patient-sharing-requests/{request_id}/approve';
+};
+
+export type trustApprovePatientSharingRequestErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustApprovePatientSharingRequestError = trustApprovePatientSharingRequestErrors[keyof trustApprovePatientSharingRequestErrors];
+
+export type trustApprovePatientSharingRequestResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientPublicationPublic;
+};
+
+export type trustApprovePatientSharingRequestResponse = trustApprovePatientSharingRequestResponses[keyof trustApprovePatientSharingRequestResponses];
 
 export type trustWithdrawPatientPublicationData = {
     body?: never;

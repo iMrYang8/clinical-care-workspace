@@ -34,7 +34,7 @@ type TimelineEntryCardProps = {
   entry: ClinicalTimelineEntry
   currentUser: MePublic
   authorName?: string | null
-  authorRole?: "staff" | "clinician" | "admin" | null
+  authorRole?: "patient" | "staff" | "clinician" | "system" | "admin" | null
   sourceFocus?: SourceFocus | null
   onSave: (entry: ClinicalTimelineEntry, draft: EntryDraft) => Promise<void>
   onCreateComment: (
@@ -73,14 +73,15 @@ function highlightedContent(
   entry: ClinicalTimelineEntry,
   focus?: SourceFocus | null,
 ) {
-  const projection =
-    entry.origin === "ai"
-      ? aiDisplayProjection(entry.content)
-      : {
-          content: entry.content,
-          rawOffsetUtf16: 0,
-          rawOffsetCodePoints: 0,
-        }
+  const isAiAssisted =
+    entry.origin === "ai" || entry.entry_type.startsWith("ai_")
+  const projection = isAiAssisted
+    ? aiDisplayProjection(entry.content)
+    : {
+        content: entry.content,
+        rawOffsetUtf16: 0,
+        rawOffsetCodePoints: 0,
+      }
   const displayContent = projection.content
   if (!focus || focus.entryVersionId !== entry.version_id) return displayContent
   const points = Array.from(displayContent)
@@ -126,26 +127,33 @@ export function TimelineEntryCard({
       (currentUser.role === "clinician" && entry.section === "clinician"))
   const focused = sourceFocus?.entryId === entry.id
   const editing = editingEntry !== null
+  const isAiAssisted =
+    entry.origin === "ai" || entry.entry_type.startsWith("ai_")
   const aiProjection = aiDisplayProjection(entry.content)
+  const effectiveAuthorRole = authorRole ?? entry.author_role
   const authorRoleLabel =
-    authorRole === "clinician"
+    effectiveAuthorRole === "clinician"
       ? "Clinician"
-      : authorRole === "staff"
+      : effectiveAuthorRole === "staff"
         ? "Care staff"
-        : authorRole === "admin"
+        : effectiveAuthorRole === "admin"
           ? "Clinic administrator"
-          : null
+          : effectiveAuthorRole === "patient"
+            ? "Patient-reported"
+            : null
   const authorLine =
     entry.origin === "system"
       ? "Care service"
-      : entry.section === "patient"
-        ? "Patient-reported"
-        : authorName &&
-            authorRoleLabel &&
-            authorName.toLocaleLowerCase() !==
-              authorRoleLabel.toLocaleLowerCase()
-          ? `${authorName} · ${authorRoleLabel}`
-          : (authorName ?? authorRoleLabel ?? "Care team member")
+      : entry.author_role === "system"
+        ? "AI-assisted draft"
+        : entry.section === "patient"
+          ? "Patient-reported"
+          : authorName &&
+              authorRoleLabel &&
+              authorName.toLocaleLowerCase() !==
+                authorRoleLabel.toLocaleLowerCase()
+            ? `${authorName} · ${authorRoleLabel}`
+            : (authorName ?? authorRoleLabel ?? "Care team member")
 
   useEffect(() => {
     if (!focused) return
@@ -233,7 +241,7 @@ export function TimelineEntryCard({
         </CardHeader>
         <CardContent className="p-5">
           <AiManualHighlight
-            enabled={currentUser.role === "clinician" && entry.origin === "ai"}
+            enabled={currentUser.role === "clinician" && isAiAssisted}
             entryId={entry.id}
             entryType={entry.entry_type}
             entryVersionId={entry.version_id}
@@ -243,7 +251,7 @@ export function TimelineEntryCard({
           >
             <p
               className={`whitespace-pre-wrap text-[0.95rem] leading-7 text-foreground/90 ${
-                entry.origin === "ai" && aiProjection.rawOffsetUtf16 > 0
+                isAiAssisted && aiProjection.rawOffsetUtf16 > 0
                   ? "first-letter:uppercase"
                   : ""
               }`}
@@ -251,7 +259,7 @@ export function TimelineEntryCard({
               {highlightedContent(entry, sourceFocus)}
             </p>
           </AiManualHighlight>
-          {entry.origin === "ai" && (
+          {isAiAssisted && (
             <div className="mt-4 rounded-xl border border-ai/40 bg-ai-muted p-3 text-sm leading-6 text-ai-muted-foreground">
               AI-assisted draft. Review the cited source before using it for
               care decisions.

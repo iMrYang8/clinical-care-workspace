@@ -11,7 +11,7 @@ const acceptedHighlight = {
   patient_id: "patient-1",
   entry_id: "entry-1",
   source_entry_version_id: "version-1",
-  label: "Oral intake remains restricted",
+  label: "oral intake remains restricted",
   status: "accepted",
   pinned: false,
   critical: false,
@@ -61,16 +61,13 @@ describe("AI note manual highlights", () => {
     window.getSelection()?.removeAllRanges()
   })
 
-  it("binds a clinician selection to the immutable AI version and accepts it", async () => {
+  it("binds a clinician-confirmed selection to the immutable AI version", async () => {
     const rawContent =
       "AI-assisted nursing draft: Patient 💊 review: oral intake remains restricted pending reassessment."
     const projection = aiDisplayProjection(rawContent)
     const quote = "oral intake remains restricted"
     const create = vi
       .spyOn(TrustService, "createHighlight")
-      .mockResolvedValue({ data: acceptedHighlight } as never)
-    const accept = vi
-      .spyOn(TrustService, "accept")
       .mockResolvedValue({ data: acceptedHighlight } as never)
     const { invalidate } = renderHighlight(
       <AiManualHighlight
@@ -90,10 +87,6 @@ describe("AI note manual highlights", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add to priorities" }))
 
     expect(screen.getByRole("dialog")).toHaveTextContent(quote)
-    const label = screen.getByLabelText("Priority label")
-    fireEvent.change(label, {
-      target: { value: "Oral intake remains restricted" },
-    })
     fireEvent.click(
       screen.getByRole("button", { name: "Add to Current priorities" }),
     )
@@ -108,14 +101,11 @@ describe("AI note manual highlights", () => {
         start_offset: expectedStart,
         end_offset: expectedStart + Array.from(quote).length,
         exact_quote: quote,
-        label: "Oral intake remains restricted",
+        label: quote,
         patient_facing: false,
         feature_keys: ["entry_type:ai_nurse_consult_summary"],
         clinician_confirmed: true,
       }),
-    })
-    expect(accept).toHaveBeenCalledWith({
-      path: { highlight_id: "highlight-1" },
     })
     await waitFor(() =>
       expect(invalidate).toHaveBeenCalledWith({
@@ -124,7 +114,7 @@ describe("AI note manual highlights", () => {
     )
     expect(
       screen.getByText(
-        "Added to Current priorities: Oral intake remains restricted",
+        "Added to Current priorities: oral intake remains restricted",
       ),
     ).toBeInTheDocument()
   })

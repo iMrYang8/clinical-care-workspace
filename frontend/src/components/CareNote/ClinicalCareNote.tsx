@@ -49,6 +49,7 @@ import { formatSingaporeDate, formatSingaporeDateTime } from "@/lib/dateTime"
 import { CommentsRail } from "./CommentsRail"
 import { EntryComposer } from "./EntryComposer"
 import { GlanceTopCard } from "./GlanceTopCard"
+import { PatientSharingPanel } from "./PatientSharingPanel"
 import { type SourceFocus, TimelineEntryCard } from "./TimelineEntryCard"
 import { VersionHistoryDrawer } from "./VersionHistoryDrawer"
 
@@ -574,6 +575,12 @@ export function ClinicalCareNote({
         </section>
 
         <aside className="flex flex-col gap-5 lg:sticky lg:top-24">
+          <PatientSharingPanel
+            currentUser={currentUser}
+            onChanged={refreshPatient}
+            patientId={patientId}
+            timeline={timeline}
+          />
           <Card className="order-3 scroll-mt-24" id="structured-context">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-3">

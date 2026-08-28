@@ -106,6 +106,7 @@ Browser tests are under `frontend/tests/`. Security and domain tests cover tenan
 
 - [Architecture diagram](./docs/architecture.svg)
 - [Technical brief](./docs/TECHNICAL_BRIEF.md)
+- [中文最终演示脚本](./docs/DEMO_SCRIPT.zh-CN.md)
 - [Voice pipeline](./docs/VOICE_PIPELINE.md)
 - [Model inventory](./MODEL_INVENTORY.md)
 - [Dataset sources and limits](./datasets/README.md)

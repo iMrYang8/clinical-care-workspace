@@ -22,6 +22,8 @@ from app.models import (
     EntryVersion,
     Highlight,
     Patient,
+    PatientPublication,
+    PatientSharingRequest,
     RetentionLock,
 )
 from app.services.nightingale import decrypt_version
@@ -130,6 +132,24 @@ def protected_reasons(
     tasks = session.exec(task_statement).all()
     if any(task.status != "completed" for task in tasks):
         reasons.append("open_task")
+    sharing_statement = select(PatientSharingRequest).where(
+        PatientSharingRequest.clinic_id == context.clinic_id,
+        PatientSharingRequest.entry_version_id == version.id,
+        PatientSharingRequest.status == "pending",
+    )
+    if lock:
+        sharing_statement = sharing_statement.with_for_update()
+    if session.exec(sharing_statement).first() is not None:
+        reasons.append("pending_patient_sharing")
+    publication_statement = select(PatientPublication).where(
+        PatientPublication.clinic_id == context.clinic_id,
+        PatientPublication.entry_version_id == version.id,
+        col(PatientPublication.withdrawn_at).is_(None),
+    )
+    if lock:
+        publication_statement = publication_statement.with_for_update()
+    if session.exec(publication_statement).first() is not None:
+        reasons.append("active_patient_publication")
     if _active_retention_lock(
         session, context.clinic_id, entry, version, now, lock=lock
     ):

@@ -103,8 +103,8 @@ Password: synthetic-demo-only
 
 ### Bonus：Self-learning + 历史保留
 
-1. Current priorities 前四位为确定性排序，第五位才允许受限探索。
-2. 页面只有在卡片可见面积 ≥50% 且持续 ≥2 秒后记录 impression。
+1. Current priorities 当前采用完全确定性的排序；系统不执行随机探索。
+2. 页面只有在卡片可见面积 ≥50% 且持续 ≥2 秒后记录 impression；该记录当前仅用于审计和曝光偏差分析，不直接参与评分。
 3. Dismiss 必须提供原因；Critical、Unresolved、Clinician-confirmed 项不受负学习影响。
 4. Clinician 可在 Historical retention 查看当前患者的 Archived、Protected、Eligible 数量。
 5. Jordan 的未解决冲突和开放任务会保护相关历史，防止过早归档。

@@ -17,7 +17,7 @@ The primary workflow is:
 3. **View source** resolves a priority or normalized fact to the exact wording in an immutable saved note version.
 4. Human and AI-assisted entries appear together in a longitudinal timeline while retaining their type and review state.
 5. Staff and Clinician edit their permitted sections, discuss selected text, mention or assign a colleague, resolve/reopen threads, compare versions, and restore an earlier version as a new version.
-6. A Clinician resolves high-risk conflicts and approves patient-facing information. Patients use a separate My Care projection that excludes internal comments, raw AI working material, scores, transcripts, and audio.
+6. Staff submits an exact saved note version to the Patient sharing queue. A Clinician reviews that immutable version, passes the provenance/redaction/conflict gates, publishes it, or later withdraws it. Patients use a separate My Care projection that excludes internal comments, raw AI working material, scores, transcripts, and audio; a withdrawal removes the note while retaining a visible receipt and audit history.
 
 The warm Current-priorities path reads an encrypted precomputed snapshot rather than invoking a model. An exploratory run against this **dirty working tree** measured 100 warm reads at median 2.602 ms, p95 **3.881 ms**, and p99 4.151 ms, below the 300 ms target. This is useful current evidence, but it is not a release-candidate measurement until it is rebound to a clean revision and image digest.
 
@@ -37,7 +37,7 @@ Clinic → Patient → Entry → immutable EntryVersion
 
 Entries do not mutate history. Every save creates an `EntryVersion`; compare-and-swap version checks reject stale writes, and restore creates a new current version. `ProvenancePointer` stores the saved version, offsets, exact quote/context, quote hash, and optional audio time range. The user interface shows the clinically useful source title, author, date, quote, and historical state while hiding internal UUIDs and hashes.
 
-The internal provenance chain is implemented and source jumps were observed in the browser. A strict brief-reading gap remains: the general timeline `EntryPublic` DTO does not yet expose `author_role` and a direct top-level provenance pointer for every AI entry; today those fields are reached indirectly through membership/AI-run and source-version relations. This must be closed before claiming literal DTO-level conformance.
+The internal provenance chain is implemented and source jumps were observed in the browser. `EntryPublic` and `PatientTimelineEntry` now expose a required `author_role` plus typed top-level provenance. AI/System entries return `author_role=system`; normal AI runs resolve the immutable input version directly, reviewed voice output uses an explicit entry relation, an archived source is labelled `archived`, and a missing source is honestly returned as `unavailable` rather than treating generated wording as evidence.
 
 ## 3. Roles and browser validation
 
@@ -80,7 +80,7 @@ The database makes the mechanism auditable:
 
 The actor/viewer identifiers provide accountability and bias-analysis evidence; they are **not** used to build an individual preference vector. Ranking reads clinic aggregates keyed by `(clinic_id, feature_key)`. Impressions currently remain telemetry and are not consumed by the scoring formula. The current production path performs no randomized exploration or inverse-propensity correction; therefore it must not claim a “10% exploration” experiment. In the UI, **Why this decision?** exposes base components, clinic feedback adjustment, protected status, source, risk floor, confidence state, and what happens when a check fails.
 
-The backend and API contracts support manual/accept/reject/pin signals, but the browser still lacks the brief's exact interaction for selecting an arbitrary phrase inside an AI-assisted note and creating a new manual Highlight. This is the main strict P1 demonstration gap. A clinic-level learning evidence panel for Admin would also make aggregate feature weights and feedback counts easier to inspect without SQL.
+The Clinician browser now supports the brief's exact manual-Highlight interaction: select arbitrary wording inside any AI-assisted note, review the exact quote in a dialog, and create a clinician-confirmed Highlight bound to that immutable version, code-point offsets, and quote context. The priority deliberately retains the selected source wording; a paraphrase or correction must be a separately authored clinical note. Staff, Admin, and Patient do not receive this control. The resulting event updates the same clinic-level bounded feature mechanism and refreshes Current priorities. A clinic-level learning evidence panel for Admin would still make aggregate feature weights and feedback counts easier to inspect without SQL.
 
 ## 5. AI trust, real evaluation, voice, and retention
 
@@ -107,4 +107,4 @@ Data decay separates retention from deletion. Older eligible bodies can move to 
 - Admin-configured provider keys and task-specific fast/careful model routing are operational controls, not proof that a selected model is clinically adequate.
 - The current OpenAI evaluations are explicitly Low; patient publication still requires human approval and source checks.
 
-Before final delivery, run and preserve a clean, revision-bound full gate; add the manual AI-phrase Highlight interaction; expose explicit `author_role` and direct AI provenance in the timeline DTO; and bind the final benchmark, browser report, source SHA/tree state, and OCI image digest into one evidence package. Historical candidate evidence remains under [`docs/delivery/`](./delivery/) and must not be used to attest to later working-tree changes.
+Before final delivery, run and preserve a clean, revision-bound full gate, then bind the final benchmark, browser report, source SHA/tree state, and OCI image digest into one evidence package. The manual AI-phrase Highlight interaction, direct Timeline author/provenance contract, and Staff-request/Clinician-approval/withdrawal workbench are implemented in the current working tree; they must still be included in that final revision-bound browser gate. Historical candidate evidence remains under [`docs/delivery/`](./delivery/) and must not be used to attest to later working-tree changes.

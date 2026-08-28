@@ -54,6 +54,8 @@ def _entry_response(
         patient_id=public.patient_id,
         section=public.section,
         entry_type=public.entry_type,
+        author_role=public.author_role,
+        provenance=public.provenance,
         patient_facing=public.patient_facing,
         version_id=public.version_id,
         version_no=public.version_no,

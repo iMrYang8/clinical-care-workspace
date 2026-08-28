@@ -52,7 +52,10 @@ def test_zstd_aes_archive_rehydrate_preserves_hash_and_provenance_and_rejects_ta
             "section": "clinician",
             "title": "Old synthetic evidence",
             "content": "prefix EVIDENCE suffix",
-            "patient_facing": True,
+            # This fixture exercises archival integrity, not an active patient
+            # publication. Published versions are intentionally protected from
+            # decay by the sharing workflow.
+            "patient_facing": False,
         },
     )
     assert entry.status_code == 201, entry.text
@@ -202,6 +205,77 @@ def test_decay_preview_reports_every_protection_reason(
         )
         assert {"critical", "unresolved"} <= set(candidate.protected_reasons)
         assert candidate.eligible_for_cold is False
+
+
+def test_pending_sharing_and_active_publication_protect_exact_versions_from_decay(
+    client: TestClient, auth_headers
+) -> None:
+    clinician_headers = auth_headers("clinician")
+    staff_headers = auth_headers("staff")
+    patient_id = client.get("/api/v1/patients", headers=clinician_headers).json()[
+        "data"
+    ][0]["id"]
+
+    staff_entry = client.post(
+        "/api/v1/entries",
+        headers=staff_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "staff",
+            "title": "Pending patient update",
+            "content": "A saved care-staff update awaiting review.",
+        },
+    )
+    assert staff_entry.status_code == 201, staff_entry.text
+    request = client.post(
+        f"/api/v1/entries/{staff_entry.json()['id']}/patient-sharing-requests",
+        headers=staff_headers,
+        json={"entry_version_id": staff_entry.json()["version_id"]},
+    )
+    assert request.status_code == 201, request.text
+
+    published_entry = client.post(
+        "/api/v1/entries",
+        headers=clinician_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Approved patient update",
+            "content": "A clinician-approved patient update.",
+            "patient_facing": True,
+        },
+    )
+    assert published_entry.status_code == 201, published_entry.text
+
+    with Session(engine) as session:
+        user = session.get(User, demo_id("user-clinician"))
+        membership = session.get(ClinicMembership, demo_id("membership-clinician"))
+        pending_version = session.get(
+            EntryVersion, uuid.UUID(staff_entry.json()["version_id"])
+        )
+        published_version = session.get(
+            EntryVersion, uuid.UUID(published_entry.json()["version_id"])
+        )
+        assert user and membership and pending_version and published_version
+        future = max(
+            pending_version.created_at, published_version.created_at
+        ) + timedelta(days=731)
+        candidates = list_decay_candidates(
+            session,
+            RequestContext(user=user, membership=membership),
+            now=future,
+        )
+        by_version = {item.entry_version_id: item for item in candidates}
+        assert (
+            "pending_patient_sharing"
+            in by_version[pending_version.id].protected_reasons
+        )
+        assert by_version[pending_version.id].eligible_for_cold is False
+        assert (
+            "active_patient_publication"
+            in by_version[published_version.id].protected_reasons
+        )
+        assert by_version[published_version.id].eligible_for_cold is False
 
 
 @pytest.mark.unit

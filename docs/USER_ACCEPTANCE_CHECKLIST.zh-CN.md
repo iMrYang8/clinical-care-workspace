@@ -300,6 +300,33 @@ artifacts/evaluation/fact-calibration.json
 
 证据截图：`docs/evidence/12-voice-learning-decay.png`
 
+## 14A. AI 划词、Timeline 元数据与患者共享闭环
+
+### AI note 划词创建 Highlight
+
+- [ ] 以 Clinician 打开任意 AI-assisted note，选中一段完整临床文字。
+- [ ] 页面出现 `Add to priorities`；弹窗显示精确引用，Priority 沿用所选原文且不允许把 AI 原文静默改写成另一项临床判断。
+- [ ] 提交后新条目出现在 Current priorities，`View source` 回到相同不可变版本与精确文字。
+- [ ] Staff、Clinic Admin、Patient 对同一 AI note 均看不到创建控件。
+
+### Timeline DTO
+
+- [ ] AI/System 条目直接返回 `author_role: "system"`。
+- [ ] 顶层 `provenance` 包含 source Entry/Version、exact quote 与 `resolved | archived | unavailable` 状态。
+- [ ] 缺失来源时状态为 `unavailable`，生成文字没有被当成精确来源。
+
+### Staff → Clinician → Patient → Withdraw
+
+- [ ] Staff 在 Patient sharing 中选择当前 Staff note，提交 `Request clinician review`。
+- [ ] Clinician 看见同一 pending request，打开弹窗核对请求时的精确保存版本。
+- [ ] 版本过期、Redaction Gate 失败或存在未解决 High/Critical conflict 时，发布保持阻止状态。
+- [ ] Gate 通过后 Clinician 执行 `Approve and publish`，请求状态、审核人和时间被持久化。
+- [ ] Patient 登录后只看见获批内容和批准凭证，不看见内部请求、评论或技术字段。
+- [ ] Clinician 执行 `Withdraw from patient portal` 后，Patient timeline 不再返回正文，但 Sharing updates 保留 Withdrawn 回执。
+- [ ] Staff、Patient、Clinic Admin 对审批或撤回接口均得到 403；跨诊所请求不可见。
+
+证据截图：`docs/evidence/12a-highlight-sharing-workflow.png`
+
 ## 15. 数据库只读核验
 
 ```bash
@@ -341,6 +368,11 @@ FROM conflict_cases ORDER BY created_at DESC;
 SELECT patient_id, entry_version_id, approved_by_membership_id,
        approval_policy_version, approved_at, withdrawn_at
 FROM patient_publications ORDER BY approved_at DESC;
+
+-- Staff 请求、Clinician 审核与撤回状态
+SELECT patient_id, entry_id, entry_version_id, requested_by_membership_id,
+       status, publication_id, reviewed_by_membership_id, created_at, reviewed_at
+FROM patient_sharing_requests ORDER BY created_at DESC;
 
 -- 平台跨诊所访问审计
 SELECT action, target_clinic_id, target_patient_id, request_id, created_at

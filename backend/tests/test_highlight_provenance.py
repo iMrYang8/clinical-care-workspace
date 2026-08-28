@@ -57,7 +57,7 @@ def test_ai_scribed_highlight_is_promoted_and_resolves_to_exact_ai_version(
             "exact_quote": quote,
             "prefix": content[:start],
             "suffix": content[start + len(quote) :],
-            "label": "AI doctor draft requires clinician review",
+            "label": quote,
             "feature_keys": ["entry_type:ai_doctor_consult_summary"],
             "clinician_confirmed": True,
         },
@@ -65,11 +65,7 @@ def test_ai_scribed_highlight_is_promoted_and_resolves_to_exact_ai_version(
     assert highlight.status_code == 201, highlight.text
     created = highlight.json()
     assert created["anchor_state"] == "resolved"
-
-    accepted = client.post(
-        f"/api/v1/highlights/{created['id']}/accept", headers=clinician_headers
-    )
-    assert accepted.status_code == 200, accepted.text
+    assert created["status"] == "accepted"
     glance = client.get(
         f"/api/v1/patients/{patient_id}/glance", headers=clinician_headers
     )
@@ -85,6 +81,84 @@ def test_ai_scribed_highlight_is_promoted_and_resolves_to_exact_ai_version(
     assert body["state"] == "resolved"
     assert body["exact_quote"] == quote
     assert body["entry_version_id"] == ai["version_id"]
+
+
+def test_staff_cannot_confirm_ai_assisted_wording_as_a_manual_highlight(
+    client: TestClient, auth_headers
+) -> None:
+    clinician_headers = auth_headers("clinician")
+    staff_headers = auth_headers("staff")
+    worker_headers = auth_headers("worker")
+    patient_id = client.get("/api/v1/patients", headers=clinician_headers).json()[
+        "data"
+    ][0]["id"]
+    content = "AI-assisted draft requires clinical confirmation."
+    ai_entry = client.post(
+        "/api/v1/entries",
+        headers=worker_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "system",
+            "origin": "ai",
+            "entry_type": "ai_doctor_consult_summary",
+            "title": "Synthetic AI source",
+            "content": content,
+        },
+    )
+    assert ai_entry.status_code == 201, ai_entry.text
+
+    attempted = client.post(
+        f"/api/v1/entries/{ai_entry.json()['id']}/highlights",
+        headers=staff_headers,
+        json={
+            "entry_version_id": ai_entry.json()["version_id"],
+            "start_offset": 0,
+            "end_offset": len(content),
+            "exact_quote": content,
+            "label": "Unreviewed AI claim",
+            "clinician_confirmed": True,
+        },
+    )
+    assert attempted.status_code == 403, attempted.text
+    assert attempted.json()["detail"]["code"] == "CLINICIAN_CONFIRMATION_REQUIRED"
+
+
+def test_ai_assisted_highlight_label_cannot_reverse_the_selected_source(
+    client: TestClient, auth_headers
+) -> None:
+    clinician_headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=clinician_headers).json()[
+        "data"
+    ][0]["id"]
+    content = "Oral intake remains restricted pending reassessment."
+    ai_entry = client.post(
+        "/api/v1/entries",
+        headers=auth_headers("worker"),
+        json={
+            "patient_id": patient_id,
+            "section": "system",
+            "origin": "ai",
+            "entry_type": "ai_nurse_consult_summary",
+            "title": "Synthetic AI nursing source",
+            "content": content,
+        },
+    )
+    assert ai_entry.status_code == 201, ai_entry.text
+
+    attempted = client.post(
+        f"/api/v1/entries/{ai_entry.json()['id']}/highlights",
+        headers=clinician_headers,
+        json={
+            "entry_version_id": ai_entry.json()["version_id"],
+            "start_offset": 0,
+            "end_offset": len(content),
+            "exact_quote": content,
+            "label": "Oral intake is unrestricted.",
+            "clinician_confirmed": True,
+        },
+    )
+    assert attempted.status_code == 422, attempted.text
+    assert attempted.json()["detail"]["code"] == "EXACT_SOURCE_WORDING_REQUIRED"
 
 
 def test_provenance_resolves_against_immutable_version_after_edit(
@@ -312,6 +386,19 @@ def test_withdrawing_entry_removes_accepted_highlight_from_patient_glance(
         headers=patient_headers,
     )
     assert entry["id"] not in {row["id"] for row in timeline.json()["data"]}
+
+    reshared = client.patch(
+        f"/api/v1/entries/{entry['id']}",
+        headers=clinician_headers | {"If-Match": withdrawn.json()["version_id"]},
+        json={"patient_facing": True},
+    )
+    assert reshared.status_code == 200, reshared.text
+    assert (
+        client.get(
+            f"/api/v1/provenance/{pointer_id}/resolve", headers=patient_headers
+        ).status_code
+        == 404
+    ), "a later publication must not reopen a withdrawn historical pointer"
 
 
 def test_accept_and_pin_rebuild_precomputed_glance_with_max_five_cards(

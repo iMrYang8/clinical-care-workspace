@@ -56,10 +56,12 @@ from app.services.importance import (
 from app.services.nightingale import (
     decrypt_version,
     emit_change,
+    get_patient,
     get_scoped_entry,
     get_scoped_version,
     patch_entry,
     rebuild_glance,
+    record_patient_sharing_request,
     resolve_pointer,
     validate_anchor,
 )
@@ -144,6 +146,29 @@ def create_highlight(
 ) -> HighlightPublic:
     _require_reviewer(context)
     entry = get_scoped_entry(session, context, entry_id)
+    ai_derived = entry.origin in {"ai", "system"} or entry.entry_type.startswith("ai_")
+    if ai_derived and context.role != "clinician":
+        # Selecting wording from a derived note is a clinical confirmation,
+        # not ordinary care-team feedback. Enforce the same authority at the
+        # API boundary as the clinician-only browser control so a Staff token
+        # cannot turn uncalibrated AI text into a human assertion.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CLINICIAN_CONFIRMATION_REQUIRED",
+                "message": "A clinician must confirm highlights from AI-assisted notes.",
+            },
+        )
+    if ai_derived and " ".join(body.label.split()) != " ".join(
+        body.exact_quote.split()
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "EXACT_SOURCE_WORDING_REQUIRED",
+                "message": "An AI-assisted priority must use the selected source wording. Record a separate clinical correction to paraphrase it.",
+            },
+        )
     version = get_scoped_version(session, context, entry, body.entry_version_id)
     # Lock the immutable source before anchor validation. Archive takes the same
     # row lock, so a protection cannot be inserted against newly-cold content.
@@ -185,6 +210,12 @@ def create_highlight(
     effective_critical = risk.effective_risk == "critical"
     if effective_critical and "risk:critical" not in feature_keys:
         feature_keys.append("risk:critical")
+    ai_confirmation_accepted = (
+        ai_derived
+        and context.role == "clinician"
+        and anchor_state == "resolved"
+        and not review_required
+    )
     highlight = Highlight(
         id=highlight_id,
         clinic_id=context.clinic_id,
@@ -194,13 +225,16 @@ def create_highlight(
         label_ciphertext=field_codec.encrypt_text(
             context.clinic_id, "highlight.label", highlight_id, body.label
         ),
+        status="accepted" if ai_confirmation_accepted else "pending",
         critical=effective_critical,
         patient_facing=body.patient_facing,
         anchor_state=anchor_state,
         review_required=review_required,
         feature_keys_json=feature_keys,
         unresolved=body.unresolved,
-        clinician_confirmed=body.clinician_confirmed and context.role == "clinician",
+        clinician_confirmed=(
+            context.role == "clinician" and (ai_derived or body.clinician_confirmed)
+        ),
         created_by_id=context.user_id,
     )
     session.add(highlight)
@@ -623,6 +657,36 @@ def provenance_resolve(
         ).first()
         if patient_highlight is None:
             raise HTTPException(status_code=404, detail="Provenance not found")
+        active_publication = session.exec(
+            select(PatientPublication).where(
+                PatientPublication.clinic_id == context.clinic_id,
+                PatientPublication.patient_id == patient_highlight.patient_id,
+                PatientPublication.entry_id == patient_highlight.entry_id,
+                PatientPublication.entry_version_id == pointer.entry_version_id,
+                col(PatientPublication.withdrawn_at).is_(None),
+            )
+        ).first()
+        if active_publication is None:
+            # A compound approval may publish a new patient-facing projection
+            # while retaining the requested immutable source version in its
+            # item list. That exact binding is also valid; an unrelated pointer
+            # from a withdrawn historical version is not.
+            active_publication = session.exec(
+                select(PatientPublication)
+                .join(
+                    PatientPublicationItem,
+                    col(PatientPublicationItem.publication_id)
+                    == col(PatientPublication.id),
+                )
+                .where(
+                    PatientPublication.clinic_id == context.clinic_id,
+                    PatientPublication.patient_id == patient_highlight.patient_id,
+                    col(PatientPublication.withdrawn_at).is_(None),
+                    PatientPublicationItem.provenance_pointer_id == pointer.id,
+                )
+            ).first()
+        if active_publication is None:
+            raise HTTPException(status_code=404, detail="Provenance not found")
     version = session.exec(
         select(EntryVersion).where(
             EntryVersion.id == pointer.entry_version_id,
@@ -799,6 +863,13 @@ def resolve_conflict(
 def _publication_public(
     session: Session, publication: PatientPublication
 ) -> PatientPublicationPublic:
+    version = session.get(EntryVersion, publication.entry_version_id)
+    if version is None or version.clinic_id != publication.clinic_id:
+        raise HTTPException(status_code=500, detail="Publication source missing")
+    entry = session.get(Entry, version.entry_id)
+    if entry is None or entry.clinic_id != publication.clinic_id:
+        raise HTTPException(status_code=500, detail="Publication entry missing")
+    title, _ = decrypt_version(version)
     membership = session.get(ClinicMembership, publication.approved_by_membership_id)
     user = session.get(User, membership.user_id) if membership is not None else None
     items = session.exec(
@@ -810,7 +881,10 @@ def _publication_public(
     return PatientPublicationPublic(
         id=publication.id,
         patient_id=publication.patient_id,
+        entry_id=entry.id,
         entry_version_id=publication.entry_version_id,
+        supersedes_publication_id=publication.supersedes_publication_id,
+        entry_title=title,
         approved_by_name=(user.full_name or str(user.email)) if user else "Clinician",
         approval_policy_version=publication.approval_policy_version,
         approved_at=publication.approved_at,
@@ -830,18 +904,93 @@ def _sharing_request_public(
 ) -> PatientSharingRequestPublic:
     membership = session.get(ClinicMembership, request.requested_by_membership_id)
     user = session.get(User, membership.user_id) if membership else None
+    reviewer_membership = (
+        session.get(ClinicMembership, request.reviewed_by_membership_id)
+        if request.reviewed_by_membership_id is not None
+        else None
+    )
+    reviewer = (
+        session.get(User, reviewer_membership.user_id)
+        if reviewer_membership is not None
+        else None
+    )
+    entry = session.get(Entry, request.entry_id)
+    version = session.get(EntryVersion, request.entry_version_id)
+    if (
+        entry is None
+        or version is None
+        or entry.clinic_id != request.clinic_id
+        or version.clinic_id != request.clinic_id
+    ):
+        raise HTTPException(status_code=500, detail="Sharing request source missing")
+    title, _ = decrypt_version(version)
     return PatientSharingRequestPublic(
         id=request.id,
         patient_id=request.patient_id,
         entry_id=request.entry_id,
         entry_version_id=request.entry_version_id,
+        entry_title=title,
+        entry_section=entry.section,
+        entry_origin=entry.origin,
         requested_by_name=(user.full_name or str(user.email))
         if user
         else "Care team member",
         status=request.status,
         created_at=request.created_at,
         reviewed_at=request.reviewed_at,
+        reviewed_by_name=(
+            reviewer.full_name or str(reviewer.email) if reviewer else None
+        ),
+        publication_id=request.publication_id,
     )
+
+
+def _whole_version_pointer(
+    session: Session,
+    *,
+    clinic_id: uuid.UUID,
+    version: EntryVersion,
+    content: str,
+) -> ProvenancePointer:
+    """Return a resolved immutable pointer covering the approved human note."""
+
+    content_hash = hashlib.sha256(content.encode()).hexdigest()
+    existing = session.exec(
+        select(ProvenancePointer).where(
+            ProvenancePointer.clinic_id == clinic_id,
+            ProvenancePointer.entry_version_id == version.id,
+            ProvenancePointer.start_offset == 0,
+            ProvenancePointer.end_offset == len(content),
+            ProvenancePointer.quote_sha256 == content_hash,
+            col(ProvenancePointer.highlight_id).is_(None),
+            col(ProvenancePointer.comment_id).is_(None),
+            ProvenancePointer.anchor_state == "resolved",
+            col(ProvenancePointer.review_required).is_(False),
+        )
+    ).first()
+    if existing is not None:
+        return existing
+    pointer_id = uuid.uuid4()
+    pointer = ProvenancePointer(
+        id=pointer_id,
+        clinic_id=clinic_id,
+        entry_version_id=version.id,
+        start_offset=0,
+        end_offset=len(content),
+        exact_quote_ciphertext=field_codec.encrypt_text(
+            clinic_id, "provenance.exact_quote", pointer_id, content
+        ),
+        prefix_ciphertext=field_codec.encrypt_text(
+            clinic_id, "provenance.prefix", pointer_id, ""
+        ),
+        suffix_ciphertext=field_codec.encrypt_text(
+            clinic_id, "provenance.suffix", pointer_id, ""
+        ),
+        quote_sha256=content_hash,
+    )
+    session.add(pointer)
+    session.flush()
+    return pointer
 
 
 @router.post(
@@ -855,31 +1004,39 @@ def create_patient_sharing_request(
     session: SessionDep,
     context: CurrentContext,
 ) -> PatientSharingRequestPublic:
-    _require_reviewer(context)
-    entry = get_scoped_entry(session, context, entry_id)
+    if context.role != "staff":
+        raise HTTPException(status_code=403, detail="Care staff request required")
+    entry = get_scoped_entry(session, context, entry_id, lock=True)
     version = get_scoped_version(session, context, entry, body.entry_version_id)
+    if entry.section != "staff" or entry.origin != "human":
+        raise HTTPException(
+            status_code=409,
+            detail="Only a care staff note can enter the sharing review queue",
+        )
     existing = session.exec(
-        select(PatientSharingRequest).where(
+        select(PatientSharingRequest)
+        .where(
             PatientSharingRequest.clinic_id == context.clinic_id,
+            PatientSharingRequest.patient_id == entry.patient_id,
+            PatientSharingRequest.entry_id == entry.id,
             PatientSharingRequest.entry_version_id == version.id,
             PatientSharingRequest.status == "pending",
         )
+        .with_for_update()
+        .execution_options(populate_existing=True)
     ).first()
     if existing is not None:
         return _sharing_request_public(session, existing)
-    request = PatientSharingRequest(
-        clinic_id=context.clinic_id,
-        patient_id=entry.patient_id,
-        entry_id=entry.id,
-        entry_version_id=version.id,
-        requested_by_membership_id=context.membership.id,
+    request = record_patient_sharing_request(
+        session,
+        context,
+        entry,
+        version,
     )
-    session.add(request)
-    session.flush()
     emit_change(
         session,
         context,
-        action="patient_sharing.requested",
+        action="entry.patient_sharing_requested",
         resource_type="patient_sharing_request",
         resource_id=request.id,
         metadata={"entry_id": str(entry.id), "version_id": str(version.id)},
@@ -900,6 +1057,7 @@ def list_patient_sharing_requests(
 ) -> list[PatientSharingRequestPublic]:
     if context.role not in {"staff", "clinician", "admin"}:
         raise HTTPException(status_code=403, detail="Clinical team role required")
+    get_patient(session, context, patient_id)
     rows = session.exec(
         select(PatientSharingRequest)
         .where(
@@ -909,6 +1067,29 @@ def list_patient_sharing_requests(
         .order_by(col(PatientSharingRequest.created_at).desc())
     ).all()
     return [_sharing_request_public(session, row) for row in rows]
+
+
+@router.get(
+    "/patients/{patient_id}/patient-publications",
+    response_model=list[PatientPublicationPublic],
+)
+def list_patient_publications(
+    patient_id: uuid.UUID,
+    session: SessionDep,
+    context: CurrentContext,
+) -> list[PatientPublicationPublic]:
+    if context.role not in {"staff", "clinician", "admin"}:
+        raise HTTPException(status_code=403, detail="Clinical team role required")
+    get_patient(session, context, patient_id)
+    rows = session.exec(
+        select(PatientPublication)
+        .where(
+            PatientPublication.clinic_id == context.clinic_id,
+            PatientPublication.patient_id == patient_id,
+        )
+        .order_by(col(PatientPublication.approved_at).desc())
+    ).all()
+    return [_publication_public(session, row) for row in rows]
 
 
 @router.post(
@@ -924,8 +1105,61 @@ def publish_for_patient(
 ) -> PatientPublicationPublic:
     if context.role != "clinician":
         raise HTTPException(status_code=403, detail="Clinician approval required")
-    entry = get_scoped_entry(session, context, entry_id)
+    # Entry is the lock-order root shared by edits, review requests and
+    # publications. It also refreshes current_version_id before any decision.
+    entry = get_scoped_entry(session, context, entry_id, lock=True)
     source = get_scoped_version(session, context, entry, body.entry_version_id)
+    sharing_request: PatientSharingRequest | None = None
+    if (
+        entry.origin == "human"
+        and entry.section == "staff"
+        and body.sharing_request_id is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "STAFF_SHARING_REQUEST_REQUIRED",
+                "message": "Care staff must submit the saved note for clinician review before publication.",
+            },
+        )
+    if body.sharing_request_id is not None:
+        sharing_request = session.exec(
+            select(PatientSharingRequest)
+            .where(
+                PatientSharingRequest.id == body.sharing_request_id,
+                PatientSharingRequest.clinic_id == context.clinic_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).first()
+        if sharing_request is None:
+            raise HTTPException(status_code=404, detail="Sharing request not found")
+        if (
+            sharing_request.entry_id != entry.id
+            or sharing_request.entry_version_id != source.id
+            or sharing_request.patient_id != entry.patient_id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SHARING_REQUEST_SOURCE_MISMATCH"},
+            )
+        if sharing_request.status == "approved" and sharing_request.publication_id:
+            replay = session.exec(
+                select(PatientPublication).where(
+                    PatientPublication.clinic_id == context.clinic_id,
+                    PatientPublication.patient_id == entry.patient_id,
+                    PatientPublication.entry_id == entry.id,
+                    PatientPublication.id == sharing_request.publication_id,
+                    col(PatientPublication.withdrawn_at).is_(None),
+                )
+            ).first()
+            if replay is not None:
+                return _publication_public(session, replay)
+        if sharing_request.status != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SHARING_REQUEST_ALREADY_REVIEWED"},
+            )
     if entry.current_version_id != source.id:
         raise HTTPException(
             status_code=409, detail="Review the latest version before sharing"
@@ -954,22 +1188,38 @@ def publish_for_patient(
                 "conflict_id": str(unresolved.id),
             },
         )
-    pointers = session.exec(
-        select(ProvenancePointer).where(
-            ProvenancePointer.clinic_id == context.clinic_id,
-            ProvenancePointer.entry_version_id == source.id,
-            ProvenancePointer.anchor_state == "resolved",
-            col(ProvenancePointer.review_required).is_(False),
+    title, content = decrypt_version(source)
+    if entry.origin == "human":
+        # A staff-authored note is itself an immutable primary source. Bind the
+        # clinician approval to the full requested version instead of requiring
+        # staff to manufacture a separate highlight first.
+        pointers = [
+            _whole_version_pointer(
+                session,
+                clinic_id=context.clinic_id,
+                version=source,
+                content=content,
+            )
+        ]
+    else:
+        pointers = list(
+            session.exec(
+                select(ProvenancePointer).where(
+                    ProvenancePointer.clinic_id == context.clinic_id,
+                    ProvenancePointer.entry_version_id == source.id,
+                    ProvenancePointer.anchor_state == "resolved",
+                    col(ProvenancePointer.review_required).is_(False),
+                )
+            ).all()
         )
-    ).all()
-    if not pointers:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "EXACT_SOURCE_REQUIRED",
-                "message": "Add and verify an exact source before sharing.",
-            },
-        )
+        if not pointers:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "EXACT_SOURCE_REQUIRED",
+                    "message": "Add and verify an exact source before sharing.",
+                },
+            )
     if entry.origin in {"ai", "system"}:
         assessments = session.exec(
             select(DecisionAssessment)
@@ -998,7 +1248,6 @@ def publish_for_patient(
                 status_code=409,
                 detail={"code": "CLAIM_LEVEL_PROVENANCE_REQUIRED"},
             )
-    title, content = decrypt_version(source)
     updated = patch_entry(
         session,
         context,
@@ -1009,11 +1258,15 @@ def publish_for_patient(
         patient_facing=True,
         action="entry.patient_sharing_approved",
         approved_patient_sharing=True,
+        commit=False,
     )
     publication = session.exec(
         select(PatientPublication).where(
             PatientPublication.clinic_id == context.clinic_id,
+            PatientPublication.patient_id == entry.patient_id,
+            PatientPublication.entry_id == entry.id,
             PatientPublication.entry_version_id == updated.version_id,
+            col(PatientPublication.withdrawn_at).is_(None),
         )
     ).first()
     if publication is None:
@@ -1059,12 +1312,52 @@ def publish_for_patient(
     ).all()
     for request in pending_requests:
         request.status = "approved"
+        request.publication_id = publication.id
         request.reviewed_by_membership_id = context.membership.id
         request.reviewed_at = get_datetime_utc()
         session.add(request)
+    if sharing_request is not None and sharing_request not in pending_requests:
+        sharing_request.status = "approved"
+        sharing_request.publication_id = publication.id
+        sharing_request.reviewed_by_membership_id = context.membership.id
+        sharing_request.reviewed_at = get_datetime_utc()
+        session.add(sharing_request)
     session.commit()
     session.refresh(publication)
     return _publication_public(session, publication)
+
+
+@router.post(
+    "/patient-sharing-requests/{request_id}/approve",
+    response_model=PatientPublicationPublic,
+    status_code=201,
+)
+def approve_patient_sharing_request(
+    request_id: uuid.UUID,
+    session: SessionDep,
+    context: CurrentContext,
+) -> PatientPublicationPublic:
+    if context.role != "clinician":
+        raise HTTPException(status_code=403, detail="Clinician approval required")
+    request = session.exec(
+        select(PatientSharingRequest)
+        .where(
+            PatientSharingRequest.id == request_id,
+            PatientSharingRequest.clinic_id == context.clinic_id,
+        )
+        .execution_options(populate_existing=True)
+    ).first()
+    if request is None:
+        raise HTTPException(status_code=404, detail="Sharing request not found")
+    return publish_for_patient(
+        request.entry_id,
+        PatientPublicationCreate(
+            entry_version_id=request.entry_version_id,
+            sharing_request_id=request.id,
+        ),
+        session,
+        context,
+    )
 
 
 @router.post(
@@ -1079,23 +1372,81 @@ def withdraw_patient_publication(
     if context.role != "clinician":
         raise HTTPException(status_code=403, detail="Clinician role required")
     publication = session.exec(
-        select(PatientPublication).where(
+        select(PatientPublication)
+        .where(
             PatientPublication.id == publication_id,
             PatientPublication.clinic_id == context.clinic_id,
         )
+        .with_for_update()
+        .execution_options(populate_existing=True)
     ).first()
     if publication is None:
         raise HTTPException(status_code=404, detail="Publication not found")
     if publication.withdrawn_at is None:
         publication.withdrawn_at = get_datetime_utc()
         session.add(publication)
+        source = session.get(EntryVersion, publication.entry_version_id)
+        entry = session.get(Entry, source.entry_id) if source is not None else None
+        if (
+            source is None
+            or entry is None
+            or source.clinic_id != context.clinic_id
+            or entry.clinic_id != context.clinic_id
+        ):
+            raise HTTPException(status_code=500, detail="Publication source missing")
+        approved_requests = session.exec(
+            select(PatientSharingRequest).where(
+                PatientSharingRequest.clinic_id == context.clinic_id,
+                PatientSharingRequest.patient_id == publication.patient_id,
+                PatientSharingRequest.entry_id == publication.entry_id,
+                PatientSharingRequest.publication_id == publication.id,
+                PatientSharingRequest.status == "approved",
+            )
+        ).all()
+        for request in approved_requests:
+            request.status = "withdrawn"
+            request.reviewed_by_membership_id = context.membership.id
+            request.reviewed_at = get_datetime_utc()
+            session.add(request)
         emit_change(
             session,
             context,
             action="patient_publication.withdrawn",
             resource_type="patient_publication",
             resource_id=publication.id,
+            metadata={"entry_id": str(entry.id)},
         )
-        session.commit()
+        other_active = session.exec(
+            select(PatientPublication).where(
+                PatientPublication.clinic_id == context.clinic_id,
+                PatientPublication.patient_id == publication.patient_id,
+                PatientPublication.entry_id == publication.entry_id,
+                PatientPublication.id != publication.id,
+                col(PatientPublication.withdrawn_at).is_(None),
+            )
+        ).first()
+        if (
+            other_active is None
+            and entry.patient_facing
+            and entry.current_version_id is not None
+        ):
+            current = session.get(EntryVersion, entry.current_version_id)
+            if current is None:
+                raise HTTPException(status_code=500, detail="Entry version missing")
+            title, content = decrypt_version(current)
+            patch_entry(
+                session,
+                context,
+                entry.id,
+                if_match=str(current.id),
+                title=title,
+                content=content,
+                patient_facing=False,
+                action="entry.patient_sharing_withdrawn",
+                withdrawn_patient_sharing=True,
+            )
+        else:
+            rebuild_glance(session, context, publication.patient_id)
+            session.commit()
         session.refresh(publication)
     return _publication_public(session, publication)

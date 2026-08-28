@@ -13,12 +13,16 @@ from sqlmodel import Session, col, select
 from app.api.deps import RequestContext
 from app.core.field_crypto import field_codec
 from app.models import (
+    AIRun,
     AuditEvent,
     ClinicMembership,
+    ConflictCase,
     DecisionAssessment,
     DomainEvent,
     Entry,
+    EntryAuthorRole,
     EntryCreate,
+    EntryProvenancePublic,
     EntryPublic,
     EntryRelation,
     EntryType,
@@ -309,6 +313,18 @@ def get_scoped_entry(
         not entry.patient_facing or entry.origin in {"ai", "system"}
     ):
         raise HTTPException(status_code=404, detail="Entry not found")
+    if context.role == "patient" and entry.section != "patient":
+        active_publication = session.exec(
+            select(PatientPublication).where(
+                PatientPublication.clinic_id == context.clinic_id,
+                PatientPublication.patient_id == entry.patient_id,
+                PatientPublication.entry_id == entry.id,
+                PatientPublication.entry_version_id == entry.current_version_id,
+                col(PatientPublication.withdrawn_at).is_(None),
+            )
+        ).first()
+        if active_publication is None:
+            raise HTTPException(status_code=404, detail="Entry not found")
     return entry
 
 
@@ -465,6 +481,124 @@ def version_public(version: EntryVersion) -> EntryVersionPublic:
     )
 
 
+def _entry_author_role(entry: Entry) -> EntryAuthorRole:
+    """Expose the clinical author role without leaking a worker identity.
+
+    Server authorization requires human authors to write only their own
+    section. AI and system rows are produced by a worker account internally,
+    but their public author is always the system as required by the timeline
+    contract.
+    """
+
+    if entry.origin in {"ai", "system"} or entry.section == "system":
+        return "system"
+    if entry.section in {"patient", "staff", "clinician"}:
+        return cast(EntryAuthorRole, entry.section)
+    return "system"
+
+
+def _source_provenance(
+    session: Session,
+    entry: Entry,
+) -> EntryProvenancePublic | None:
+    """Resolve an AI timeline row directly to its immutable source message.
+
+    The primary path is the persisted AI run. Reviewed voice output predates an
+    AI-run row in some flows, so its explicit entry relation is a safe fallback.
+    Missing metadata is represented honestly instead of treating generated
+    prose as its own source.
+    """
+
+    if entry.origin != "ai":
+        return None
+
+    source_version: EntryVersion | None = None
+    run = session.exec(
+        select(AIRun)
+        .where(
+            AIRun.clinic_id == entry.clinic_id,
+            AIRun.patient_id == entry.patient_id,
+            AIRun.output_entry_id == entry.id,
+        )
+        .order_by(desc(col(AIRun.created_at)))
+    ).first()
+    if run is not None:
+        source_version = session.exec(
+            select(EntryVersion).where(
+                EntryVersion.clinic_id == entry.clinic_id,
+                EntryVersion.id == run.source_entry_version_id,
+            )
+        ).first()
+    else:
+        relation = session.exec(
+            select(EntryRelation)
+            .where(
+                EntryRelation.clinic_id == entry.clinic_id,
+                EntryRelation.source_entry_id == entry.id,
+                col(EntryRelation.relation_type).in_(
+                    ["derived_from", "derived_from_voice_transcript"]
+                ),
+            )
+            .order_by(desc(col(EntryRelation.created_at)))
+        ).first()
+        if relation is not None:
+            source_entry = session.exec(
+                select(Entry).where(
+                    Entry.clinic_id == entry.clinic_id,
+                    Entry.patient_id == entry.patient_id,
+                    Entry.id == relation.target_entry_id,
+                )
+            ).first()
+            if source_entry is not None and source_entry.current_version_id is not None:
+                source_version = session.exec(
+                    select(EntryVersion).where(
+                        EntryVersion.clinic_id == entry.clinic_id,
+                        EntryVersion.entry_id == source_entry.id,
+                        EntryVersion.id == source_entry.current_version_id,
+                    )
+                ).first()
+
+    if source_version is None:
+        return EntryProvenancePublic(
+            source_entry_id=None,
+            source_entry_version_id=None,
+            exact_quote=None,
+            status="unavailable",
+        )
+
+    source_entry = session.exec(
+        select(Entry).where(
+            Entry.clinic_id == entry.clinic_id,
+            Entry.patient_id == entry.patient_id,
+            Entry.id == source_version.entry_id,
+        )
+    ).first()
+    if source_entry is None:
+        return EntryProvenancePublic(
+            source_entry_id=None,
+            source_entry_version_id=source_version.id,
+            exact_quote=None,
+            status="unavailable",
+        )
+    if (
+        source_version.title_ciphertext is None
+        or source_version.content_ciphertext is None
+    ):
+        return EntryProvenancePublic(
+            source_entry_id=source_entry.id,
+            source_entry_version_id=source_version.id,
+            exact_quote=None,
+            status="archived",
+        )
+    _, exact_source = decrypt_version(source_version)
+    return EntryProvenancePublic(
+        source_entry_id=source_entry.id,
+        source_entry_version_id=source_version.id,
+        exact_quote=exact_source,
+        status="resolved",
+    )
+
+
 def entry_public(session: Session, entry: Entry) -> EntryPublic:
     if entry.current_version_id is None:
         raise HTTPException(status_code=500, detail="Entry has no current version")
@@ -479,6 +613,8 @@ def entry_public(session: Session, entry: Entry) -> EntryPublic:
         section=entry.section,
         origin=entry.origin,
         entry_type=cast(EntryType, entry.entry_type),
+        author_role=_entry_author_role(entry),
+        provenance=_source_provenance(session, entry),
         patient_facing=entry.patient_facing,
         version_id=version.id,
         version_no=version.version_no,
@@ -499,11 +635,65 @@ def _record_clinician_publication(
 ) -> PatientPublication:
     """Bind a clinician sharing decision to an exact immutable text span."""
 
+    unresolved = session.exec(
+        select(ConflictCase).where(
+            ConflictCase.clinic_id == context.clinic_id,
+            ConflictCase.patient_id == entry.patient_id,
+            ConflictCase.status == "unresolved",
+            col(ConflictCase.severity).in_(["high", "critical"]),
+        )
+    ).first()
+    if unresolved is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "UNRESOLVED_CLINICAL_CONFLICT",
+                "conflict_id": str(unresolved.id),
+                "message": "Resolve the high-risk conflict before sharing.",
+            },
+        )
     if not redaction_is_qualified(session, clinic_id=context.clinic_id):
         raise HTTPException(
             status_code=409,
             detail={"code": "REDACTION_EVALUATION_REQUIRED"},
         )
+
+    active_publication = session.exec(
+        select(PatientPublication)
+        .where(
+            PatientPublication.clinic_id == context.clinic_id,
+            PatientPublication.patient_id == entry.patient_id,
+            PatientPublication.entry_id == entry.id,
+            col(PatientPublication.withdrawn_at).is_(None),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if (
+        active_publication is not None
+        and active_publication.entry_version_id == version.id
+    ):
+        return active_publication
+
+    superseded_at = get_datetime_utc()
+    if active_publication is not None:
+        active_publication.withdrawn_at = superseded_at
+        session.add(active_publication)
+        linked_requests = session.exec(
+            select(PatientSharingRequest)
+            .where(
+                PatientSharingRequest.clinic_id == context.clinic_id,
+                PatientSharingRequest.publication_id == active_publication.id,
+                PatientSharingRequest.status == "approved",
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+        for request in linked_requests:
+            request.status = "superseded"
+            request.reviewed_by_membership_id = context.membership.id
+            request.reviewed_at = superseded_at
+            session.add(request)
 
     pointer_id = uuid.uuid4()
     pointer = ProvenancePointer(
@@ -527,10 +717,15 @@ def _record_clinician_publication(
         quote_sha256=hashlib.sha256(content.encode()).hexdigest(),
     )
     session.add(pointer)
+
     publication = PatientPublication(
         clinic_id=context.clinic_id,
         patient_id=entry.patient_id,
+        entry_id=entry.id,
         entry_version_id=version.id,
+        supersedes_publication_id=(
+            active_publication.id if active_publication is not None else None
+        ),
         approved_by_membership_id=context.membership.id,
     )
     session.add(publication)
@@ -547,19 +742,64 @@ def _record_clinician_publication(
     return publication
 
 
-def _record_patient_sharing_request(
+def _supersede_pending_sharing_requests(
+    session: Session,
+    context: RequestContext,
+    entry: Entry,
+    *,
+    keep_version_id: uuid.UUID | None = None,
+) -> PatientSharingRequest | None:
+    """Serialize the one-current-version review queue for an entry.
+
+    The entry row is the lock-order root for edits, requests and approvals. A
+    partial unique index is the database backstop, while this transition keeps
+    historical requests explicit instead of silently deleting them.
+    """
+
+    pending = session.exec(
+        select(PatientSharingRequest)
+        .where(
+            PatientSharingRequest.clinic_id == context.clinic_id,
+            PatientSharingRequest.patient_id == entry.patient_id,
+            PatientSharingRequest.entry_id == entry.id,
+            PatientSharingRequest.status == "pending",
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    retained: PatientSharingRequest | None = None
+    reviewed_at = get_datetime_utc()
+    for request in pending:
+        if keep_version_id is not None and request.entry_version_id == keep_version_id:
+            retained = request
+            continue
+        request.status = "superseded"
+        request.reviewed_by_membership_id = context.membership.id
+        request.reviewed_at = reviewed_at
+        session.add(request)
+    return retained
+
+
+def record_patient_sharing_request(
     session: Session,
     context: RequestContext,
     entry: Entry,
     version: EntryVersion,
 ) -> PatientSharingRequest:
-    existing = session.exec(
-        select(PatientSharingRequest).where(
-            PatientSharingRequest.clinic_id == context.clinic_id,
-            PatientSharingRequest.entry_version_id == version.id,
-            PatientSharingRequest.status == "pending",
+    if entry.current_version_id != version.id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "SHARING_REQUEST_VERSION_NOT_CURRENT",
+                "message": "Request sharing from the current saved version.",
+            },
         )
-    ).first()
+    existing = _supersede_pending_sharing_requests(
+        session,
+        context,
+        entry,
+        keep_version_id=version.id,
+    )
     if existing is not None:
         return existing
     request = PatientSharingRequest(
@@ -653,7 +893,7 @@ def create_entry(
         metadata={"version_id": str(version.id), "section": entry.section},
     )
     if context.role == "staff" and data.patient_facing:
-        sharing_request = _record_patient_sharing_request(
+        sharing_request = record_patient_sharing_request(
             session, context, entry, version
         )
         emit_change(
@@ -681,9 +921,18 @@ def patch_entry(
     reverted_from_version_id: uuid.UUID | None = None,
     action: str = "entry.updated",
     approved_patient_sharing: bool = False,
+    withdrawn_patient_sharing: bool = False,
+    commit: bool = True,
 ) -> EntryPublic:
     entry = get_scoped_entry(session, context, entry_id, lock=True)
-    authorize_entry_write(context, entry)
+    clinician_managing_staff_sharing = (
+        (approved_patient_sharing or withdrawn_patient_sharing)
+        and context.role == "clinician"
+        and entry.section == "staff"
+        and entry.origin == "human"
+    )
+    if not clinician_managing_staff_sharing:
+        authorize_entry_write(context, entry)
     if entry.current_version_id is None:
         raise HTTPException(status_code=500, detail="Entry has no current version")
     if normalize_etag(if_match) != str(entry.current_version_id):
@@ -695,6 +944,7 @@ def patch_entry(
     effective_patient_facing = (
         patient_facing if patient_facing is not None else entry.patient_facing
     )
+    previously_patient_facing = entry.patient_facing
     if context.role == "patient":
         effective_patient_facing = True
     elif context.role == "staff" and not approved_patient_sharing:
@@ -716,6 +966,49 @@ def patch_entry(
     entry.current_version_id = next_version.id
     entry.patient_facing = effective_patient_facing
     session.add(entry)
+    if (
+        context.role == "clinician"
+        and previously_patient_facing
+        and not effective_patient_facing
+    ):
+        active_publications = session.exec(
+            select(PatientPublication)
+            .where(
+                PatientPublication.clinic_id == context.clinic_id,
+                PatientPublication.patient_id == entry.patient_id,
+                PatientPublication.entry_id == entry.id,
+                col(PatientPublication.withdrawn_at).is_(None),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+        withdrawn_at = get_datetime_utc()
+        for publication in active_publications:
+            publication.withdrawn_at = withdrawn_at
+            session.add(publication)
+            linked_requests = session.exec(
+                select(PatientSharingRequest)
+                .where(
+                    PatientSharingRequest.clinic_id == context.clinic_id,
+                    PatientSharingRequest.publication_id == publication.id,
+                    PatientSharingRequest.status == "approved",
+                )
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).all()
+            for request in linked_requests:
+                request.status = "withdrawn"
+                request.reviewed_by_membership_id = context.membership.id
+                request.reviewed_at = withdrawn_at
+                session.add(request)
+            emit_change(
+                session,
+                context,
+                action="patient_publication.withdrawn",
+                resource_type="patient_publication",
+                resource_id=publication.id,
+                metadata={"entry_id": str(entry.id)},
+            )
     from app.services.conflicts import detect_conflicts_for_version
 
     conflicts = detect_conflicts_for_version(
@@ -725,6 +1018,10 @@ def patch_entry(
         next_version,
         content if content is not None else current_content,
     )
+    if not approved_patient_sharing:
+        # Any ordinary edit makes an older pending request stale. A staff edit
+        # that also asks to share will create exactly one replacement below.
+        _supersede_pending_sharing_requests(session, context, entry)
     if effective_patient_facing and conflicts:
         raise HTTPException(
             status_code=409,
@@ -746,7 +1043,7 @@ def patch_entry(
             content if content is not None else current_content,
         )
     if context.role == "staff" and patient_facing:
-        sharing_request = _record_patient_sharing_request(
+        sharing_request = record_patient_sharing_request(
             session, context, entry, next_version
         )
         emit_change(
@@ -792,18 +1089,16 @@ def patch_entry(
         resource_id=entry.id,
         metadata=metadata,
     )
-    if context.role == "staff" and patient_facing:
-        emit_change(
-            session,
-            context,
-            action="entry.patient_sharing_requested",
-            resource_type="entry",
-            resource_id=entry.id,
-            metadata={"version_id": str(next_version.id)},
-        )
     for patient_id in affected_patients:
         rebuild_glance(session, context, patient_id)
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        # Compound workflows (for example publication approval) add further
+        # rows after the new version is prepared. Keep the transaction open so
+        # the entry visibility, publication items, request status, and audit
+        # record either commit together or roll back together.
+        session.flush()
     session.refresh(entry)
     return entry_public(session, entry)
 
@@ -883,10 +1178,20 @@ def timeline(
         publication = session.exec(
             select(PatientPublication).where(
                 PatientPublication.clinic_id == context.clinic_id,
+                PatientPublication.patient_id == patient_id,
+                PatientPublication.entry_id == entry.id,
                 PatientPublication.entry_version_id == public.version_id,
                 col(PatientPublication.withdrawn_at).is_(None),
             )
         ).first()
+        if (
+            context.role == "patient"
+            and entry.section != "patient"
+            and publication is None
+        ):
+            # Clinical content is patient-visible only while the current
+            # immutable version has an active clinician approval receipt.
+            continue
         approval_receipt: dict[str, object] | None = None
         if publication is not None:
             membership = session.get(
@@ -910,6 +1215,8 @@ def timeline(
                 patient_id=public.patient_id,
                 section=public.section,
                 entry_type=public.entry_type,
+                author_role=public.author_role,
+                provenance=public.provenance,
                 patient_facing=public.patient_facing,
                 version_id=public.version_id,
                 version_no=public.version_no,

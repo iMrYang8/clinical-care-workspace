@@ -19,6 +19,7 @@ from sqlalchemy import (
     Index,
     LargeBinary,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
@@ -390,6 +391,9 @@ class Entry(TenantRow, table=True):
     __tablename__ = "entries"
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_entry_clinic_id"),
+        UniqueConstraint(
+            "clinic_id", "patient_id", "id", name="uq_entry_clinic_patient_id"
+        ),
         Index("ix_entry_patient_section", "clinic_id", "patient_id", "section"),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
@@ -434,6 +438,9 @@ class EntryVersion(TenantRow, table=True):
     __tablename__ = "entry_versions"
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_entry_version_clinic_id"),
+        UniqueConstraint(
+            "clinic_id", "entry_id", "id", name="uq_entry_version_clinic_entry_id"
+        ),
         UniqueConstraint("entry_id", "version_no", name="uq_entry_version_number"),
         Index("ix_entry_version_entry_created", "entry_id", "created_at"),
         ForeignKeyConstraint(
@@ -1417,6 +1424,13 @@ class RedactionEvaluationRun(TenantRow, table=True):
 class PatientSharingRequest(TenantRow, table=True):
     __tablename__ = "patient_sharing_requests"
     __table_args__ = (
+        UniqueConstraint(
+            "clinic_id", "id", name="uq_patient_sharing_request_clinic_id"
+        ),
+        CheckConstraint(
+            "status IN ('pending','approved','rejected','superseded','withdrawn')",
+            name="ck_patient_sharing_request_status",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -1424,14 +1438,47 @@ class PatientSharingRequest(TenantRow, table=True):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["clinic_id", "entry_version_id"],
-            ["entry_versions.clinic_id", "entry_versions.id"],
+            ["clinic_id", "patient_id", "entry_id"],
+            ["entries.clinic_id", "entries.patient_id", "entries.id"],
+            name="fk_patient_sharing_request_entry",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "entry_id", "entry_version_id"],
+            [
+                "entry_versions.clinic_id",
+                "entry_versions.entry_id",
+                "entry_versions.id",
+            ],
             name="fk_patient_sharing_request_version",
         ),
         ForeignKeyConstraint(
             ["clinic_id", "requested_by_membership_id"],
             ["clinic_memberships.clinic_id", "clinic_memberships.id"],
             name="fk_patient_sharing_request_membership",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "reviewed_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_patient_sharing_request_reviewer",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id", "entry_id", "publication_id"],
+            [
+                "patient_publications.clinic_id",
+                "patient_publications.patient_id",
+                "patient_publications.entry_id",
+                "patient_publications.id",
+            ],
+            name="fk_patient_sharing_request_publication",
+            use_alter=True,
+        ),
+        Index(
+            "uq_patient_sharing_request_pending_entry",
+            "clinic_id",
+            "entry_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
         ),
         Index(
             "ix_patient_sharing_request_status",
@@ -1447,6 +1494,7 @@ class PatientSharingRequest(TenantRow, table=True):
     requested_by_membership_id: uuid.UUID
     status: str = Field(default="pending", max_length=20)
     reviewed_by_membership_id: uuid.UUID | None = Field(default=None)
+    publication_id: uuid.UUID | None = Field(default=None)
     reviewed_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
@@ -1460,6 +1508,17 @@ class PatientPublication(TenantRow, table=True):
     __tablename__ = "patient_publications"
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_patient_publication_clinic_id"),
+        UniqueConstraint(
+            "clinic_id",
+            "patient_id",
+            "entry_id",
+            "id",
+            name="uq_patient_publication_scope_id",
+        ),
+        CheckConstraint(
+            "supersedes_publication_id IS NULL OR supersedes_publication_id <> id",
+            name="ck_patient_publication_not_self_superseding",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -1467,14 +1526,46 @@ class PatientPublication(TenantRow, table=True):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["clinic_id", "entry_version_id"],
-            ["entry_versions.clinic_id", "entry_versions.id"],
+            ["clinic_id", "patient_id", "entry_id"],
+            ["entries.clinic_id", "entries.patient_id", "entries.id"],
+            name="fk_patient_publication_entry",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "entry_id", "entry_version_id"],
+            [
+                "entry_versions.clinic_id",
+                "entry_versions.entry_id",
+                "entry_versions.id",
+            ],
             name="fk_patient_publication_version",
         ),
         ForeignKeyConstraint(
             ["clinic_id", "approved_by_membership_id"],
             ["clinic_memberships.clinic_id", "clinic_memberships.id"],
             name="fk_patient_publication_approver",
+        ),
+        ForeignKeyConstraint(
+            [
+                "clinic_id",
+                "patient_id",
+                "entry_id",
+                "supersedes_publication_id",
+            ],
+            [
+                "patient_publications.clinic_id",
+                "patient_publications.patient_id",
+                "patient_publications.entry_id",
+                "patient_publications.id",
+            ],
+            name="fk_patient_publication_supersedes",
+        ),
+        Index(
+            "uq_patient_publication_active_entry",
+            "clinic_id",
+            "entry_id",
+            unique=True,
+            postgresql_where=text("withdrawn_at IS NULL"),
         ),
         Index(
             "ix_patient_publication_active",
@@ -1485,7 +1576,9 @@ class PatientPublication(TenantRow, table=True):
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     patient_id: uuid.UUID
+    entry_id: uuid.UUID
     entry_version_id: uuid.UUID
+    supersedes_publication_id: uuid.UUID | None = Field(default=None)
     approved_by_membership_id: uuid.UUID
     approval_policy_version: str = Field(default="patient-sharing-v1", max_length=80)
     approved_at: datetime = Field(
@@ -2212,17 +2305,29 @@ class PatientInvitationAccept(SQLModel):
 
 class PatientPublicationCreate(SQLModel):
     entry_version_id: uuid.UUID
+    sharing_request_id: uuid.UUID | None = None
 
 
 class PatientPublicationPublic(SQLModel):
     id: uuid.UUID
     patient_id: uuid.UUID
+    entry_id: uuid.UUID
     entry_version_id: uuid.UUID
+    supersedes_publication_id: uuid.UUID | None = None
+    entry_title: str
     approved_by_name: str
     approval_policy_version: str
     approved_at: datetime
     withdrawn_at: datetime | None
     items: list[dict[str, object]] = Field(default_factory=list)
+
+
+class PatientPublicationReceiptPublic(SQLModel):
+    entry_title: str
+    approved_by_name: str
+    approved_at: datetime
+    withdrawn_at: datetime | None
+    status: Literal["active", "withdrawn"]
 
 
 class PatientSharingRequestCreate(SQLModel):
@@ -2234,10 +2339,15 @@ class PatientSharingRequestPublic(SQLModel):
     patient_id: uuid.UUID
     entry_id: uuid.UUID
     entry_version_id: uuid.UUID
+    entry_title: str
+    entry_section: str
+    entry_origin: str
     requested_by_name: str
     status: str
     created_at: datetime
     reviewed_at: datetime | None
+    reviewed_by_name: str | None = None
+    publication_id: uuid.UUID | None = None
 
 
 class DecisionExplanationPublic(SQLModel):
@@ -2363,6 +2473,24 @@ class EntryPatch(SQLModel):
     patient_facing: bool | None = None
 
 
+EntryAuthorRole = Literal["patient", "staff", "clinician", "system"]
+EntryProvenanceStatus = Literal["resolved", "archived", "unavailable"]
+
+
+class EntryProvenancePublic(SQLModel):
+    """Direct immutable source metadata for a derived timeline entry.
+
+    AI summaries point at the source message/version consumed by the AI run.
+    ``exact_quote`` is therefore the exact source message, not a claim that the
+    generated summary itself is an exact quotation.
+    """
+
+    source_entry_id: uuid.UUID | None
+    source_entry_version_id: uuid.UUID | None
+    exact_quote: str | None
+    status: EntryProvenanceStatus
+
+
 class EntryPublic(SQLModel):
     id: uuid.UUID
     clinic_id: uuid.UUID
@@ -2370,6 +2498,8 @@ class EntryPublic(SQLModel):
     section: str
     origin: str
     entry_type: EntryType
+    author_role: EntryAuthorRole
+    provenance: EntryProvenancePublic | None = None
     patient_facing: bool
     version_id: uuid.UUID
     version_no: int
@@ -2385,6 +2515,8 @@ class PatientTimelineEntry(SQLModel):
     patient_id: uuid.UUID
     section: str
     entry_type: EntryType
+    author_role: EntryAuthorRole
+    provenance: EntryProvenancePublic | None = None
     patient_facing: bool
     version_id: uuid.UUID
     version_no: int

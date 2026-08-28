@@ -8,17 +8,22 @@ from app.api.deps import CurrentContext, SessionDep
 from app.models import (
     ClinicalGlanceCard,
     ClinicalGlancePublic,
+    ClinicMembership,
     Entry,
     EntryVersion,
     GlancePublic,
     Highlight,
     PatientGlanceCard,
     PatientGlanceSnapshot,
+    PatientPublication,
+    PatientPublicationReceiptPublic,
     PatientsPublic,
     PatientTimeline,
     ProvenancePointer,
+    User,
 )
 from app.services.nightingale import (
+    decrypt_version,
     get_patient,
     list_patients,
     read_glance,
@@ -85,11 +90,21 @@ def _patient_card_source_is_currently_visible(
             ProvenancePointer.clinic_id == context.clinic_id,
         )
     ).first()
+    publication = session.exec(
+        select(PatientPublication).where(
+            PatientPublication.clinic_id == context.clinic_id,
+            PatientPublication.patient_id == patient_id,
+            PatientPublication.entry_id == highlight.entry_id,
+            PatientPublication.entry_version_id == highlight.source_entry_version_id,
+            col(PatientPublication.withdrawn_at).is_(None),
+        )
+    ).first()
     return (
         entry is not None
         and entry.patient_id == patient_id
         and version is not None
         and pointer is not None
+        and publication is not None
         and pointer.anchor_state == "resolved"
         and not pointer.review_required
     )
@@ -124,6 +139,50 @@ def patient_timeline(
     _require_patient_data_role(context)
     data = timeline(session, context, patient_id)
     return PatientTimeline(data=data, count=len(data))
+
+
+@router.get(
+    "/{patient_id}/publication-receipts",
+    response_model=list[PatientPublicationReceiptPublic],
+)
+def patient_publication_receipts(
+    patient_id: uuid.UUID, session: SessionDep, context: CurrentContext
+) -> list[PatientPublicationReceiptPublic]:
+    if context.role != "patient":
+        raise HTTPException(status_code=403, detail="Patient portal role required")
+    get_patient(session, context, patient_id)
+    publications = session.exec(
+        select(PatientPublication)
+        .where(
+            PatientPublication.clinic_id == context.clinic_id,
+            PatientPublication.patient_id == patient_id,
+        )
+        .order_by(col(PatientPublication.approved_at).desc())
+    ).all()
+    receipts: list[PatientPublicationReceiptPublic] = []
+    for publication in publications:
+        version = session.get(EntryVersion, publication.entry_version_id)
+        membership = session.get(
+            ClinicMembership, publication.approved_by_membership_id
+        )
+        approver = session.get(User, membership.user_id) if membership else None
+        if version is None or version.clinic_id != context.clinic_id:
+            continue
+        title, _ = decrypt_version(version)
+        receipts.append(
+            PatientPublicationReceiptPublic(
+                entry_title=title,
+                approved_by_name=(
+                    approver.full_name or str(approver.email)
+                    if approver
+                    else "Clinician"
+                ),
+                approved_at=publication.approved_at,
+                withdrawn_at=publication.withdrawn_at,
+                status="withdrawn" if publication.withdrawn_at else "active",
+            )
+        )
+    return receipts
 
 
 @router.get(

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   HeartHandshake,
+  History,
   Link2,
   LoaderCircle,
   Mic,
@@ -32,6 +33,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   apiErrorMessage,
+  type PatientPublicationReceipt,
   type PatientSafeGlance,
   patientSafeApi,
 } from "@/features/api"
@@ -41,6 +43,9 @@ export type PatientSafeApi = {
   patients: () => Promise<PatientPublic[]>
   timeline: (patientId: string) => Promise<PatientTimelineEntry[]>
   glance: (patientId: string) => Promise<PatientSafeGlance>
+  publicationReceipts?: (
+    patientId: string,
+  ) => Promise<PatientPublicationReceipt[]>
   resolveProvenance: (pointerId: string) => Promise<ProvenanceResolved>
   createInsight: (
     patientId: string,
@@ -83,6 +88,11 @@ export function PatientSafeCareNote({
     queryKey: ["patient-safe", patientId, "glance"],
     queryFn: () => api.glance(patientId!),
     enabled: Boolean(patientId),
+  })
+  const publicationReceiptsQuery = useQuery({
+    queryKey: ["patient-safe", patientId, "publication-receipts"],
+    queryFn: () => api.publicationReceipts?.(patientId!) ?? Promise.resolve([]),
+    enabled: Boolean(patientId && api.publicationReceipts),
   })
   const patient = patientsQuery.data?.find((item) => item.id === patientId)
 
@@ -383,6 +393,53 @@ export function PatientSafeCareNote({
               )}
             </CardContent>
           </Card>
+          {(publicationReceiptsQuery.data ?? []).some(
+            (receipt) => receipt.status === "withdrawn",
+          ) && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 font-serif text-xl">
+                  <History className="size-5 text-primary" /> Sharing updates
+                </CardTitle>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Withdrawn updates are no longer visible in your timeline, but
+                  their sharing receipt remains here.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {publicationReceiptsQuery.data
+                  ?.filter((receipt) => receipt.status === "withdrawn")
+                  .map((receipt) => (
+                    <div
+                      className="rounded-xl border bg-muted/30 p-3"
+                      key={`${receipt.entry_title}-${receipt.approved_at}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-medium">{receipt.entry_title}</p>
+                        <Badge variant="outline">Withdrawn</Badge>
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Previously approved by {receipt.approved_by_name} ·
+                        withdrawn{" "}
+                        {receipt.withdrawn_at
+                          ? formatSingaporeDateTime(receipt.withdrawn_at)
+                          : "recently"}
+                      </p>
+                    </div>
+                  ))}
+              </CardContent>
+            </Card>
+          )}
+          {publicationReceiptsQuery.isError && (
+            <Alert className="border-warning/40 bg-warning-muted text-warning-muted-foreground">
+              <History className="size-4" />
+              <AlertTitle>Sharing history unavailable</AlertTitle>
+              <AlertDescription>
+                Approval and withdrawal history did not load. Your shared care
+                information remains available; try again shortly.
+              </AlertDescription>
+            </Alert>
+          )}
           {source && (
             <div className="rounded-2xl border border-warning/40 bg-warning-muted p-4">
               <p className="flex items-center gap-2 font-semibold text-warning-muted-foreground">
