@@ -334,6 +334,10 @@ async function showCard(page, title, lines, seconds = 7) {
 }
 
 async function login(page, context, persona, destination) {
+	// Leave the previous role's React tree before clearing cookies. Otherwise an
+	// in-flight auth/SSE request from that page can observe the empty-cookie
+	// window and clear the newly issued persona cookie after demo-login returns.
+	await page.goto("about:blank");
 	await context.clearCookies();
 	const response = await page.request.post(`${BASE}/api/v1/auth/demo-login`, {
 		data: { persona },
@@ -501,14 +505,24 @@ async function openPatient(page, name) {
 }
 
 async function closeVisibleDialog(page) {
-	const dialog = page.getByRole("dialog").last();
-	if (await dialog.isVisible().catch(() => false)) {
-		const close = dialog
+	const dialogs = page.getByRole("dialog");
+	for (let index = (await dialogs.count()) - 1; index >= 0; index -= 1) {
+		const dialog = dialogs.nth(index);
+		if (!(await dialog.isVisible().catch(() => false))) continue;
+		const chromeClose = dialog.locator('[data-slot="dialog-close"]').last();
+		const semanticClose = dialog
 			.getByRole("button", { name: /Close|Cancel|Keep shared/ })
 			.first();
-		if (await close.isVisible().catch(() => false))
+		const close = (await chromeClose.isVisible().catch(() => false))
+			? chromeClose
+			: semanticClose;
+		if (await close.isVisible().catch(() => false)) {
 			await moveTo(page, close, "Close", { click: true, hold: 350 });
-		else await page.keyboard.press("Escape");
+		} else {
+			await page.keyboard.press("Escape");
+		}
+		await dialog.waitFor({ state: "hidden", timeout: 5000 });
+		return;
 	}
 }
 
