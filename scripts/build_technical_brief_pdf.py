@@ -704,7 +704,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
         [
             "Glance",
             f"p95 {GLANCE_LATENCY['p95']:.3f} ms",
-            f"Alex Synthetic, {GLANCE_TARGET['card_count']}/{GLANCE_TARGET['expected_card_count']} cards, 20 warmups + 100 measured reads",
+            f"{GLANCE_TARGET['patient_display_name']}, {GLANCE_TARGET['card_count']}/{GLANCE_TARGET['expected_card_count']} cards, 20 warmups + 100 measured reads",
         ],
         [
             "Container",
