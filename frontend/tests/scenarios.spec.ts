@@ -14,6 +14,7 @@ type TimelineEntry = {
   content: string
   entry_type: string
   id: string
+  occurred_at: string
   patient_id: string
   section: string
   title: string
@@ -92,11 +93,11 @@ async function api<T = Record<string, unknown>>(
   )
 }
 
-async function patientAndTimeline(page: Page) {
+async function patientAndTimeline(page: Page, displayName = "Alex Tan") {
   const patients = await api<{ data: Patient[] }>(page, "/api/v1/patients")
   expect(patients.status).toBe(200)
   const patient = patients.body.data.find(
-    (candidate) => candidate.display_name === "Alex Tan",
+    (candidate) => candidate.display_name === displayName,
   )
   expect(patient).toBeDefined()
   const timeline = await api<{ data: TimelineEntry[] }>(
@@ -302,6 +303,7 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
   const editDialog = page.getByRole("dialog", { name: "Edit note" })
   await expect(editDialog).toBeVisible()
   const editor = editDialog.getByLabel("Care note content")
+  await expect(editor).toBeVisible()
   await editor.evaluate((root, quote) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
     let node = walker.nextNode()
@@ -341,6 +343,7 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
     .getByRole("button", { name: "Add to team discussion" })
     .click()
   await editDialog.getByRole("button", { name: "Cancel", exact: true }).click()
+  await expect(editDialog).toBeHidden()
 
   await staffEntry.getByRole("button", { name: "Team discussion" }).click()
   const comment = page.getByRole("article").filter({ hasText: commentBody })
@@ -389,12 +392,21 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
       resolved_at: expect.any(String),
     })
 
-  // Two independently persisted critical cards share a bounded feature, so
-  // neither can be crowded out of the five-card clinical view. Pinning the
-  // source through the visible control must lift the peer's learned score.
+  // Clinical confirmation is intentionally separate from the staff
+  // collaboration work above. The pair is non-critical, so a finally block can
+  // remove it after each repeat without weakening protected-priority behavior.
+  await page.getByTestId("user-menu").click()
+  await page.getByRole("menuitem", { name: "Sign out" }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await login(page, "Clinician")
+  await openAlex(page)
+
+  // Two independently persisted, non-critical priorities share a bounded
+  // feature. Pinning the source must lift the peer's learned score.
+  const learningRun = `${testInfo.repeatEachIndex}_${Date.now()}`
   const featureKey = `entry_type:medication_review_${testInfo.repeatEachIndex}_${Date.now()}`
-  const sourceLabel = `Medication safety priority ${testInfo.repeatEachIndex}-${Date.now()}`
-  const peerLabel = `Medication review follow-up ${testInfo.repeatEachIndex}-${Date.now()}`
+  const sourceLabel = `Medication safety priority ${learningRun}`
+  const peerLabel = `Medication review follow-up ${learningRun}`
   const sourceContent = revertedStaffEntry?.content ?? ""
   const anchorFor = (quote: string) => {
     const quoteStart = sourceContent.indexOf(quote)
@@ -444,78 +456,108 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
     expect(accepted.status).toBe(200)
     return created.body.id
   }
-  const sourceHighlightId = await makeHighlight(
-    sourceLabel,
-    anchorFor(exactQuote),
-    true,
-  )
-  const peerHighlightId = await makeHighlight(
-    peerLabel,
-    anchorFor("home visit"),
-    true,
-  )
+  const createdHighlightIds: string[] = []
+  try {
+    const sourceHighlightId = await makeHighlight(
+      sourceLabel,
+      anchorFor(exactQuote),
+    )
+    createdHighlightIds.push(sourceHighlightId)
+    const peerHighlightId = await makeHighlight(
+      peerLabel,
+      anchorFor("home visit"),
+    )
+    createdHighlightIds.push(peerHighlightId)
 
-  await page.reload()
-  await expect(page.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
-  const beforeGlance = await api<{
-    cards: Array<{
-      highlight_id: string
-      label: string
-      score_components: { final: number; learned: number }
-    }>
-  }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
-  const peerBefore = beforeGlance.body.cards.find(
-    (card) => card.highlight_id === peerHighlightId,
-  )
-  expect(peerBefore).toBeDefined()
-  await page.getByRole("button", { name: `Keep ${sourceLabel} at top` }).click()
+    await page.reload()
+    await expect(page.getByRole("heading", { name: "Alex Tan" })).toBeVisible()
+    const beforeGlance = await api<{
+      cards: Array<{
+        highlight_id: string
+        label: string
+        score_components: { final: number; learned: number }
+      }>
+    }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
+    const peerBefore = beforeGlance.body.cards.find(
+      (card) => card.highlight_id === peerHighlightId,
+    )
+    expect(peerBefore).toBeDefined()
 
-  await expect
-    .poll(async () => {
-      const glance = await api<{
-        cards: Array<{
-          highlight_id: string
-          score_components: { final: number; learned: number }
-        }>
-      }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
-      return (
-        glance.body.cards.find((card) => card.highlight_id === peerHighlightId)
-          ?.score_components.learned ?? Number.NEGATIVE_INFINITY
-      )
+    const seededCritical = beforeGlance.body.cards.find(
+      (card) => card.label === "Fall risk remains elevated",
+    )
+    expect(seededCritical).toBeDefined()
+    const protectedReject = await api<{ detail: { code: string } }>(
+      page,
+      `/api/v1/highlights/${seededCritical?.highlight_id}/reject`,
+      {
+        headers: {
+          "Idempotency-Key": `scenario-b-protected-${testInfo.repeatEachIndex}`,
+        },
+        method: "POST",
+      },
+    )
+    expect(protectedReject).toMatchObject({
+      body: {
+        detail: {
+          code: "PROTECTED_PRIORITY_REQUIRES_CLINICIAN_RESOLUTION",
+        },
+      },
+      status: 409,
     })
-    .toBeGreaterThan(
+
+    await page
+      .getByRole("button", { name: `Keep ${sourceLabel} at top` })
+      .click()
+    await expect
+      .poll(async () => {
+        const glance = await api<{
+          cards: Array<{
+            highlight_id: string
+            score_components: { final: number; learned: number }
+          }>
+        }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
+        return (
+          glance.body.cards.find(
+            (card) => card.highlight_id === peerHighlightId,
+          )?.score_components.learned ?? Number.NEGATIVE_INFINITY
+        )
+      })
+      .toBeGreaterThan(
+        peerBefore?.score_components.learned ?? Number.POSITIVE_INFINITY,
+      )
+    const afterGlance = await api<{
+      cards: Array<{
+        highlight_id: string
+        score_components: { final: number; learned: number }
+      }>
+    }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
+    const peerAfter = afterGlance.body.cards.find(
+      (card) => card.highlight_id === peerHighlightId,
+    )
+    expect(peerAfter?.score_components.learned).toBeGreaterThan(
       peerBefore?.score_components.learned ?? Number.POSITIVE_INFINITY,
     )
-  const afterGlance = await api<{
-    cards: Array<{
-      highlight_id: string
-      score_components: { final: number; learned: number }
-    }>
-  }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
-  const peerAfter = afterGlance.body.cards.find(
-    (card) => card.highlight_id === peerHighlightId,
-  )
-  expect(peerAfter?.score_components.learned).toBeGreaterThan(
-    peerBefore?.score_components.learned ?? Number.POSITIVE_INFINITY,
-  )
-  expect(peerAfter?.score_components.final).toBeGreaterThan(
-    peerBefore?.score_components.final ?? Number.POSITIVE_INFINITY,
-  )
-  expect(
-    afterGlance.body.cards.findIndex(
-      (card) => card.highlight_id === peerHighlightId,
-    ),
-  ).toBeLessThan(5)
-
-  for (const highlightId of [sourceHighlightId, peerHighlightId]) {
+    expect(peerAfter?.score_components.final).toBeGreaterThan(
+      peerBefore?.score_components.final ?? Number.POSITIVE_INFINITY,
+    )
     expect(
-      (
-        await api(page, `/api/v1/highlights/${highlightId}/reject`, {
+      afterGlance.body.cards.findIndex(
+        (card) => card.highlight_id === peerHighlightId,
+      ),
+    ).toBeLessThan(5)
+  } finally {
+    for (const highlightId of createdHighlightIds) {
+      const rejected = await api(
+        page,
+        `/api/v1/highlights/${highlightId}/reject`,
+        {
           headers: { "Idempotency-Key": `scenario-b-cleanup-${highlightId}` },
           method: "POST",
-        })
-      ).status,
-    ).toBe(409)
+        },
+      )
+      expect(rejected.status).toBe(200)
+    }
   }
 
   await page.getByTestId("user-menu").click()
@@ -534,46 +576,143 @@ test("[Scenario C] cross-date timeline survives archive and checksum-verified re
   page,
 }) => {
   await login(page, "Clinician")
-  await openAlex(page)
-  await expect(page.locator('time[datetime^="2025-04-15"]')).toBeVisible()
+  const retentionData = await patientAndTimeline(page, "Rachel Lim")
+  const historical = retentionData.timeline.find(
+    (entry) => entry.title === "Resolved dermatitis follow-up",
+  )
+  const recent = retentionData.timeline.find(
+    (entry) => entry.title === "Annual wellbeing review",
+  )
+  expect(historical).toBeDefined()
+  expect(historical?.occurred_at).toMatch(/^2023-01-10/)
+  expect(recent).toBeDefined()
+  expect(recent?.occurred_at).toMatch(/^2026-02-06/)
+
+  await page.goto(`/patients/${retentionData.patient.id}`)
+  await expect(page.getByRole("heading", { name: "Rachel Lim" })).toBeVisible()
+  await expect(page.locator('time[datetime^="2023-01-10"]')).toBeVisible()
   await expect(
     page.locator('time[datetime^="2026-02-06"]').first(),
   ).toBeVisible()
 
+  type EntryVersionRecord = {
+    content: string
+    content_sha256: string
+    id: string
+    title: string
+  }
+  const versionsBefore = await api<{ data: EntryVersionRecord[] }>(
+    page,
+    `/api/v1/entries/${historical?.id}/versions`,
+  )
+  expect(versionsBefore.status).toBe(200)
+  const versionBefore = versionsBefore.body.data.find(
+    (version) => version.id === historical?.version_id,
+  )
+  expect(versionBefore).toMatchObject({
+    content: historical?.content,
+    id: historical?.version_id,
+    title: historical?.title,
+  })
+
+  type DecayCandidate = {
+    age_days: number
+    eligible_for_cold: boolean
+    entry_id: string
+    entry_version_id: string
+    protected_reasons: string[]
+    storage_tier: string
+  }
   const preview = await api<{
-    candidates: Array<{
-      eligible_for_cold: boolean
-      entry_version_id: string
-    }>
+    candidates: DecayCandidate[]
   }>(page, "/api/v1/decay/preview")
   expect(preview.status).toBe(200)
   const candidate = preview.body.candidates.find(
-    (item) => item.eligible_for_cold,
+    (item) => item.entry_version_id === historical?.version_id,
   )
-  expect(candidate).toBeDefined()
+  expect(candidate).toMatchObject({
+    eligible_for_cold: true,
+    entry_id: historical?.id,
+    entry_version_id: historical?.version_id,
+    protected_reasons: [],
+  })
 
-  const archived = await api<{ archived_count: number }>(
-    page,
-    "/api/v1/decay/archive",
-    {
-      body: {
-        dry_run: false,
-        entry_version_ids: [candidate?.entry_version_id],
-      },
-      method: "POST",
-    },
-  )
-  expect(archived).toMatchObject({ body: { archived_count: 1 }, status: 200 })
-
-  const restored = await api<{
+  let archivedSuccessfully = false
+  let restored: ApiResult<{
     content_sha256: string
     storage_tier: string
-  }>(page, `/api/v1/decay/entries/${candidate?.entry_version_id}/rehydrate`, {
-    method: "POST",
+  }> | null = null
+  try {
+    const archived = await api<{ archived_count: number }>(
+      page,
+      "/api/v1/decay/archive",
+      {
+        body: {
+          dry_run: false,
+          entry_version_ids: [historical?.version_id],
+        },
+        method: "POST",
+      },
+    )
+    archivedSuccessfully = archived.status === 200
+    expect(archived).toMatchObject({ body: { archived_count: 1 }, status: 200 })
+
+    const previewAfterArchive = await api<{ candidates: DecayCandidate[] }>(
+      page,
+      "/api/v1/decay/preview",
+    )
+    expect(
+      previewAfterArchive.body.candidates.find(
+        (item) => item.entry_version_id === historical?.version_id,
+      ),
+    ).toMatchObject({ eligible_for_cold: false, storage_tier: "cold" })
+  } finally {
+    if (archivedSuccessfully) {
+      restored = await api<{
+        content_sha256: string
+        storage_tier: string
+      }>(page, `/api/v1/decay/entries/${historical?.version_id}/rehydrate`, {
+        method: "POST",
+      })
+      expect(restored.status).toBe(200)
+      expect(restored.body.storage_tier).toBe("warm")
+    }
+  }
+  expect(restored).not.toBeNull()
+  expect(restored?.body.content_sha256).toBe(versionBefore?.content_sha256)
+
+  const versionsAfter = await api<{ data: EntryVersionRecord[] }>(
+    page,
+    `/api/v1/entries/${historical?.id}/versions`,
+  )
+  const versionAfter = versionsAfter.body.data.find(
+    (version) => version.id === historical?.version_id,
+  )
+  expect(versionAfter).toEqual(versionBefore)
+
+  const timelineAfter = await api<{ data: TimelineEntry[] }>(
+    page,
+    `/api/v1/patients/${retentionData.patient.id}/timeline`,
+  )
+  expect(
+    timelineAfter.body.data.find(
+      (entry) => entry.version_id === historical?.version_id,
+    ),
+  ).toMatchObject({
+    content: historical?.content,
+    occurred_at: historical?.occurred_at,
+    title: historical?.title,
   })
-  expect(restored.status).toBe(200)
-  expect(restored.body.storage_tier).toBe("warm")
-  expect(restored.body.content_sha256).toMatch(/^[a-f0-9]{64}$/)
+  await page.reload()
+  await expect(page.getByRole("heading", { name: "Rachel Lim" })).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "Resolved dermatitis follow-up" }),
+  ).toBeVisible()
+  await expect(page.getByText(historical?.content ?? "")).toBeVisible()
+  await expect(page.locator('time[datetime^="2023-01-10"]')).toBeVisible()
+  await expect(
+    page.locator('time[datetime^="2026-02-06"]').first(),
+  ).toBeVisible()
 })
 
 test("[Scenario D] stale ETag conflicts while independent entries and tenant boundaries hold", async ({

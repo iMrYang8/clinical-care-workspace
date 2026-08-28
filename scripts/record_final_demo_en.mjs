@@ -764,12 +764,40 @@ await runSegment(page, 2, async () => {
 		await editDialog
 			.getByLabel("Assign to (optional)")
 			.selectOption({ label: "Clinician — Clinician" });
+		const commentResponsePromise = page.waitForResponse(
+			(response) => {
+				const request = response.request();
+				return (
+					request.method() === "POST" &&
+					/^\/api\/v1\/entries\/[^/]+\/comments$/.test(
+						new URL(response.url()).pathname,
+					)
+				);
+			},
+			{ timeout: 15000 },
+		);
 		await moveTo(
 			page,
 			editDialog.getByRole("button", { name: "Add to team discussion" }),
 			"@Clinician · Assign",
 			{ click: true },
 		);
+		const commentResponse = await commentResponsePromise;
+		if (commentResponse.status() !== 201) {
+			throw new Error(
+				`Anchored comment creation returned ${commentResponse.status()}`,
+			);
+		}
+		const createdComment = await commentResponse.json();
+		if (
+			!Array.isArray(createdComment.mentioned_user_ids) ||
+			createdComment.mentioned_user_ids.length !== 1 ||
+			!createdComment.assigned_membership_id
+		) {
+			throw new Error(
+				"Anchored comment did not persist its clinician mention and assignment",
+			);
+		}
 		const cancel = editDialog.getByRole("button", {
 			name: "Cancel",
 			exact: true,
@@ -787,6 +815,11 @@ await runSegment(page, 2, async () => {
 				exact: true,
 			}),
 			"Anchored comment",
+		);
+		await moveTo(
+			page,
+			page.getByText("Assigned to Clinician", { exact: true }),
+			"Assigned to Clinician",
 		);
 	} else {
 		await moveTo(
@@ -911,20 +944,23 @@ await runSegment(page, 3, async () => {
 		name: "Add source-linked priority",
 	});
 	await moveTo(page, addDialog.locator("blockquote"), "Exact AI wording");
-	if (MUTATE)
+	if (MUTATE) {
 		await moveTo(
 			page,
 			addDialog.getByRole("button", { name: "Add to Current priorities" }),
 			"Confirm source link",
 			{ click: true },
 		);
-	else
+		await addDialog.waitFor({ state: "hidden", timeout: 15000 });
+	} else {
 		await moveTo(
 			page,
 			addDialog.getByRole("button", { name: "Cancel" }),
 			"Cancel smoke preview",
 			{ click: true },
 		);
+		await addDialog.waitFor({ state: "hidden", timeout: 5000 });
+	}
 	await moveTo(
 		page,
 		page.getByRole("link", { name: "Current priorities", exact: true }),
@@ -932,26 +968,31 @@ await runSegment(page, 3, async () => {
 		{ click: true },
 	);
 	if (MUTATE) {
-		const newCard = page.getByRole("listitem").filter({ hasText: quote });
-		if (await newCard.isVisible().catch(() => false)) {
-			await moveTo(page, newCard, "Clinician-confirmed");
-			await moveTo(
-				page,
-				newCard.getByRole("button", { name: "View source" }),
-				"Same exact source",
-				{ click: true },
-			);
-			const dialog = page
-				.getByRole("dialog", { name: /Source details/ })
-				.filter({ visible: true })
-				.last();
-			await moveTo(
-				page,
-				dialog.locator("mark[data-source-span]"),
-				"Exact quote",
-			);
-			await closeVisibleDialog(page);
-		}
+		const newCard = page
+			.getByRole("listitem")
+			.filter({ hasText: quote })
+			.first();
+		await moveTo(page, newCard, "Clinician-confirmed", { timeout: 15000 });
+		await moveTo(
+			page,
+			newCard.getByRole("button", { name: "View source" }),
+			"Same exact source",
+			{ click: true },
+		);
+		const sourceDialog = page
+			.getByRole("dialog", { name: /Source details/ })
+			.filter({ visible: true })
+			.last();
+		await sourceDialog.waitFor({ state: "visible", timeout: 5000 });
+		await moveTo(
+			page,
+			sourceDialog
+				.locator("mark[data-source-span]")
+				.filter({ hasText: quote })
+				.last(),
+			"Exact quote",
+		);
+		await closeVisibleDialog(page);
 	}
 	await moveTo(
 		page,
@@ -1016,32 +1057,39 @@ await runSegment(page, 4, async () => {
 	if (await changes.isVisible().catch(() => false))
 		await moveTo(page, changes, "Immutable diff");
 	const restore = v1.getByRole("button", { name: "Restore this version" });
-	if (await restore.isVisible().catch(() => false)) {
-		if (MUTATE) {
-			await moveTo(page, restore, "Restore as a new version", { click: true });
-			await dialog.waitFor({ state: "hidden", timeout: 15000 });
-			const updatedArticle = page.locator(
-				'article[aria-label="Clinical note: Current pancreatitis admission plan"]',
+	if (MUTATE) {
+		await restore.waitFor({ state: "visible", timeout: 8000 });
+		const versionCountBefore = await dialog.getByRole("listitem").count();
+		await moveTo(page, restore, "Restore as a new version", { click: true });
+		await dialog.waitFor({ state: "hidden", timeout: 15000 });
+		const updatedArticle = page.locator(
+			'article[aria-label="Clinical note: Current pancreatitis admission plan"]',
+		);
+		await moveTo(
+			page,
+			updatedArticle.getByRole("button", { name: "Change history" }),
+			"Verify appended version",
+			{ click: true },
+		);
+		const updatedDialog = page.getByRole("dialog", {
+			name: /Change history/,
+		});
+		await updatedDialog.waitFor({ state: "visible", timeout: 5000 });
+		const updatedVersions = updatedDialog.getByRole("listitem");
+		const restoredVersion = updatedVersions
+			.filter({ hasText: "Current" })
+			.first();
+		await moveTo(page, restoredVersion, "Restored snapshot · Current");
+		const versionCountAfter = await updatedVersions.count();
+		if (versionCountAfter !== versionCountBefore + 1) {
+			throw new Error(
+				`Restore did not append exactly one immutable version (${versionCountBefore} -> ${versionCountAfter})`,
 			);
-			await moveTo(
-				page,
-				updatedArticle.getByRole("button", { name: "Change history" }),
-				"Verify appended version",
-				{ click: true },
-			);
-			const updatedDialog = page.getByRole("dialog", {
-				name: /Change history/,
-			});
-			const restoredVersion = updatedDialog
-				.getByRole("listitem")
-				.filter({ hasText: "Current" })
-				.first();
-			await moveTo(page, restoredVersion, "Restored snapshot · Current");
-			await closeVisibleDialog(page);
-		} else {
-			await moveTo(page, restore, "Restore creates a new version");
-			await closeVisibleDialog(page);
 		}
+		await closeVisibleDialog(page);
+	} else if (await restore.isVisible().catch(() => false)) {
+		await moveTo(page, restore, "Restore creates a new version");
+		await closeVisibleDialog(page);
 	} else {
 		await closeVisibleDialog(page);
 	}
@@ -1101,46 +1149,52 @@ await runSegment(page, 5, async () => {
 		}
 	}
 	const resolve = page.getByRole("button", { name: "Resolve conflict" });
-	if (await resolve.isVisible().catch(() => false)) {
+	if (MUTATE) {
+		await resolve.waitFor({ state: "visible", timeout: 8000 });
 		await moveTo(page, resolve, "Clinician correction", { click: true });
 		const dialog = page.getByRole("dialog", {
 			name: "Resolve clinical conflict",
 		});
+		await dialog.waitFor({ state: "visible", timeout: 5000 });
 		const correction = dialog.getByLabel("Correction entry");
 		const reason = dialog.getByLabel("Resolution reason");
-		if (MUTATE) {
-			await correction.selectOption({
-				label: "Current pancreatitis admission plan",
-			});
-			await moveTo(page, correction, "Clinician-authored correction");
-			await reason.fill(
-				"The acute pancreatitis plan applies during active vomiting. Continue bedside glucose monitoring and reassess oral intake after acute-care review.",
-			);
-			await moveTo(page, reason, "Required resolution reason");
-			await moveTo(
-				page,
-				dialog.getByRole("button", { name: "Resolve with correction" }),
-				"Resolve with correction",
-				{ click: true },
-			);
-			await dialog.waitFor({ state: "hidden", timeout: 15000 });
-			const resolved = page
-				.getByText("Status: resolved", { exact: true })
-				.first();
-			if (await resolved.isVisible().catch(() => false)) {
-				await moveTo(page, resolved, "Resolved · sources preserved");
-			}
-		} else {
-			await reason.fill(
-				"The acute pancreatitis plan applies during active vomiting. Continue bedside glucose monitoring and reassess oral intake after acute-care review.",
-			);
-			await moveTo(
-				page,
-				dialog.getByRole("button", { name: "Cancel" }),
-				"Cancel smoke preview",
-				{ click: true },
-			);
-		}
+		await correction.selectOption({
+			label: "Current pancreatitis admission plan",
+		});
+		await moveTo(page, correction, "Clinician-authored correction");
+		await reason.fill(
+			"The acute pancreatitis plan applies during active vomiting. Continue bedside glucose monitoring and reassess oral intake after acute-care review.",
+		);
+		await moveTo(page, reason, "Required resolution reason");
+		await moveTo(
+			page,
+			dialog.getByRole("button", { name: "Resolve with correction" }),
+			"Resolve with correction",
+			{ click: true },
+		);
+		await dialog.waitFor({ state: "hidden", timeout: 15000 });
+		const resolved = page
+			.getByText("Status: resolved", { exact: true })
+			.first();
+		await moveTo(page, resolved, "Resolved · sources preserved", {
+			timeout: 15000,
+		});
+	} else if (await resolve.isVisible().catch(() => false)) {
+		await moveTo(page, resolve, "Clinician correction", { click: true });
+		const dialog = page.getByRole("dialog", {
+			name: "Resolve clinical conflict",
+		});
+		await dialog.waitFor({ state: "visible", timeout: 5000 });
+		const reason = dialog.getByLabel("Resolution reason");
+		await reason.fill(
+			"The acute pancreatitis plan applies during active vomiting. Continue bedside glucose monitoring and reassess oral intake after acute-care review.",
+		);
+		await moveTo(
+			page,
+			dialog.getByRole("button", { name: "Cancel" }),
+			"Cancel smoke preview",
+			{ click: true },
+		);
 	}
 });
 
@@ -1152,15 +1206,19 @@ await runSegment(page, 6, async () => {
 		page.getByRole("heading", { name: "Patient sharing" }),
 		"Patient sharing",
 	);
-	let requestBox = page
-		.getByTestId(/sharing-request-/)
-		.filter({ hasText: createdNoteTitle })
-		.last();
-	if (!(await requestBox.isVisible().catch(() => false)))
+	let requestBox;
+	if (MUTATE) {
+		requestBox = page
+			.getByTestId(/sharing-request-/)
+			.filter({ hasText: createdNoteTitle })
+			.last();
+		await requestBox.waitFor({ state: "visible", timeout: 15000 });
+	} else {
 		requestBox = page
 			.getByTestId(/sharing-request-/)
 			.filter({ hasText: "Medication reconciliation" })
 			.last();
+	}
 	await moveTo(page, requestBox, "Pending exact version");
 	const review = requestBox.getByRole("button", {
 		name: "Review exact version",
@@ -1177,20 +1235,23 @@ await runSegment(page, 6, async () => {
 		dialog.getByText(/Publishing also verifies/),
 		"Safety gates",
 	);
-	if (MUTATE)
+	if (MUTATE) {
 		await moveTo(
 			page,
 			dialog.getByTestId("approve-patient-sharing"),
 			"Approve and publish",
 			{ click: true },
 		);
-	else
+		await dialog.waitFor({ state: "hidden", timeout: 15000 });
+	} else {
 		await moveTo(
 			page,
 			dialog.getByRole("button", { name: "Cancel" }),
 			"Cancel smoke preview",
 			{ click: true },
 		);
+		await dialog.waitFor({ state: "hidden", timeout: 5000 });
+	}
 	if (MUTATE) {
 		await login(page, context, "patient", "/patient/my-care");
 		await page
@@ -1201,23 +1262,48 @@ await runSegment(page, 6, async () => {
 			page.getByText("Patient access", { exact: true }),
 			"Patient-only portal",
 		);
-		const publishedTitle = page
-			.getByText(createdNoteTitle, { exact: true })
+		const publishedArticle = page
+			.locator("article")
+			.filter({ hasText: createdNoteTitle })
 			.first();
-		if (await publishedTitle.isVisible().catch(() => false))
-			await moveTo(page, publishedTitle, "Newly shared note");
-		const receipt = page
-			.getByText("Reviewed for sharing", { exact: true })
-			.last();
-		if (await receipt.isVisible().catch(() => false))
-			await moveTo(page, receipt, "Approval receipt");
+		await publishedArticle.waitFor({ state: "visible", timeout: 15000 });
+		await moveTo(
+			page,
+			publishedArticle.getByText(createdNoteTitle, { exact: true }),
+			"Newly shared note",
+		);
+		await moveTo(
+			page,
+			publishedArticle.getByText("Reviewed for sharing", { exact: true }),
+			"Approval receipt",
+		);
+		await moveTo(
+			page,
+			publishedArticle.getByText(/Approved by/),
+			"Clinician approval",
+		);
+		await moveTo(
+			page,
+			publishedArticle.getByText(/Source:/),
+			"Saved source receipt",
+		);
 		const approvedSource = page
 			.getByRole("button", { name: "View approved source" })
 			.last();
-		if (await approvedSource.isVisible().catch(() => false)) {
-			await moveTo(page, approvedSource, "Approved source", { click: true });
-			await closeVisibleDialog(page);
-		}
+		await moveTo(page, approvedSource, "Approved source", {
+			click: true,
+			timeout: 8000,
+		});
+		await moveTo(
+			page,
+			page.getByText("Source details", { exact: true }).last(),
+			"Source details",
+		);
+		await moveTo(
+			page,
+			page.locator("blockquote").filter({ hasText: /\S/ }).last(),
+			"Exact approved wording",
+		);
 		await login(page, context, "clinician", "/patients");
 		await openPatient(page, "Alex Tan");
 		await moveTo(
@@ -1252,13 +1338,20 @@ await runSegment(page, 6, async () => {
 			"Confirm withdraw",
 			{ click: true },
 		);
+		await withdrawDialog.waitFor({ state: "hidden", timeout: 15000 });
 		await login(page, context, "patient", "/patient/my-care");
 		await page
 			.getByRole("heading", { name: /My Care · Alex Tan/ })
 			.waitFor({ state: "visible" });
-		const withdrawn = page.getByText("Withdrawn", { exact: true }).last();
-		if (await withdrawn.isVisible().catch(() => false))
-			await moveTo(page, withdrawn, "Withdrawn receipt");
+		await publishedArticle.waitFor({ state: "hidden", timeout: 15000 });
+		const withdrawnReceipt = page
+			.locator("div.rounded-xl")
+			.filter({ hasText: createdNoteTitle })
+			.filter({ hasText: "Withdrawn" })
+			.last();
+		await moveTo(page, withdrawnReceipt, "Withdrawn receipt", {
+			timeout: 15000,
+		});
 	}
 });
 

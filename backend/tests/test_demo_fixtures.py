@@ -23,6 +23,7 @@ from app.models import (
     User,
 )
 from app.seed import demo_id, seed_demo_data
+from app.services.decay import list_decay_candidates
 from app.services.nightingale import read_glance, rebuild_glance
 
 
@@ -166,6 +167,31 @@ def test_full_demo_fixture_is_idempotent_and_covers_delivery_scenarios(
         for value in visible_copy
         for term in ("synthetic", "fixture", "demo")
     )
+
+
+def test_retention_history_is_archivable_without_weakening_active_care_protection(
+    owner_session: Session,
+) -> None:
+    seed_demo_data(owner_session)
+    clinician = owner_session.get(User, demo_id("user-clinician"))
+    membership = owner_session.get(ClinicMembership, demo_id("membership-clinician"))
+    assert clinician is not None and membership is not None
+
+    candidates = list_decay_candidates(
+        owner_session,
+        RequestContext(user=clinician, membership=membership),
+    )
+    by_version = {item.entry_version_id: item for item in candidates}
+
+    retention_version_id = demo_id("entry-retention-history-2023-version-1")
+    retention = by_version[retention_version_id]
+    assert retention.protected_reasons == []
+    assert retention.eligible_for_cold is True
+
+    active_care_version_id = demo_id("entry-decay-candidate-2023-version-1")
+    active_care = by_version[active_care_version_id]
+    assert "open_task" in active_care.protected_reasons
+    assert active_care.eligible_for_cold is False
 
 
 def test_longitudinal_patient_fixture_is_visible_source_linked_and_collaborative(

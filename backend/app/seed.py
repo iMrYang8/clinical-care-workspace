@@ -1176,6 +1176,7 @@ def _seed_demo_domain(session: Session) -> None:
     clinic_id = demo_id("clinic-primary")
     patient_id = demo_id("patient-primary")
     decay_patient_id = demo_id("patient-decay")
+    retention_patient_id = demo_id("patient-retention")
     staff_id = demo_id("user-staff")
     clinician_id = demo_id("user-clinician")
 
@@ -1207,6 +1208,81 @@ def _seed_demo_domain(session: Session) -> None:
             )
         )
         session.flush()
+
+    if session.get(Patient, retention_patient_id) is None:
+        session.add(
+            Patient(
+                id=retention_patient_id,
+                clinic_id=clinic_id,
+                display_name_ciphertext=field_codec.encrypt_text(
+                    clinic_id,
+                    "patient.display_name",
+                    retention_patient_id,
+                    "Rachel Lim",
+                ),
+                external_ref_hash=hashlib.sha256(
+                    b"SYNTHETIC-RETENTION-001"
+                ).hexdigest(),
+                created_at=_fixture_time("2023-01-10T09:00:00"),
+            )
+        )
+        snapshot_id = demo_id("glance-retention")
+        session.add(
+            PatientGlanceSnapshot(
+                id=snapshot_id,
+                clinic_id=clinic_id,
+                patient_id=retention_patient_id,
+                payload_ciphertext=field_codec.encrypt_json(
+                    clinic_id, "glance.payload", snapshot_id, {"cards": []}
+                ),
+                generated_at=_fixture_time("2023-01-10T09:00:00"),
+            )
+        )
+        session.flush()
+    _seed_patient_identity(
+        session,
+        clinic_id=clinic_id,
+        patient_id=retention_patient_id,
+        creator_membership_id=demo_id("membership-staff"),
+        display_name="Rachel Lim",
+        date_of_birth="1978-11-23",
+        medical_record_number="MRN2018042",
+        identity_number="SYNTHETIC042",
+    )
+    _seed_entry(
+        session,
+        name="retention-history-2023",
+        clinic_id=clinic_id,
+        patient_id=retention_patient_id,
+        author_id=staff_id,
+        section="staff",
+        origin="human",
+        entry_type="manual_staff_note",
+        title="Resolved dermatitis follow-up",
+        contents=[
+            "Mild contact dermatitis resolved after emollient care. "
+            "No recurrence was reported at follow-up."
+        ],
+        occurred_at=_fixture_time("2023-01-10T10:00:00"),
+        patient_facing=False,
+    )
+    _seed_entry(
+        session,
+        name="retention-review-2026",
+        clinic_id=clinic_id,
+        patient_id=retention_patient_id,
+        author_id=clinician_id,
+        section="clinician",
+        origin="human",
+        entry_type="manual_clinician_note",
+        title="Annual wellbeing review",
+        contents=[
+            "General wellbeing reviewed. No active concerns were identified, "
+            "and routine follow-up continues."
+        ],
+        occurred_at=_fixture_time("2026-02-06T10:00:00"),
+        patient_facing=False,
+    )
 
     _seed_entry(
         session,
