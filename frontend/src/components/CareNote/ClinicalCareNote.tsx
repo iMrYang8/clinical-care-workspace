@@ -1012,18 +1012,22 @@ export function ClinicalCareNote({
               onExplain={(card) =>
                 clinicalApi.decisionExplanation(card.highlight_id)
               }
-              onImpression={(card, rank, viewEventId) =>
-                clinicalApi.recordImportanceImpression({
-                  highlightId: card.highlight_id,
-                  viewEventId,
-                  rank,
-                  // Ranking is deterministic today. Record an honest exposure
-                  // probability until a randomized exploration policy exists;
-                  // telemetry must not imply that slot five was sampled.
-                  exposureProbability: 1,
-                  visibleRatio: 0.5,
-                  visibleDurationMs: 2_000,
-                })
+              onImpression={
+                canCollaborate
+                  ? (card, rank, viewEventId) =>
+                      clinicalApi.recordImportanceImpression({
+                        highlightId: card.highlight_id,
+                        viewEventId,
+                        rank,
+                        // Ranking is deterministic today. Record an honest
+                        // exposure probability until a randomized exploration
+                        // policy exists; telemetry must not imply that slot five
+                        // was sampled.
+                        exposureProbability: 1,
+                        visibleRatio: 0.5,
+                        visibleDurationMs: 2_000,
+                      })
+                  : undefined
               }
               onRequestReview={(card) =>
                 highlightMutation.mutate({ card, action: "request_review" })
