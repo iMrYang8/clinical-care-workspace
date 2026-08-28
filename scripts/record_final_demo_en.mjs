@@ -969,6 +969,7 @@ await runSegment(page, 3, async () => {
 	);
 	if (MUTATE) {
 		const newCard = page
+			.getByRole("list", { name: "Top care highlights" })
 			.getByRole("listitem")
 			.filter({ hasText: quote })
 			.first();
