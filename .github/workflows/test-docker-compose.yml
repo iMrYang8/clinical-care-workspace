@@ -21,6 +21,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Create ephemeral CI environment
+        run: ./scripts/setup-ci-env.sh
       - name: Development ports are loopback-only
         run: docker compose config --format json | python3 scripts/assert_compose_ports.py development
       - name: Demo reset scripts are path-bound
