@@ -69,6 +69,9 @@ describe("AI note manual highlights", () => {
     const create = vi
       .spyOn(TrustService, "createHighlight")
       .mockResolvedValue({ data: acceptedHighlight } as never)
+    const pin = vi.spyOn(TrustService, "pin").mockResolvedValue({
+      data: { ...acceptedHighlight, pinned: true },
+    } as never)
     const { invalidate } = renderHighlight(
       <AiManualHighlight
         enabled
@@ -92,6 +95,11 @@ describe("AI note manual highlights", () => {
     )
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(pin).toHaveBeenCalledWith({
+        path: { highlight_id: acceptedHighlight.id },
+      }),
+    )
     const rawStartUtf16 = rawContent.indexOf(quote)
     const expectedStart = Array.from(rawContent.slice(0, rawStartUtf16)).length
     expect(create).toHaveBeenCalledWith({

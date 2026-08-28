@@ -1287,22 +1287,16 @@ await runSegment(page, 6, async () => {
 			publishedArticle.getByText(/Source:/),
 			"Saved source receipt",
 		);
-		const approvedSource = page
-			.getByRole("button", { name: "View approved source" })
-			.last();
-		await moveTo(page, approvedSource, "Approved source", {
-			click: true,
-			timeout: 8000,
-		});
-		await moveTo(
-			page,
-			page.getByText("Source details", { exact: true }).last(),
-			"Source details",
+		const publishedVersionId = await publishedArticle.getAttribute(
+			"data-patient-version-id",
 		);
+		if (!publishedVersionId) {
+			throw new Error("Patient publication is not bound to an exact version");
+		}
 		await moveTo(
 			page,
-			page.locator("blockquote").filter({ hasText: /\S/ }).last(),
-			"Exact approved wording",
+			publishedArticle.locator("p.whitespace-pre-wrap"),
+			"Exact approved version",
 		);
 		await login(page, context, "clinician", "/patients");
 		await openPatient(page, "Alex Tan");

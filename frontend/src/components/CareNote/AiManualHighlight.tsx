@@ -116,7 +116,15 @@ export function AiManualHighlight({
           },
         })
       ).data
-      return created
+      // A clinician explicitly chose this exact AI-assisted wording for the
+      // five-card Current priorities projection. Keep that deliberate choice
+      // at the top so a full existing projection cannot silently hide the
+      // newly confirmed item immediately after the dialog says it was added.
+      return (
+        await TrustService.pin({
+          path: { highlight_id: created.id },
+        })
+      ).data
     },
     onSuccess: async (created) => {
       setDialogOpen(false)
