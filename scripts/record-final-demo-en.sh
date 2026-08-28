@@ -94,7 +94,11 @@ if [[ -n "$recording_image" ]]; then
   "${compose[@]}" up --no-build --detach --wait --wait-timeout "$timeout" \
     proxy db prestart backend ai-worker mailpit
 else
-  "${compose[@]}" up --build --detach --wait --wait-timeout "$timeout" \
+  # The backend, prestart, and worker share one image definition. Build it once
+  # explicitly; classic Compose otherwise sends the same large context once per
+  # service when `up --build` is used.
+  "${compose[@]}" build backend
+  "${compose[@]}" up --no-build --detach --wait --wait-timeout "$timeout" \
     proxy db prestart backend ai-worker mailpit
 fi
 

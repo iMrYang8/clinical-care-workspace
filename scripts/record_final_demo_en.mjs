@@ -663,7 +663,10 @@ await runSegment(page, 1, async () => {
 		"View exact source",
 		{ click: true },
 	);
-	const dialog = page.getByRole("dialog", { name: /Source details/ });
+	const dialog = page
+		.getByRole("dialog", { name: /Source details/ })
+		.filter({ visible: true })
+		.last();
 	await dialog.waitFor({ state: "visible" });
 	await moveTo(
 		page,
@@ -934,7 +937,10 @@ await runSegment(page, 3, async () => {
 				"Same exact source",
 				{ click: true },
 			);
-			const dialog = page.getByRole("dialog", { name: /Source details/ });
+			const dialog = page
+				.getByRole("dialog", { name: /Source details/ })
+				.filter({ visible: true })
+				.last();
 			await moveTo(
 				page,
 				dialog.locator("mark[data-source-span]"),
@@ -1061,7 +1067,10 @@ await runSegment(page, 5, async () => {
 	for (const name of ["View first source", "View conflicting source"]) {
 		const button = page.getByRole("button", { name }).first();
 		await moveTo(page, button, name, { click: true });
-		const dialog = page.getByRole("dialog", { name: /Source details/ });
+		const dialog = page
+			.getByRole("dialog", { name: /Source details/ })
+			.filter({ visible: true })
+			.last();
 		if (await dialog.isVisible().catch(() => false)) {
 			const mark = dialog.locator("mark[data-source-span]");
 			if (await mark.isVisible().catch(() => false))
@@ -1069,7 +1078,12 @@ await runSegment(page, 5, async () => {
 			await closeVisibleDialog(page);
 		}
 	}
-	const why = page.getByText("Why this decision?", { exact: true }).first();
+	const reviewPanel = page
+		.getByRole("heading", { name: "Needs clinical review" })
+		.locator("xpath=ancestor::*[@data-slot='card'][1]");
+	const why = reviewPanel
+		.getByText("Why this decision?", { exact: true })
+		.first();
 	if (await why.isVisible().catch(() => false)) {
 		await moveTo(page, why, "Why this decision?", { click: true });
 		for (const text of [
