@@ -445,6 +445,41 @@ def test_source_linked_clinical_context_is_visible_only_to_care_team(
 def test_reseed_preserves_feedback_and_rebuilds_snapshot_from_current_state(
     owner_session: Session,
 ) -> None:
+    def stable_card_projection(
+        cards: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Exclude the clock-derived recency values from a reseed comparison.
+
+        Rebuilding Glance deliberately recalculates age-based importance against
+        the current clock.  A reseed must preserve card identity, ordering,
+        decisions, sources, and learned state; it is not expected to freeze a
+        previously computed recency decimal.
+        """
+
+        output: list[dict[str, object]] = []
+        for card in cards:
+            normalized = dict(card)
+            score_components_value = normalized.get("score_components", {})
+            assert isinstance(score_components_value, dict)
+            score_components = dict(score_components_value)
+            score_components.pop("recency", None)
+            score_components.pop("final", None)
+            normalized["score_components"] = score_components
+
+            importance_value = normalized.get("importance", {})
+            assert isinstance(importance_value, dict)
+            importance = dict(importance_value)
+            importance.pop("score", None)
+            importance_components_value = importance.get("components", {})
+            assert isinstance(importance_components_value, dict)
+            importance_components = dict(importance_components_value)
+            importance_components.pop("recency", None)
+            importance_components.pop("final", None)
+            importance["components"] = importance_components
+            normalized["importance"] = importance
+            output.append(normalized)
+        return output
+
     seed_demo_data(owner_session)
     ai_review = owner_session.get(Highlight, demo_id("highlight-ai-doctor-review"))
     feedback = owner_session.get(
@@ -497,7 +532,7 @@ def test_reseed_preserves_feedback_and_rebuilds_snapshot_from_current_state(
     assert preserved_feedback.signal == "reject"
     assert preserved_feedback.applied_delta == -0.03
     assert preserved_stat.weight == -0.17
-    assert cards_after == cards_before
+    assert stable_card_projection(cards_after) == stable_card_projection(cards_before)
     assert {
         "entries": len(owner_session.exec(select(Entry)).all()),
         "feedback": len(owner_session.exec(select(ImportanceFeedbackEvent)).all()),
