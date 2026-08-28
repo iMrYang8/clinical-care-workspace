@@ -94,7 +94,10 @@ async function api<T = Record<string, unknown>>(
 }
 
 async function patientAndTimeline(page: Page, displayName = "Alex Tan") {
-  const patients = await api<{ data: Patient[] }>(page, "/api/v1/patients")
+  const patients = await api<{ data: Patient[] }>(
+    page,
+    `/api/v1/patients?search=${encodeURIComponent(displayName)}&limit=100`,
+  )
   expect(patients.status).toBe(200)
   const patient = patients.body.data.find(
     (candidate) => candidate.display_name === displayName,
@@ -392,17 +395,9 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
       resolved_at: expect.any(String),
     })
 
-  // Clinical confirmation is intentionally separate from the staff
-  // collaboration work above. The pair is non-critical, so a finally block can
-  // remove it after each repeat without weakening protected-priority behavior.
-  await page.getByTestId("user-menu").click()
-  await page.getByRole("menuitem", { name: "Sign out" }).click()
-  await expect(page).toHaveURL(/\/login$/)
-  await login(page, "Clinician")
-  await openAlex(page)
-
   // Two independently persisted, non-critical priorities share a bounded
-  // feature. Pinning the source must lift the peer's learned score.
+  // feature. A finally block removes them after every repeat without weakening
+  // protected-priority behavior. Pinning the source must lift the peer score.
   const learningRun = `${testInfo.repeatEachIndex}_${Date.now()}`
   const featureKey = `entry_type:medication_review_${testInfo.repeatEachIndex}_${Date.now()}`
   const sourceLabel = `Medication safety priority ${learningRun}`
