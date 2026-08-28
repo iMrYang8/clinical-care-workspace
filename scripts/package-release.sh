@@ -34,6 +34,11 @@ if [[ "$recorded_commit" != "$commit" ]]; then
   echo "Evidence commit $recorded_commit does not match checkout $commit." >&2
   exit 1
 fi
+verified_image="$(cat "$evidence_dir/verified-backend-image-id.txt")"
+if [[ -z "$verified_image" || "$verified_image" != sha256:* ]]; then
+  echo "Release evidence does not contain a content-addressed backend image." >&2
+  exit 1
+fi
 
 for required in \
   "$evidence_dir/glance-benchmark.json" \
@@ -60,6 +65,13 @@ python3 scripts/validate_release_evidence.py \
   --evidence-dir "$evidence_dir" \
   --expected-commit "$commit" \
   --pdf "$pdf"
+python3 scripts/validate_demo_release.py \
+  --metadata "$demo_metadata" \
+  --video "$video" \
+  --srt "$demo_srt" \
+  --sha-file "$demo_sha256" \
+  --expected-commit "$commit" \
+  --expected-image "$verified_image"
 
 stage="$delivery_root/Nightingale-72h-$short"
 bundle="$delivery_root/Nightingale-72h-$short.zip"

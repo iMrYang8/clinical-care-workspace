@@ -9,6 +9,7 @@
  * The raw recording has no bottom caption overlay. The renderer places it
  * above a dedicated 120px subtitle band and burns the generated English SRT.
  */
+import { createHash } from "node:crypto";
 import {
 	copyFile,
 	mkdir,
@@ -46,13 +47,27 @@ const RECORDING_MANIFEST = resolve(
 );
 const SPEED = Number(process.env.DEMO_SPEED || "1");
 const MUTATE = process.env.DEMO_MUTATE === "1";
+const TRUSTED_ORIGIN_OVERRIDE =
+	process.env.NIGHTINGALE_DEMO_TRUSTED_ORIGIN?.trim() || null;
+const SEGMENT_OVERRUN_TOLERANCE_MS = Number(
+	process.env.NIGHTINGALE_DEMO_SEGMENT_OVERRUN_TOLERANCE_MS || "2000",
+);
 const RUNTIME_REVISION =
 	process.env.NIGHTINGALE_RUNTIME_REVISION || "recorded in final metadata";
 const IMAGE_DIGEST =
 	process.env.NIGHTINGALE_IMAGE_DIGEST || "recorded in final metadata";
+const TRUSTED_ORIGIN = TRUSTED_ORIGIN_OVERRIDE || new URL(BASE).origin;
 const VIEWPORT = { width: 1920, height: 960 };
 if (!Number.isFinite(SPEED) || SPEED <= 0) {
 	throw new Error("DEMO_SPEED must be a positive number");
+}
+if (
+	!Number.isFinite(SEGMENT_OVERRUN_TOLERANCE_MS) ||
+	SEGMENT_OVERRUN_TOLERANCE_MS < 0
+) {
+	throw new Error(
+		"NIGHTINGALE_DEMO_SEGMENT_OVERRUN_TOLERANCE_MS must be a non-negative number",
+	);
 }
 if (!OUTPUT.toLowerCase().endsWith(".webm")) {
 	throw new Error("NIGHTINGALE_DEMO_RAW_VIDEO must use a .webm suffix");
@@ -60,8 +75,11 @@ if (!OUTPUT.toLowerCase().endsWith(".webm")) {
 const temp = await mkdtemp(join(tmpdir(), "nightingale-final-demo-en-"));
 const rawDir = join(temp, "raw");
 const failures = [];
+const mutationResponseFailures = [];
+const segmentTimings = [];
 let activeSegment = null;
 let activeSegmentIndex = -1;
+const MUTATION_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
 
 const sleep = (ms) =>
 	new Promise((resolveSleep) =>
@@ -326,6 +344,151 @@ async function login(page, context, persona, destination) {
 	await page.waitForLoadState("networkidle").catch(() => {});
 }
 
+function createSyntheticWav(durationSeconds = 11, sampleRate = 16_000) {
+	const frameCount = Math.round(durationSeconds * sampleRate);
+	const bytesPerSample = 2;
+	const dataSize = frameCount * bytesPerSample;
+	const wav = Buffer.alloc(44 + dataSize);
+	wav.write("RIFF", 0, "ascii");
+	wav.writeUInt32LE(36 + dataSize, 4);
+	wav.write("WAVE", 8, "ascii");
+	wav.write("fmt ", 12, "ascii");
+	wav.writeUInt32LE(16, 16);
+	wav.writeUInt16LE(1, 20);
+	wav.writeUInt16LE(1, 22);
+	wav.writeUInt32LE(sampleRate, 24);
+	wav.writeUInt32LE(sampleRate * bytesPerSample, 28);
+	wav.writeUInt16LE(bytesPerSample, 32);
+	wav.writeUInt16LE(16, 34);
+	wav.write("data", 36, "ascii");
+	wav.writeUInt32LE(dataSize, 40);
+	for (let index = 0; index < frameCount; index += 1) {
+		const sample = Math.round(
+			4_000 * Math.sin((2 * Math.PI * 220 * index) / sampleRate),
+		);
+		wav.writeInt16LE(sample, 44 + index * bytesPerSample);
+	}
+	return wav;
+}
+
+async function expectApiJson(response, label, expectedStatus) {
+	if (response.status() !== expectedStatus) {
+		throw new Error(
+			`${label}: expected ${expectedStatus}, received ${response.status()} ${await response.text()}`,
+		);
+	}
+	return response.json();
+}
+
+async function createSyntheticVoiceReview(page) {
+	const patientsResponse = await page.request.get(`${BASE}/api/v1/patients`);
+	const patients = await expectApiJson(patientsResponse, "list patients", 200);
+	const patient =
+		patients.data?.find((item) => item.display_name === "Jordan Wong") ||
+		patients.data?.[0];
+	if (!patient?.id) throw new Error("No patient is available for voice review");
+
+	const mutationHeaders = { Origin: TRUSTED_ORIGIN };
+	const created = await expectApiJson(
+		await page.request.post(`${BASE}/api/v1/voice/sessions`, {
+			headers: mutationHeaders,
+			data: {
+				patient_id: patient.id,
+				capture_kind: "clinical",
+				synthetic_fixture: true,
+				fixture_id: "code-switch-overlap-v1",
+			},
+		}),
+		"create synthetic voice session",
+		201,
+	);
+	const joined = await expectApiJson(
+		await page.request.post(
+			`${BASE}/api/v1/voice/sessions/${created.id}/devices`,
+			{
+				headers: mutationHeaders,
+				data: {
+					client_device_id: `english-demo-${created.id}`,
+					capture_role: "clinician",
+					expected_patient_id: patient.id,
+					expected_capture_kind: "clinical",
+				},
+			},
+		),
+		"join synthetic voice session",
+		201,
+	);
+
+	const wav = createSyntheticWav();
+	await expectApiJson(
+		await page.request.put(
+			`${BASE}/api/v1/voice/sessions/${created.id}/devices/${joined.id}/chunks/0`,
+			{
+				headers: {
+					...mutationHeaders,
+					"Content-Type": "audio/wav",
+					"X-Chunk-SHA256": createHash("sha256").update(wav).digest("hex"),
+					"X-Chunk-Start-Ms": "0",
+					"X-Chunk-End-Ms": "11000",
+				},
+				data: wav,
+			},
+		),
+		"upload synthetic voice chunk",
+		200,
+	);
+	await expectApiJson(
+		await page.request.post(
+			`${BASE}/api/v1/voice/sessions/${created.id}/devices/${joined.id}/seal`,
+			{
+				headers: mutationHeaders,
+				data: { last_chunk_index: 0 },
+			},
+		),
+		"seal synthetic voice session",
+		200,
+	);
+	await expectApiJson(
+		await page.request.post(
+			`${BASE}/api/v1/voice/sessions/${created.id}/finalize`,
+			{
+				headers: {
+					...mutationHeaders,
+					"Idempotency-Key": `english-demo-voice-${created.id}`,
+				},
+				data: {
+					devices: [{ device_id: joined.id, last_chunk_index: 0 }],
+				},
+			},
+		),
+		"finalize synthetic voice session",
+		202,
+	);
+
+	for (let attempt = 0; attempt < 300; attempt += 1) {
+		const statusResponse = await page.request.get(
+			`${BASE}/api/v1/voice/sessions/${created.id}`,
+		);
+		const status = await expectApiJson(
+			statusResponse,
+			"poll synthetic voice session",
+			200,
+		);
+		if (status.state === "needs_review" || status.state === "published") {
+			return created.id;
+		}
+		if (status.state === "failed") {
+			throw new Error(
+				`Synthetic voice processing failed: ${status.error_code || "unknown"}`,
+			);
+		}
+		await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+	}
+	throw new Error(
+		"Synthetic voice review did not become ready within 60 seconds",
+	);
+}
+
 async function openPatient(page, name) {
 	if (!/\/patients\/?$/.test(new URL(page.url()).pathname))
 		await page.goto(`${BASE}/patients`, { waitUntil: "domcontentloaded" });
@@ -358,7 +521,25 @@ async function runSegment(page, index, action) {
 		failures.push(`${segment.title}: ${error.stack || error}`);
 		console.error(`Scene error: ${error.message}`);
 	});
-	const remaining = segment.seconds * 1000 * SPEED - (Date.now() - started);
+	const expectedMilliseconds = segment.seconds * 1000 * SPEED;
+	const actionMilliseconds = Date.now() - started;
+	const overrunMilliseconds = Math.max(
+		0,
+		actionMilliseconds - expectedMilliseconds,
+	);
+	segmentTimings.push({
+		action_seconds: actionMilliseconds / 1000,
+		expected_seconds: expectedMilliseconds / 1000,
+		index: index + 1,
+		overrun_seconds: overrunMilliseconds / 1000,
+		title: segment.title,
+	});
+	if (SPEED === 1 && overrunMilliseconds > SEGMENT_OVERRUN_TOLERANCE_MS) {
+		failures.push(
+			`Segment ${index + 1} overran its subtitle window by ${(overrunMilliseconds / 1000).toFixed(3)} seconds: ${segment.title}`,
+		);
+	}
+	const remaining = expectedMilliseconds - actionMilliseconds;
 	if (remaining > 0)
 		await new Promise((resolveWait) => setTimeout(resolveWait, remaining));
 }
@@ -377,11 +558,32 @@ const context = await browser.newContext({
 	colorScheme: "light",
 });
 const page = await context.newPage();
+if (TRUSTED_ORIGIN_OVERRIDE) {
+	await page.route("**/api/v1/**", async (route) => {
+		const request = route.request();
+		if (!MUTATION_METHODS.has(request.method())) {
+			await route.continue();
+			return;
+		}
+		const response = await route.fetch({
+			headers: {
+				...request.headers(),
+				origin: TRUSTED_ORIGIN_OVERRIDE,
+			},
+		});
+		await route.fulfill({ response });
+	});
+}
 page.on("response", (response) => {
-	if (response.status() >= 500)
-		failures.push(
-			`${response.status()} ${response.request().method()} ${response.url()}`,
-		);
+	const method = response.request().method();
+	const status = response.status();
+	const detail = `${status} ${method} ${response.url()}`;
+	if (MUTATION_METHODS.has(method) && status >= 400) {
+		mutationResponseFailures.push(detail);
+		failures.push(`Mutation response failed: ${detail}`);
+	} else if (status >= 500) {
+		failures.push(detail);
+	}
 });
 const video = page.video();
 if (!video) throw new Error("Playwright video unavailable");
@@ -757,6 +959,14 @@ await runSegment(page, 3, async () => {
 });
 
 await runSegment(page, 4, async () => {
+	await login(page, context, "clinician", "/patients");
+	await openPatient(page, "Jordan Wong");
+	await moveTo(
+		page,
+		page.getByRole("link", { name: "Timeline", exact: true }),
+		"Timeline",
+		{ click: true },
+	);
 	const article = page.locator(
 		'article[aria-label="Clinical note: Current pancreatitis admission plan"]',
 	);
@@ -824,6 +1034,8 @@ await runSegment(page, 4, async () => {
 });
 
 await runSegment(page, 5, async () => {
+	await login(page, context, "clinician", "/patients");
+	await openPatient(page, "Jordan Wong");
 	await moveTo(
 		page,
 		page.getByRole("link", { name: "Clinical review", exact: true }),
@@ -1125,12 +1337,17 @@ await runSegment(page, 9, async () => {
 });
 
 await runSegment(page, 10, async () => {
-	await login(
-		page,
-		context,
-		"clinician",
-		"/voice/6f593b0f-9ad3-44a5-9c89-cf046345d256/review",
-	);
+	await login(page, context, "clinician", "/patients");
+	if (!MUTATE) {
+		throw new Error(
+			"Voice review requires DEMO_MUTATE=1 so the isolated synthetic fixture can be processed",
+		);
+	}
+	const voiceSessionId = await createSyntheticVoiceReview(page);
+	await page.goto(`${BASE}/voice/${voiceSessionId}/review`, {
+		waitUntil: "domcontentloaded",
+	});
+	await page.waitForLoadState("networkidle").catch(() => {});
 	await page
 		.getByRole("heading", { name: "Review visit recording" })
 		.waitFor({ state: "visible", timeout: 15000 });
@@ -1223,14 +1440,17 @@ await writeFile(
 			image_digest: IMAGE_DIGEST,
 			language: "en",
 			mutate: MUTATE,
+			mutation_response_failures: mutationResponseFailures,
 			raw_video: OUTPUT,
 			pre_roll_seconds: preRoll,
 			recorded_at: new Date().toISOString(),
 			resolution: `${VIEWPORT.width}x${VIEWPORT.height}`,
 			runtime_git_revision: RUNTIME_REVISION,
+			segment_timings: segmentTimings,
 			segments,
 			size_bytes: media.size,
 			speed: SPEED,
+			trusted_origin_override: TRUSTED_ORIGIN_OVERRIDE,
 		},
 		null,
 		2,

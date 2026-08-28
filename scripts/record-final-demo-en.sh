@@ -28,7 +28,10 @@ fi
 
 # The capture is deterministic and synthetic. Do not inherit an operator's
 # local provider key or remote-egress configuration into the isolated stack.
-unset OPENAI_API_KEY OPENAI_EXTRACT_MODEL OPENAI_REVIEW_MODEL OPENAI_TRANSCRIBE_MODEL
+export OPENAI_API_KEY=""
+export OPENAI_EXTRACT_MODEL=""
+export OPENAI_REVIEW_MODEL=""
+export OPENAI_TRANSCRIBE_MODEL=""
 export AI_PROVIDER=deterministic
 export REMOTE_TEXT_EGRESS_ENABLED=false
 export VOICE_TRANSCRIPTION_PROVIDER=disabled
@@ -48,6 +51,7 @@ while [[ "$mailpit_port" == "$http_port" || "$mailpit_port" == "$https_port" ]];
   mailpit_port="$(python3 "$root/scripts/free-local-port.py")"
 done
 base_url="https://localhost:${https_port}"
+export NIGHTINGALE_DEMO_TRUSTED_ORIGIN="${NIGHTINGALE_DEMO_TRUSTED_ORIGIN:-https://localhost}"
 timeout="${NIGHTINGALE_START_TIMEOUT:-300}"
 raw="${NIGHTINGALE_DEMO_RAW_VIDEO:-$root/output/demo/Nightingale_Final_Demo_EN_raw.webm}"
 recording_manifest="${NIGHTINGALE_DEMO_RECORDING_MANIFEST:-${raw}.recording.json}"
