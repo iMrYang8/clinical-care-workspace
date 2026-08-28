@@ -134,6 +134,14 @@ NIGHTINGALE_BACKEND_IMAGE="nightingale-backend:${NIGHTINGALE_SOURCE_COMMIT}" \
   docker compose -f compose.yml -f compose.deploy.yml config --format json | \
   python3 scripts/assert_compose_ports.py production
 
+# Build the production shell before backend response-cache tests. A clean checkout
+# deliberately has no ignored backend/app/frontend artifacts.
+section "Frontend type, lint, unit, and production build"
+"$bun_bin" run --filter frontend typecheck
+"$bun_bin" run --filter frontend lint
+"$bun_bin" run --filter frontend test
+"$bun_bin" run --filter frontend build
+
 section "Backend static checks"
 (
   cd backend
@@ -188,12 +196,6 @@ DEV_DB_PORT="$verify_port" docker compose --project-name "$verify_project" \
 )
 cleanup_verify
 trap - EXIT INT TERM
-
-section "Frontend type, lint, unit, and production build"
-"$bun_bin" run --filter frontend typecheck
-"$bun_bin" run --filter frontend lint
-"$bun_bin" run --filter frontend test
-"$bun_bin" run --filter frontend build
 
 section "Generated OpenAPI client synchronization"
 git ls-files --error-unmatch frontend/openapi.json >/dev/null
