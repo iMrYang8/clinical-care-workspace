@@ -32,18 +32,23 @@ Encrypted archive payloads directly use zstandard 0.25.0 under the BSD
 the project does not vendor its source.
 
 The optional, explicitly gated OpenAI Realtime transcription transport directly
-uses websockets 16.0 under the BSD 3-Clause license. No OpenAI model weights or
-API responses are bundled with this repository.
+uses websockets 16.0 under the BSD 3-Clause license.
 
 Clinic-level OpenAI model identifiers and encrypted API-key storage are
-Nightingale configuration features. They do not bundle OpenAI weights,
-credentials, or provider responses. The committed fact and voice calibration
-JSON files contain repository-authored derived metrics plus selected binding
-fields (provider, exact model, task, evaluation-manifest hash, sample counts,
-and result band) from mock/synthetic inputs; they contain no API key, raw
-provider response, or patient data. They do not contain a complete provider
-request/response record. Model names in those reports identify the evaluated
-service configuration and do not imply clinical validation.
+Nightingale configuration features. OpenAI models are accessed as hosted API
+services under the operator's provider account and applicable terms; this
+repository does not contain, vendor, license onward, or redistribute OpenAI
+model weights. It also bundles no OpenAI credential or raw provider response.
+
+Actual hosted OpenAI API inference was used for two evidence-bound evaluations
+over mock/synthetic inputs: ACI-Bench fact extraction with `gpt-5.1`, and
+PriMock57 transcription with `gpt-4o-transcribe-diarize`. Both reports recorded
+**Low** results and therefore require abstention. The committed fact and voice
+calibration JSON files contain only repository-authored derived metrics plus
+selected binding fields (provider, exact model, task, evaluation-manifest hash,
+sample counts, and result band); they contain no API key, raw response, patient
+data, model file, or weight. Model names identify the evaluated hosted-service
+configuration and do not imply clinical validation or redistribution rights.
 
 The optional local evaluation importer downloads but does not commit three
 pinned synthetic/mock datasets:

@@ -31,6 +31,18 @@ applicable license and model terms to the release notice.
 | [spaCy `en_core_web_sm`](https://github.com/explosion/spacy-models/releases/tag/en_core_web_sm-3.8.0) | `3.8.0` — locked optional `presidio-nlp` group, omitted from the default image. | Local English PERSON/PHONE/EMAIL/ID analysis for the Presidio remote-text boundary. | MIT model package. Application code never downloads it. CI installs the frozen lock and requires a load/remote-boundary smoke; release images include it only when built with `INSTALL_PRESIDIO_NLP=true`. This does not validate clinical recall or other language models. |
 | [python-zstandard](https://github.com/indygreg/python-zstandard) | `0.25.0` | Bounded zstd compression before AES-256-GCM cold archive encryption. | BSD 3-Clause; the installed wheel includes its license text. |
 
+## Hosted model services — accessed, not redistributed
+
+Hosted APIs are configuration boundaries, not bundled dependencies or model
+distributions. Provider access is governed by the clinic/operator account and
+the provider's applicable service terms. Nightingale stores encrypted API
+credentials only in the configured clinic or deployment environment and does
+not commit them.
+
+| Service | Repository use and measured evidence | Distribution boundary |
+| --- | --- | --- |
+| OpenAI API | Optional, disabled-by-default text, review, transcription, and realtime adapters. Actual hosted API inference over mock/synthetic evaluation inputs produced two committed derived reports: ACI-Bench fact extraction with `gpt-5.1` (176 decisions, 40 consultations, **Low**) and PriMock57 transcription with `gpt-4o-transcribe-diarize` (2,206 segment decisions, 17 consultations, **Low**). Both Low results cause abstention and are not clinical validation. `gpt-5-mini` remains only an editable default without committed quality evidence; the realtime adapter has mocked transport coverage only. | OpenAI supplies these models as hosted services. This repository redistributes no OpenAI model, weight, tokenizer, raw provider response, or credential, and grants no onward right to do so. Only model identifiers, repository-authored derived metrics, and version-binding metadata are committed. |
+
 ## Optional integrations
 
 | Component | Status | Intended role | Licensing note |

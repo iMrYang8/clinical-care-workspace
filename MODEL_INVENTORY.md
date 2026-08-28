@@ -5,6 +5,16 @@ libraries, model weights, and measured validation. A provider appearing in
 source code is not evidence that a live model call or clinical-quality
 evaluation has occurred.
 
+Two committed quality reports are explicit, evidence-bound exceptions to that
+general warning: actual hosted OpenAI API inference was run on mock/synthetic
+evaluation inputs, never patient data. ACI-Bench fact extraction used
+`gpt-5.1`; PriMock57 voice transcription used
+`gpt-4o-transcribe-diarize`. Both measured results are **Low**, so the runtime
+abstains instead of presenting them as clinically reliable. OpenAI remains a
+hosted service: this repository records model identifiers and derived metrics
+but does not contain or redistribute OpenAI model weights or raw provider
+responses.
+
 ## Clinic-scoped routing and secret handling
 
 Clinic administrators can store one OpenAI credential and choose separate
@@ -32,13 +42,13 @@ not used directly.
 | Workflow | Mode | Shipped/default state | Required configuration or asset | Verified scope and claim boundary |
 | --- | --- | --- | --- | --- |
 | Clinical text extraction | Deterministic provider | **Enabled by default.** No network or model weights. | `AI_PROVIDER=deterministic` | Contract, job, provenance, fallback, and idempotency paths are covered by local tests. Output is a deterministic synthetic fixture, not an LLM evaluation. |
-| Clinical text extraction | OpenAI Responses adapter | Implemented; **disabled by default**. | `AI_PROVIDER=openai`, `REMOTE_TEXT_EGRESS_ENABLED=true`, a clinic or environment API key, and a fast/careful model selection; remote-egress image also installs the required Presidio model. | Mocked transport covers the contract. A committed synthetic/mock ACI-Bench evaluation binds `gpt-5.1` to 176 decisions across 40 consultations: accuracy 0.073864, lower bound 0.043671, and **Low** confidence. The negative result is preserved; it triggers abstention rather than a clinical-quality claim. No latency, cost, or clinical validation is claimed. |
+| Clinical text extraction | OpenAI Responses adapter | Implemented; **disabled by default**. | `AI_PROVIDER=openai`, `REMOTE_TEXT_EGRESS_ENABLED=true`, a clinic or environment API key, and a fast/careful model selection; remote-egress image also installs the required Presidio model. | Mocked transport covers the adapter contract. Actual hosted OpenAI API inference over mock/synthetic ACI-Bench inputs binds `gpt-5.1` to 176 decisions across 40 consultations: accuracy 0.073864, lower bound 0.043671, and **Low** confidence. The negative result is preserved; it triggers abstention rather than a clinical-quality claim. No latency, cost, or clinical validation is claimed. |
 | High-risk text review | Independent OpenAI review adapter | Implemented; **not available without configuration**. | All extraction gates plus a clinic careful-model selection or `OPENAI_REVIEW_MODEL`. | The pipeline records consistent, disagreement, unavailable, and error outcomes. The configured careful model can only add review evidence; it cannot lower deterministic risk floors, override abstention, or replace clinician approval. |
 | Text de-identification | Project recognizers + Presidio Analyzer/Anonymizer | Core libraries locked and embedded; no unauthenticated Presidio service. | Local patient terms and SG recognizers always participate. Remote egress requires `PRESIDIO_REQUIRED=true`. | Fail-closed behavior, residual scan, and non-reflective logging are tested. The committed 500-case gold-span fixture reports PHI recall 1.0, residual PHI 0, and clinical-span damage 0 for the supported synthetic classes. This is a fixed-fixture result, not a guarantee for unseen clinical data. |
 | Presidio NLP | spaCy `en_core_web_sm` 3.8.0 | Locked optional `presidio-nlp` group; **omitted from default image**. | Build with `INSTALL_PRESIDIO_NLP=true`; configured `PRESIDIO_NLP_MODEL` must load. | Intended for the remote-text boundary. It is not a clinical NER recall claim and is not downloaded by application code. |
 | Voice transcription | Disabled | **Default.** | `VOICE_TRANSCRIPTION_PROVIDER=disabled` | Ordinary audio is encrypted and retained with an explicit `needs_review`/provider-disabled state. No transcript is invented. |
 | Voice transcript fixture | `code-switch-overlap-v1` synthetic provider | Available only in development demo mode for a session explicitly marked synthetic. | `FASTAPI_ENV=development`, `ENABLE_DEMO_AUTH=true`, `synthetic_fixture=true`, exact fixture ID. | Exercises speaker, timestamp, language, overlap, confidence, review, and provenance UI. It is fixed fixture data, never ASR and never a quality measurement. |
-| Voice transcription | OpenAI audio transcription adapter | Implemented; **disabled by default**. | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, a clinic or environment API key, and a transcription-model selection; `STRICT_NO_AUDIO_EGRESS` must be false. | Adapter validates diarized/timestamped segments. A committed PriMock57 holdout evaluation binds `gpt-4o-transcribe-diarize` to 2,206 segment decisions across 17 consultations: WER 0.200397, medical-entity recall 0.857407, speaker error 0.202121, accuracy lower bound 0.129246, and **Low** confidence. The runtime therefore abstains; no clinical validation, supported-language matrix, latency, or cost claim is made. |
+| Voice transcription | OpenAI audio transcription adapter | Implemented; **disabled by default**. | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, a clinic or environment API key, and a transcription-model selection; `STRICT_NO_AUDIO_EGRESS` must be false. | Adapter validates diarized/timestamped segments. Actual hosted OpenAI API inference over the mock PriMock57 holdout binds `gpt-4o-transcribe-diarize` to 2,206 segment decisions across 17 consultations: WER 0.200397, medical-entity recall 0.857407, speaker error 0.202121, accuracy lower bound 0.129246, and **Low** confidence. The runtime therefore abstains; no clinical validation, supported-language matrix, latency, or cost claim is made. |
 | Voice transcription | faster-whisper `1.2.1`, CTranslate2 `4.8.1`, PyAV `18.1.0` | Optional `local-asr` profile; all three are lock-resolved but not default-installed; no weights bundled. | Build optional group, mount a non-empty pre-cached `LOCAL_ASR_MODEL_DIR`; provider uses CPU/int8 and `local_files_only=True`. | Process timeout/cancellation and adapter contracts are implemented. CTranslate2/PyAV runtime import and a particular weight set remain **not tested**. PyAV wheel FFmpeg composition is release-platform-specific. No diarization is claimed. |
 | Speaker/overlap experiment | pyannote.audio 4.0.7 | Experimental optional profile; no model/token bundled. | Accepted model terms and pre-cached `PYANNOTE_MODEL_DIR`, plus explicit enablement. | Current code exposes readiness only; it does not apply or validate a pyannote diarization pipeline. Multi-device/provider overlap is preserved as a review signal, not blind-source separation. |
 | Live captions | Disabled | **Default.** | `LIVE_TRANSCRIPT_ENABLED=false` or `LIVE_TRANSCRIPT_PROVIDER=disabled` | The capability endpoint reports unavailable and the UI does not fabricate provisional captions. |
@@ -92,6 +102,9 @@ The two provider reports share dataset manifest SHA-256
 `09fb98f0f00629095327ddf59c89f4b8d8a4cd8bb3c21efaabe385b3f453f28a`.
 Changing the model, task, parameters, code, report expiry, or manifest binding
 makes confidence unavailable. All remote evaluation inputs were mock/synthetic.
+The two OpenAI reports came from actual hosted API execution; only the derived
+metrics and binding metadata are committed. They do not redistribute the
+hosted models, their weights, or provider responses.
 
 ## Release evidence checklist
 

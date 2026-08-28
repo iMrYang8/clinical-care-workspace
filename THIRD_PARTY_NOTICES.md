@@ -39,6 +39,18 @@ applicable license and model terms to the release notice.
 | [ReportLab](https://www.reportlab.com/opensource/) | `4.4.9` | Generates the evidence-bound three-page technical brief; not installed in the application image. | BSD. Full text retained at `THIRD_PARTY_LICENSES/ReportLab-BSD.txt`. |
 | [librsvg `rsvg-convert`](https://gitlab.gnome.org/GNOME/librsvg) | Operator-provided executable | Rasterizes the checked-in SVG architecture/schema diagrams during PDF generation; not bundled in the source or application image. | LGPL-2.1-or-later for current librsvg releases; the operator's installed build and notices govern the executable. |
 
+## Hosted model services — accessed, not redistributed
+
+Hosted APIs are configuration boundaries, not bundled dependencies or model
+distributions. Provider access is governed by the clinic/operator account and
+the provider's applicable service terms. Nightingale stores encrypted API
+credentials only in the configured clinic or deployment environment and does
+not commit them.
+
+| Service | Repository use and measured evidence | Distribution boundary |
+| --- | --- | --- |
+| OpenAI API | Optional, disabled-by-default text, review, transcription, and realtime adapters. Actual hosted API inference over mock/synthetic evaluation inputs produced two committed derived reports: ACI-Bench fact extraction with `gpt-5.1` (176 decisions, 40 consultations, **Low**) and PriMock57 transcription with `gpt-4o-transcribe-diarize` (2,206 segment decisions, 17 consultations, **Low**). Both Low results cause abstention and are not clinical validation. `gpt-5-mini` remains only an editable default without committed quality evidence; the realtime adapter has mocked transport coverage only. | OpenAI supplies these models as hosted services. This repository redistributes no OpenAI model, weight, tokenizer, raw provider response, or credential, and grants no onward right to do so. Only model identifiers, repository-authored derived metrics, and version-binding metadata are committed. |
+
 ## Optional evaluation datasets
 
 These payloads are downloaded only when the operator runs
