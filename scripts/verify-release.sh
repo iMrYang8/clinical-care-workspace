@@ -401,7 +401,13 @@ if [[ "$run_e2e" == true || "$run_benchmark" == true ]]; then
   while [[ "$live_https_port" == "$live_http_port" ]]; do
     live_https_port="$(python3 scripts/free-local-port.py)"
   done
-  export LOCAL_HTTP_PORT="$live_http_port" LOCAL_HTTPS_PORT="$live_https_port"
+  live_mailpit_port="$(python3 scripts/free-local-port.py)"
+  while [[ "$live_mailpit_port" == "$live_http_port" \
+       || "$live_mailpit_port" == "$live_https_port" ]]; do
+    live_mailpit_port="$(python3 scripts/free-local-port.py)"
+  done
+  export LOCAL_HTTP_PORT="$live_http_port" LOCAL_HTTPS_PORT="$live_https_port" \
+    LOCAL_MAILPIT_PORT="$live_mailpit_port"
   ./scripts/assert-compose-project-empty.sh "$live_project"
   trap 'cleanup_live || true' EXIT INT TERM
   live_created=true
