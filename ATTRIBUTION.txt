@@ -27,9 +27,23 @@ test-only fake-indexeddb 6.2.5 package is Apache-2.0. FFmpeg is installed as a
 separate executable in the backend container and records the exact distributed
 build configuration in /usr/share/doc/nightingale/ffmpeg-build.txt.
 
+Encrypted archive payloads directly use zstandard 0.25.0 under the BSD
+3-Clause license. The package is resolved from the backend dependency lock;
+the project does not vendor its source.
+
 The optional, explicitly gated OpenAI Realtime transcription transport directly
 uses websockets 16.0 under the BSD 3-Clause license. No OpenAI model weights or
 API responses are bundled with this repository.
+
+Clinic-level OpenAI model identifiers and encrypted API-key storage are
+Nightingale configuration features. They do not bundle OpenAI weights,
+credentials, or provider responses. The committed fact and voice calibration
+JSON files contain repository-authored derived metrics plus selected binding
+fields (provider, exact model, task, evaluation-manifest hash, sample counts,
+and result band) from mock/synthetic inputs; they contain no API key, raw
+provider response, or patient data. They do not contain a complete provider
+request/response record. Model names in those reports identify the evaluated
+service configuration and do not imply clinical validation.
 
 The optional local evaluation importer downloads but does not commit three
 pinned synthetic/mock datasets:
@@ -50,6 +64,9 @@ pinned synthetic/mock datasets:
 The raw archives and audio remain Git-ignored. Imported rows are transformed,
 encrypted, source-labelled evaluation fixtures. The applicable CC BY 4.0 and
 Synthea Apache-2.0 texts are retained under THIRD_PARTY_LICENSES/.
+Derived evaluation metrics and calibration metadata are authored by this
+repository; the upstream dataset licenses and citation requirements continue
+to govern the source data from which those metrics were computed.
 
 The release-document builder uses ReportLab 4.4.9 under the BSD license. Its
 license is retained in THIRD_PARTY_LICENSES/ReportLab-BSD.txt. The builder calls

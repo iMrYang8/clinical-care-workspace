@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -36,9 +37,164 @@ TMP = ROOT / "tmp" / "pdfs"
 EVIDENCE_ROOT = Path(
     os.environ.get("NIGHTINGALE_EVIDENCE_DIR", ROOT / "docs" / "evidence")
 )
+EVALUATION_ROOT = Path(
+    os.environ.get("NIGHTINGALE_EVALUATION_DIR", ROOT / "artifacts" / "evaluation")
+)
+EVALUATION_MANIFEST = ROOT / "datasets" / "manifests" / "evaluation-pack-v1.json"
+EVALUATION_REPORTS = {
+    f"artifacts/evaluation/{filename}": EVALUATION_ROOT / filename
+    for filename in (
+        "fact-calibration.json",
+        "voice-calibration.json",
+        "redaction-v2.json",
+    )
+}
+
+
+def sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_evaluation_report(
+    filename: str,
+    *,
+    expected_provider: str | None = None,
+    expected_model: str | None = None,
+    expected_task: str | None = None,
+) -> dict[str, object]:
+    path = EVALUATION_ROOT / filename
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid evaluation report: {path}") from exc
+    if not isinstance(report, dict):
+        raise ValueError(f"evaluation report must be an object: {path}")
+    expected = {
+        "provider": expected_provider,
+        "exact_model_id": expected_model,
+        "task": expected_task,
+    }
+    for key, value in expected.items():
+        if value is not None and report.get(key) != value:
+            raise ValueError(
+                f"{filename} {key} mismatch: expected {value!r}, "
+                f"got {report.get(key)!r}"
+            )
+    return report
+
+
+def require_report_fields(
+    filename: str, report: dict[str, object], expected: dict[str, object]
+) -> None:
+    for key, value in expected.items():
+        if report.get(key) != value:
+            raise ValueError(
+                f"{filename} {key} mismatch: expected {value!r}, "
+                f"got {report.get(key)!r}"
+            )
+
+
+def require_metrics(
+    filename: str, report: dict[str, object], expected: dict[str, object]
+) -> dict[str, object]:
+    metrics = report.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ValueError(f"{filename} must contain a metrics object")
+    require_report_fields(f"{filename} metrics", metrics, expected)
+    return metrics
 
 
 VALIDATED_EVIDENCE = validate_release_evidence(EVIDENCE_ROOT)
+FACT_EVALUATION = load_evaluation_report(
+    "fact-calibration.json",
+    expected_provider="openai",
+    expected_model="gpt-5.1",
+    expected_task="clinical_fact_extraction",
+)
+VOICE_EVALUATION = load_evaluation_report(
+    "voice-calibration.json",
+    expected_provider="openai",
+    expected_model="gpt-4o-transcribe-diarize",
+    expected_task="voice_transcription",
+)
+REDACTION_EVALUATION = load_evaluation_report("redaction-v2.json")
+if not EVALUATION_MANIFEST.is_file():
+    raise ValueError(f"evaluation manifest is missing: {EVALUATION_MANIFEST}")
+EVALUATION_MANIFEST_SHA256 = sha256_file(EVALUATION_MANIFEST)
+for filename, report, sample_count, consultation_count in (
+    ("fact-calibration.json", FACT_EVALUATION, 176, 40),
+    ("voice-calibration.json", VOICE_EVALUATION, 2206, 17),
+):
+    require_report_fields(
+        filename,
+        report,
+        {
+            "dataset_manifest_sha256": EVALUATION_MANIFEST_SHA256,
+            "sample_count": sample_count,
+            "consultation_count": consultation_count,
+            "confidence_band": "low",
+            "negative_results_are_preserved": True,
+        },
+    )
+    require_metrics(filename, report, {"sample_count": sample_count})
+
+require_report_fields(
+    "redaction-v2.json",
+    REDACTION_EVALUATION,
+    {
+        "redactor_version": "nightingale-redaction-v2",
+        "dataset_sha256": (
+            "36726d0bf3d2212869ef46b070c13329cc3148558cd34df7d1b50f7c673507ef"
+        ),
+        "sample_count": 500,
+        "phi_recall": 1.0,
+        "residual_phi_count": 0,
+        "clinical_span_damage_count": 0,
+        "passed": True,
+    },
+)
+REDACTION_METRICS = require_metrics(
+    "redaction-v2.json",
+    REDACTION_EVALUATION,
+    {
+        "expected_phi_spans": 2500,
+        "detected_phi_spans": 2500,
+        "false_negatives": 0,
+        "clinical_span_damage": 0,
+    },
+)
+per_class = REDACTION_METRICS.get("per_class")
+if not isinstance(per_class, dict) or set(per_class) != {
+    "email",
+    "mrn",
+    "name",
+    "nric_fin",
+    "phone",
+}:
+    raise ValueError("redaction-v2.json has an unexpected PHI class set")
+for label, raw_metrics in per_class.items():
+    if not isinstance(raw_metrics, dict):
+        raise ValueError(f"redaction-v2.json {label} metrics must be an object")
+    require_report_fields(
+        f"redaction-v2.json {label}",
+        raw_metrics,
+        {
+            "true_positive": 500,
+            "false_positive": 0,
+            "false_negative": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+        },
+    )
+
+FACT_METRICS = FACT_EVALUATION["metrics"]
+VOICE_METRICS = VOICE_EVALUATION["metrics"]
 RELEASE = VALIDATED_EVIDENCE["release"]
 BENCHMARK = VALIDATED_EVIDENCE["benchmark"]
 CANDIDATE_SHA = RELEASE["source_commit"]
@@ -271,7 +427,7 @@ def draw_page_one(c: canvas.Canvas, architecture_png: Path) -> None:
     page_frame(c, "Product and architecture", 1)
     page_title(
         c,
-        "72-hour build candidate",
+        "Clinic-scoped release candidate",
         "Evidence before summary",
         "A clinic-scoped care-note workspace where every high-value card can resolve to an immutable source.",
     )
@@ -300,7 +456,7 @@ def draw_page_one(c: canvas.Canvas, architecture_png: Path) -> None:
     label(c, "THE RESPONSE", MARGIN + card_w + gap + 12, 659, VIOLET)
     draw_paragraph(
         c,
-        "Precomputed Glance, immutable versions, exact-span provenance, bounded learning, patient-safe projections, and explicit review states.",
+        "Precomputed Glance, immutable versions, exact-span provenance, calibrated abstention, auditable importance feedback, and clinician-approved patient publication.",
         MARGIN + card_w + gap + 12,
         649,
         card_w - 24,
@@ -403,10 +559,10 @@ def draw_page_two(c: canvas.Canvas, schema_png: Path) -> None:
     steps = [
         ("01", "SCOPE", "membership + role", TEAL),
         ("02", "SOURCE", "version or audio", BLUE),
-        ("03", "REDACT", "fail closed", RED),
-        ("04", "DERIVE", "fenced job", VIOLET),
-        ("05", "REVIEW", "human decision", AMBER),
-        ("06", "GLANCE", "precomputed", TEAL),
+        ("03", "REDACT", "evaluated + fail closed", RED),
+        ("04", "ASSESS", "support + risk floor", VIOLET),
+        ("05", "REVIEW", "abstain / correct / approve", AMBER),
+        ("06", "PROJECT", "Glance + patient receipt", TEAL),
     ]
     step_gap = 6
     step_w = (PAGE_W - 2 * MARGIN - 5 * step_gap) / 6
@@ -447,7 +603,7 @@ def draw_page_two(c: canvas.Canvas, schema_png: Path) -> None:
         trust_w,
         69,
         "Encrypted payloads",
-        "AES-256-GCM protects notes, comments, snapshots, redaction maps, transcripts, facts, and audio. HKDF derives clinic-specific keys and AAD binds context.",
+        "AES-256-GCM protects notes, patient identifiers, clinic API keys, comments, snapshots, redaction maps, transcripts, facts, and audio. AAD binds clinic context.",
         BLUE,
         BLUE_SOFT,
     )
@@ -468,8 +624,8 @@ def draw_page_two(c: canvas.Canvas, schema_png: Path) -> None:
         466,
         trust_w,
         69,
-        "Provider boundary",
-        "Known aliases + SG recognizers + Presidio + residual scan. Errors or residual identifiers route to deterministic fallback and needs_review.",
+        "Decision and provider boundary",
+        "Deterministic risk floors cannot be lowered. Redaction and exact-model calibration must match; Low or unavailable confidence abstains and patient sharing stays blocked.",
         RED,
         RED_SOFT,
     )
@@ -478,7 +634,7 @@ def draw_page_two(c: canvas.Canvas, schema_png: Path) -> None:
 
     draw_paragraph(
         c,
-        "Central evidence chain: Patient > Entry > EntryVersion > exact span/hash. Voice adds audio asset and millisecond range. Patient and clinical Glance projections are stored together, then separated by role-safe API DTOs.",
+        "Evidence chain: Patient > Entry > immutable EntryVersion > exact span/hash > DecisionAssessment. Voice adds an audio/time anchor; patient publication adds a clinician approval receipt and exact approved source item.",
         MARGIN,
         66,
         PAGE_W - 2 * MARGIN,
@@ -602,7 +758,12 @@ def draw_page_three(c: canvas.Canvas) -> None:
     c.drawString(MARGIN, 460, "Six demonstration paths")
     scenarios = [
         ("A", "Evidence", "Glance card > exact immutable timeline span", TEAL),
-        ("B", "Collaboration", "comment, mention, task, diff, revert, audit", BLUE),
+        (
+            "B",
+            "Collaboration",
+            "modal edit > anchored comment > mention/task > diff/revert/audit",
+            BLUE,
+        ),
         ("C", "Retention", "preview > archive > checksum-verified rehydrate", AMBER),
         ("D", "Concurrency", "deterministic 409 plus tenant-boundary checks", RED),
         (
@@ -641,7 +802,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
         truth_w,
         105,
         "VERIFIED",
-        "Deterministic text and voice fixtures, read-only Admin oversight, dataset-import contracts, encryption, versions, provenance, jobs, decay, browser flows, release image.",
+        "Deterministic fixtures, provider contracts, read-only Admin oversight, encryption, versions, exact provenance, abstention, publication gates, browser flows, and release image.",
         TEAL,
         TEAL_SOFT,
     )
@@ -651,8 +812,8 @@ def draw_page_three(c: canvas.Canvas) -> None:
         165,
         truth_w,
         105,
-        "CONTRACT-TESTED",
-        "OpenAI text, review, final-audio, and provisional live-transcription adapters use mocked transport and explicit error states. This validates contracts, not model quality.",
+        "MEASURED — ABSTAIN",
+        f"Mock/synthetic OpenAI evaluation: gpt-5.1 fact accuracy {float(FACT_METRICS['accuracy']):.3f}; gpt-4o-transcribe-diarize WER {float(VOICE_METRICS['wer']):.3f}. Both reports are Low, so output abstains.",
         VIOLET,
         VIOLET_SOFT,
     )
@@ -662,8 +823,8 @@ def draw_page_three(c: canvas.Canvas) -> None:
         165,
         truth_w,
         105,
-        "NOT LIVE VERIFIED",
-        "OpenAI calls, HF model acquisition, faster-whisper runtime, pyannote diarization, remote registry, hosted deployment, and clinical validity.",
+        "NOT CLINICALLY VALIDATED",
+        f"The redaction fixture passed {int(REDACTION_EVALUATION['sample_count'])} synthetic cases, but unseen-data safety, local model weights, pyannote diarization, hosted deployment, compliance, and clinical validity remain unproven.",
         RED,
         RED_SOFT,
     )
@@ -683,7 +844,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
     c.drawString(MARGIN + 12, 129, "DELIVERY CONTENTS")
     draw_paragraph(
         c,
-        "Runnable source + full Git history bundle + synthetic seed/importer + Scenario A-F runbook + English-captioned silent final demo + editable diagrams + machine-readable evidence + full notices + this brief. Remote publication remains an operator action if no authenticated GitHub session is available.",
+        "Runnable source + reviewable Git history + synthetic seed/importer + Scenario A-F runbook + English-captioned silent final demo + editable diagrams + machine-readable release and model evidence + complete notices + this brief.",
         MARGIN + 12,
         120,
         PAGE_W - 2 * MARGIN - 24,
@@ -696,7 +857,7 @@ def draw_page_three(c: canvas.Canvas) -> None:
     c.drawCentredString(
         PAGE_W / 2,
         61,
-        "This is a synthetic collaboration candidate, not a production EHR, medical device, or compliance certification.",
+        "This synthetic collaboration release is not a production EHR, medical device, or compliance certification.",
     )
     c.showPage()
 
@@ -714,7 +875,7 @@ def build() -> Path:
     pdf.setTitle("Nightingale Technical Brief")
     pdf.setAuthor("Nightingale contributors")
     pdf.setSubject(
-        "Synthetic healthcare collaboration candidate architecture and evidence"
+        "Clinic-scoped healthcare collaboration architecture and release evidence"
     )
     pdf.setKeywords(
         "Nightingale, FastAPI, clinical collaboration, provenance, synthetic data"
@@ -723,7 +884,12 @@ def build() -> Path:
     draw_page_two(pdf, schema_png)
     draw_page_three(pdf)
     pdf.save()
-    write_pdf_binding(OUTPUT, EVIDENCE_ROOT, VALIDATED_EVIDENCE)
+    write_pdf_binding(
+        OUTPUT,
+        EVIDENCE_ROOT,
+        VALIDATED_EVIDENCE,
+        bound_artifacts=EVALUATION_REPORTS,
+    )
     return OUTPUT
 
 

@@ -221,25 +221,37 @@ def validate_release_evidence(
 
 
 def write_pdf_binding(
-    pdf_path: Path | str, evidence_root: Path | str, validated: dict[str, Any]
+    pdf_path: Path | str,
+    evidence_root: Path | str,
+    validated: dict[str, Any],
+    *,
+    bound_artifacts: dict[str, Path | str] | None = None,
 ) -> Path:
     pdf = Path(pdf_path).resolve()
     root = Path(evidence_root).resolve()
     binding = Path(f"{pdf}.binding.json")
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_commit": validated["commit"],
         "verified_backend_image_id": validated["image_id"],
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pdf_sha256": _sha256(pdf),
         "evidence_sha256": {name: _sha256(root / name) for name in EVIDENCE_FILES},
+        "artifact_sha256": {
+            name: _sha256(Path(path).resolve())
+            for name, path in sorted((bound_artifacts or {}).items())
+        },
     }
     binding.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return binding
 
 
 def validate_pdf_binding(
-    pdf_path: Path | str, evidence_root: Path | str, validated: dict[str, Any]
+    pdf_path: Path | str,
+    evidence_root: Path | str,
+    validated: dict[str, Any],
+    *,
+    bound_artifacts: dict[str, Path | str] | None = None,
 ) -> Path:
     pdf = Path(pdf_path).resolve()
     root = Path(evidence_root).resolve()
@@ -261,6 +273,12 @@ def validate_pdf_binding(
     expected_evidence = {name: _sha256(root / name) for name in EVIDENCE_FILES}
     if payload.get("evidence_sha256") != expected_evidence:
         raise EvidenceError("PDF binding does not match the current release evidence")
+    expected_artifacts = {
+        name: _sha256(Path(path).resolve())
+        for name, path in sorted((bound_artifacts or {}).items())
+    }
+    if payload.get("artifact_sha256", {}) != expected_artifacts:
+        raise EvidenceError("PDF binding does not match its bound artifacts")
     return binding
 
 
@@ -277,8 +295,23 @@ def main() -> None:
         "verified_backend_image_id": validated["image_id"],
     }
     if args.pdf:
+        evaluation_artifacts = {
+            f"artifacts/evaluation/{name}": (
+                Path(__file__).resolve().parents[1] / "artifacts" / "evaluation" / name
+            )
+            for name in (
+                "fact-calibration.json",
+                "voice-calibration.json",
+                "redaction-v2.json",
+            )
+        }
         result["pdf_binding"] = str(
-            validate_pdf_binding(args.pdf, args.evidence_dir, validated)
+            validate_pdf_binding(
+                args.pdf,
+                args.evidence_dir,
+                validated,
+                bound_artifacts=evaluation_artifacts,
+            )
         )
     print(json.dumps(result, sort_keys=True))
 
