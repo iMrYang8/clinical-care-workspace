@@ -899,7 +899,7 @@ await runSegment(page, 3, async () => {
 		aiArticle.getByText("AI-assisted nursing note", { exact: true }),
 		"AI-assisted nursing note",
 	);
-	const quote = "Vomiting continues, oral intake remains restricted";
+	const quote = "vomiting continues, oral intake remains restricted";
 	const source = aiArticle.getByRole("group", {
 		name: "Select exact wording from this AI-assisted note",
 	});
