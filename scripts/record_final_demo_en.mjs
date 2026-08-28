@@ -505,10 +505,14 @@ async function openPatient(page, name) {
 }
 
 async function closeVisibleDialog(page) {
-	const dialogs = page.getByRole("dialog");
-	for (let index = (await dialogs.count()) - 1; index >= 0; index -= 1) {
-		const dialog = dialogs.nth(index);
-		if (!(await dialog.isVisible().catch(() => false))) continue;
+	// Several patient panels own independent source-detail dialogs. A source
+	// action can therefore leave more than one Radix portal visible. Drain the
+	// visible stack rather than closing one arbitrary DOM instance.
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		const visibleDialogs = page.getByRole("dialog").filter({ visible: true });
+		const count = await visibleDialogs.count();
+		if (count === 0) return;
+		const dialog = visibleDialogs.last();
 		const chromeClose = dialog.locator('[data-slot="dialog-close"]').last();
 		const semanticClose = dialog
 			.getByRole("button", { name: /Close|Cancel|Keep shared/ })
@@ -522,8 +526,8 @@ async function closeVisibleDialog(page) {
 			await page.keyboard.press("Escape");
 		}
 		await dialog.waitFor({ state: "hidden", timeout: 5000 });
-		return;
 	}
+	throw new Error("Visible dialog stack did not close after five attempts");
 }
 
 async function runSegment(page, index, action) {
@@ -1078,12 +1082,10 @@ await runSegment(page, 5, async () => {
 			await closeVisibleDialog(page);
 		}
 	}
-	const reviewPanel = page
-		.getByRole("heading", { name: "Needs clinical review" })
-		.locator("xpath=ancestor::*[@data-slot='card'][1]");
-	const why = reviewPanel
+	const why = page
 		.getByText("Why this decision?", { exact: true })
-		.first();
+		.filter({ visible: true })
+		.last();
 	if (await why.isVisible().catch(() => false)) {
 		await moveTo(page, why, "Why this decision?", { click: true });
 		for (const text of [
