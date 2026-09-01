@@ -1,2 +1,2 @@
 # PDF source builder only; application/runtime dependencies remain in uv.lock.
-reportlab==4.4.9
+reportlab==5.0.1
