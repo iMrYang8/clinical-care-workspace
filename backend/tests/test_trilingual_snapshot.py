@@ -34,7 +34,11 @@ def test_vendored_trilingual_snapshot_matches_sibling_when_present() -> None:
         pytest.skip("sibling trilingual-consult package is not in this checkout")
     sibling = _py_files(SIBLING)
     snapshot = _py_files(SNAPSHOT)
-    assert snapshot, "vendored snapshot is empty; run scripts/sync-trilingual-sandbox.sh"
+    assert snapshot, (
+        "vendored snapshot is empty; run scripts/sync-trilingual-sandbox.sh"
+    )
     assert snapshot == {
-        key: digest for key, digest in sibling.items() if key.split("/")[-1] not in _SKIP_NAMES
+        key: digest
+        for key, digest in sibling.items()
+        if key.split("/")[-1] not in _SKIP_NAMES
     }

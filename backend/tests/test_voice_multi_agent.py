@@ -181,9 +181,7 @@ def test_worker_flag_persists_proposed_facts_roles_and_conflicts(
         assert all(row.reviewed_by_id is None for row in rows)
         assert (
             db.exec(
-                select(ConflictCase).where(
-                    ConflictCase.clinic_id == rows[0].clinic_id
-                )
+                select(ConflictCase).where(ConflictCase.clinic_id == rows[0].clinic_id)
             ).all()
             == []
         )

@@ -106,6 +106,12 @@ sort = "-Cover"
 [tool.coverage.html]
 show_contexts = true
 
+[tool.ty.src]
+exclude = ["app/services/voice/_sandbox"]
+
+[tool.ty.environment]
+extra-paths = ["app/services/voice/_sandbox"]
+
 [tool.ty.terminal]
 error-on-warning = true
 

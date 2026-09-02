@@ -824,9 +824,7 @@ def _create_revision(
         agent_state = run_consult_on_segments(
             segments, consult_id=str(voice_session.id)
         )
-        fact_candidates, agent_warnings = consult_fact_candidates(
-            agent_state, segments
-        )
+        fact_candidates, agent_warnings = consult_fact_candidates(agent_state, segments)
     else:
         fact_candidates = _fact_candidates(segments)
     fact_validity = [
