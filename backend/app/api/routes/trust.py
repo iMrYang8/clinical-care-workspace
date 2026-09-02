@@ -1914,6 +1914,7 @@ def _publish_for_patient(
     context: RequestContext,
     *,
     commit: bool,
+    is_correction: bool = False,
 ) -> PatientPublicationPublic:
     if context.role != "clinician":
         raise HTTPException(status_code=403, detail="Clinician approval required")
@@ -2086,6 +2087,23 @@ def _publish_for_patient(
                 status_code=409,
                 detail={"code": "CLAIM_LEVEL_PROVENANCE_REQUIRED"},
             )
+    active_publication = session.exec(
+        select(PatientPublication).where(
+            PatientPublication.clinic_id == context.clinic_id,
+            PatientPublication.patient_id == entry.patient_id,
+            PatientPublication.entry_id == entry.id,
+            col(PatientPublication.withdrawn_at).is_(None),
+        )
+    ).first()
+    if (
+        not is_correction
+        and active_publication is not None
+        and active_publication.medication_review_json
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "PUBLICATION_CORRECTION_REQUIRED"},
+        )
     updated = patch_entry(
         session,
         context,
@@ -2097,6 +2115,7 @@ def _publish_for_patient(
         action="entry.patient_sharing_approved",
         approved_patient_sharing=True,
         medication_review_verified=True,
+        is_correction=is_correction,
         commit=False,
     )
     publication = session.exec(
@@ -2355,6 +2374,7 @@ def correct_patient_publication(
         session,
         context,
         commit=False,
+        is_correction=True,
     )
     replacement = session.get(PatientPublication, replacement_public.id)
     if replacement is None or replacement.supersedes_publication_id != withdrawn.id:

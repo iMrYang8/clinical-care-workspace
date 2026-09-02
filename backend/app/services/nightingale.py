@@ -762,6 +762,7 @@ def _record_clinician_publication(
     content: str,
     *,
     medication_review_verified: bool = False,
+    is_correction: bool = False,
 ) -> PatientPublication:
     """Bind a clinician sharing decision to an exact immutable text span."""
 
@@ -819,6 +820,15 @@ def _record_clinician_publication(
         and active_publication.entry_version_id == version.id
     ):
         return active_publication
+    if (
+        not is_correction
+        and active_publication is not None
+        and active_publication.medication_review_json
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "PUBLICATION_CORRECTION_REQUIRED"},
+        )
 
     superseded_at = get_datetime_utc()
     if active_publication is not None:
@@ -1138,6 +1148,7 @@ def patch_entry(
     approved_patient_sharing: bool = False,
     withdrawn_patient_sharing: bool = False,
     medication_review_verified: bool = False,
+    is_correction: bool = False,
     commit: bool = True,
 ) -> EntryPublic:
     entry = get_scoped_entry(session, context, entry_id, lock=True)
@@ -1262,6 +1273,7 @@ def patch_entry(
             next_version,
             content if content is not None else current_content,
             medication_review_verified=medication_review_verified,
+            is_correction=is_correction,
         )
     if context.role == "staff" and patient_facing:
         sharing_request = record_patient_sharing_request(
