@@ -1070,6 +1070,14 @@ export type ClinicalFactPublic = {
      * Frequency
      */
     frequency?: string | null;
+    /**
+     * Speaker Role
+     */
+    speaker_role?: string | null;
+    /**
+     * Source Language
+     */
+    source_language?: string | null;
 };
 
 /**
@@ -1483,6 +1491,74 @@ export type ConflictResolve = {
      * Correction Entry Id
      */
     correction_entry_id: string;
+};
+
+/**
+ * ConsultAgentConflictPublic
+ */
+export type ConsultAgentConflictPublic = {
+    /**
+     * Fact Type
+     */
+    fact_type: string;
+    /**
+     * Key
+     */
+    key: string;
+    /**
+     * Reason
+     */
+    reason: string;
+    /**
+     * Severity
+     */
+    severity: string;
+    /**
+     * Auto Resolved
+     */
+    auto_resolved?: boolean;
+    /**
+     * Left Speaker Role
+     */
+    left_speaker_role: string;
+    /**
+     * Right Speaker Role
+     */
+    right_speaker_role: string;
+    /**
+     * Left Polarity
+     */
+    left_polarity: string;
+    /**
+     * Right Polarity
+     */
+    right_polarity: string;
+};
+
+/**
+ * ConsultAgentPublic
+ */
+export type ConsultAgentPublic = {
+    /**
+     * Enabled
+     */
+    enabled?: boolean;
+    /**
+     * Speaker Roles
+     */
+    speaker_roles?: {
+        [key: string]: string;
+    };
+    /**
+     * Conflicts
+     */
+    conflicts?: Array<ConsultAgentConflictPublic>;
+    /**
+     * Summaries
+     */
+    summaries?: {
+        [key: string]: string;
+    };
 };
 
 /**
@@ -4565,6 +4641,7 @@ export type TranscriptRevisionPublic = {
      * Facts
      */
     facts: Array<ClinicalFactPublic>;
+    consult_agent?: ConsultAgentPublic | null;
     /**
      * Created At
      */

@@ -31,7 +31,11 @@ type GlanceTopCardProps = {
   outageMessage?: string | null
   fallbackKind?: "stored" | "rule_derived" | null | string
   importanceMode?: "shadow" | "disabled" | "active" | string
-  currentConfidenceState?: "qualified" | "unavailable" | "review_required" | string
+  currentConfidenceState?:
+    | "qualified"
+    | "unavailable"
+    | "review_required"
+    | string
   currentConfidenceReasons?: string[]
   safetyReviewRequired?: boolean
   canReview?: boolean

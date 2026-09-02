@@ -163,6 +163,10 @@ class Settings(BaseSettings):
     LOCAL_ASR_MODEL_DIR: str | None = None
     PYANNOTE_ENABLED: bool = False
     PYANNOTE_MODEL_DIR: str | None = None
+    # Isolated NightingaleSwitchCare consult agents. Default off. When on, the
+    # voice worker replaces lexicon fact extraction with proposal-only agents.
+    # Facts stay `proposed`; a blocked consult cannot publish itself.
+    VOICE_MULTI_AGENT_PIPELINE: bool = False
     LIVE_TRANSCRIPT_ENABLED: bool = False
     LIVE_TRANSCRIPT_PROVIDER: Literal["disabled", "deterministic", "openai"] = (
         "disabled"
