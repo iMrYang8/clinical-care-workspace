@@ -25,8 +25,5 @@ backend/app/frontend/
 .env
 .env.local
 
-# Local probes / scenario recorders (not part of the consult-agent branch)
+# Local probes
 probe.tmp.mjs
-/scripts/demo/record_scenarios.mjs
-/scripts/demo/scenario_chrome.mjs
-/scripts/demo/scenario_definitions.mjs

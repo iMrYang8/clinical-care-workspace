@@ -104,7 +104,15 @@ def _scope_predicate_alternatives(
     if table == "patients":
         return (("app_patient_context_allows(clinic_id, id)",),)
     if table == "provenance_pointers":
-        return (("app_pointer_context_allows(clinic_id, id)",),)
+        # Reads are fenced on the pointer's own linkage. Writes cannot be:
+        # WITH CHECK runs before the new row is visible, so a self-referential
+        # EXISTS is unsatisfiable for a patient actor and every patient-authored
+        # note that produced a fact failed. The immutable source version is the
+        # equivalent fail-closed parent fence for the write side.
+        return (
+            ("app_pointer_context_allows(clinic_id, id)",),
+            ("app_version_context_allows(clinic_id, entry_version_id)",),
+        )
 
     contextual_children = (
         ("notification_id", "app_notification_context_allows"),

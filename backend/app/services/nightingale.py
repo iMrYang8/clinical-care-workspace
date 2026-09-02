@@ -754,6 +754,25 @@ def entry_public(session: Session, entry: Entry) -> EntryPublic:
     )
 
 
+def _is_patient_authored(context: RequestContext, entry: Entry) -> bool:
+    """Return whether the patient is writing in their own channel.
+
+    The unresolved-conflict gate exists to stop clinical content being pushed to
+    a patient while two sources disagree. A patient writing their own insight is
+    the opposite movement: it is inbound, it is the patient's own words, and it
+    is frequently the very statement that creates the disagreement worth
+    reviewing. Refusing it would drop the patient's account of their own care
+    and leave the record holding only one side, so the gate does not apply here.
+
+    Everything downstream still applies. The contradiction is detected and
+    persisted as a conflict case, the entry is not clinician-published, and
+    sharing any clinician-authored note to this patient stays blocked until a
+    clinician records a correction.
+    """
+
+    return context.role == "patient" and entry.section == "patient"
+
+
 def _record_clinician_publication(
     session: Session,
     context: RequestContext,
@@ -1073,7 +1092,7 @@ def create_entry(
     conflicts, conflict_affected_patients = detect_conflicts_for_version(
         session, context, entry, version, data.content
     )
-    if patient_facing and conflicts:
+    if patient_facing and conflicts and not _is_patient_authored(context, entry):
         raise HTTPException(
             status_code=409,
             detail={
@@ -1253,7 +1272,11 @@ def patch_entry(
         # Any ordinary edit makes an older pending request stale. A staff edit
         # that also asks to share will create exactly one replacement below.
         _supersede_pending_sharing_requests(session, context, entry)
-    if effective_patient_facing and conflicts:
+    if (
+        effective_patient_facing
+        and conflicts
+        and not _is_patient_authored(context, entry)
+    ):
         raise HTTPException(
             status_code=409,
             detail={

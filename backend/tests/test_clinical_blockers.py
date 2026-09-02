@@ -794,3 +794,124 @@ def test_partially_assessed_ai_entry_cannot_publish(
     )
     assert published.status_code == 409, published.text
     assert published.json()["detail"]["code"] == "CLAIM_LEVEL_PROVENANCE_REQUIRED"
+
+
+def test_patient_authored_note_can_create_its_own_provenance(
+    client: TestClient,
+    auth_headers: Callable[[str], dict[str, str]],
+    owner_session: Session,
+) -> None:
+    """A patient's own words must reach the record, evidence and all.
+
+    Fact extraction runs on every entry, so a patient insight that mentions an
+    allergy also writes a ProvenancePointer. The pointer's row-level check used
+    to test the pointer's own linkage, which cannot be satisfied before the row
+    exists, so the whole request failed with a 500 and the patient could not
+    file anything clinically meaningful.
+    """
+
+    patient_headers = auth_headers("patient")
+    patient_id = client.get("/api/v1/patients", headers=patient_headers).json()["data"][
+        0
+    ]["id"]
+
+    response = client.post(
+        "/api/v1/entries",
+        headers=patient_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "patient",
+            "title": "About my allergies",
+            "content": "I have no known drug allergies.",
+            "patient_facing": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+
+    owner_session.expire_all()
+    pointer_count = len(
+        owner_session.exec(
+            select(ProvenancePointer).where(
+                ProvenancePointer.entry_version_id
+                == uuid.UUID(response.json()["version_id"])
+            )
+        ).all()
+    )
+    assert pointer_count >= 1
+
+
+def test_patient_may_contradict_the_record_and_the_conflict_is_kept(
+    client: TestClient,
+    auth_headers: Callable[[str], dict[str, str]],
+) -> None:
+    """The patient's own account is inbound, so a disagreement cannot silence it.
+
+    The unresolved-conflict gate stops clinical content being pushed out to a
+    patient. It used to fire on the patient's own insight as well, so a patient
+    whose statement contradicted the chart was refused and the whole entry rolled
+    back, leaving the record holding only one side. The contradiction is exactly
+    what the clinician needs to see, so it is recorded and surfaced instead.
+    """
+
+    staff_headers = auth_headers("staff")
+    patient_headers = auth_headers("patient")
+    clinician_headers = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=patient_headers).json()["data"][
+        0
+    ]["id"]
+
+    nurse_note = client.post(
+        "/api/v1/entries",
+        headers=staff_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "staff",
+            "title": "Allergy history",
+            "content": "Patient reports penicillin allergy.",
+            "patient_facing": False,
+        },
+    )
+    assert nurse_note.status_code == 201, nurse_note.text
+
+    patient_insight = client.post(
+        "/api/v1/entries",
+        headers=patient_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "patient",
+            "title": "About my allergies",
+            "content": "I have no known drug allergies.",
+            "patient_facing": True,
+        },
+    )
+    assert patient_insight.status_code == 201, patient_insight.text
+
+    conflicts = client.get(
+        f"/api/v1/patients/{patient_id}/conflicts", headers=clinician_headers
+    )
+    assert conflicts.status_code == 200, conflicts.text
+    unresolved = [
+        item
+        for item in conflicts.json()
+        if item["status"] == "unresolved" and item["fact_type"] == "allergy"
+    ]
+    assert len(unresolved) == 1
+    case = unresolved[0]
+    assert case["severity"] == "critical"
+    # Neither side wins, and each names who asserted it.
+    assert {case["left_source_role"], case["right_source_role"]} == {"staff", "patient"}
+
+    # A clinician-authored note still cannot be shared while that conflict stands.
+    blocked = client.post(
+        "/api/v1/entries",
+        headers=clinician_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Pre-procedure summary",
+            "content": "Proceed as planned.",
+            "patient_facing": True,
+        },
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["code"] == "UNRESOLVED_CLINICAL_CONFLICT"
