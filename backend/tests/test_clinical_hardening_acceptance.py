@@ -1775,3 +1775,65 @@ def test_pending_safety_review_queue_is_uncapped_and_exposure_set_is_complete(
     assert sum(item.displayed for item in ordinary_exposures) == 5
     assert all(item.surface == "current_priorities" for item in ordinary_exposures)
     assert sorted(item.rank for item in ordinary_exposures) == list(range(1, 8))
+
+
+def test_medication_publication_cannot_be_superseded_without_correction(
+    client: TestClient,
+    auth_headers: Callable[[str], dict[str, str]],
+    owner_session: Session,
+) -> None:
+    clinician = auth_headers("clinician")
+    patient_id = client.get("/api/v1/patients", headers=clinician).json()["data"][0][
+        "id"
+    ]
+    entry_response = client.post(
+        "/api/v1/entries",
+        headers=clinician,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Medication summary",
+            "content": "Started metformin 500 mg PO BID.",
+            "patient_facing": False,
+        },
+    )
+    assert entry_response.status_code == 201, entry_response.text
+    entry = entry_response.json()
+    first_review = _medication_attestation(
+        owner_session,
+        source_entry_version_id=entry["version_id"],
+        dose_value=500,
+        frequency="twice daily",
+    )
+    published = client.post(
+        f"/api/v1/entries/{entry['id']}/patient-publications",
+        headers=clinician,
+        json={
+            "entry_version_id": entry["version_id"],
+            "medication_reviews": [first_review],
+        },
+    )
+    assert published.status_code == 201, published.text
+
+    revised = client.patch(
+        f"/api/v1/entries/{entry['id']}",
+        headers=clinician | {"If-Match": published.json()["entry_version_id"]},
+        json={"content": "Continue metformin 500 mg PO BID."},
+    )
+    assert revised.status_code == 200, revised.text
+    second_review = _medication_attestation(
+        owner_session,
+        source_entry_version_id=revised.json()["version_id"],
+        dose_value=500,
+        frequency="twice daily",
+    )
+    blocked = client.post(
+        f"/api/v1/entries/{entry['id']}/patient-publications",
+        headers=clinician,
+        json={
+            "entry_version_id": revised.json()["version_id"],
+            "medication_reviews": [second_review],
+        },
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["code"] == "PUBLICATION_CORRECTION_REQUIRED"
