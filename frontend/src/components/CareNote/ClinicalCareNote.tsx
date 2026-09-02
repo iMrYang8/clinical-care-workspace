@@ -1471,6 +1471,11 @@ export function ClinicalCareNote({
               importanceMode={hardenedGlance?.importance_mode}
               outageMessage={hardenedGlance?.outage_message}
               providerOutage={hardenedGlance?.provider_outage}
+              currentConfidenceState={hardenedGlance?.current_confidence_state}
+              currentConfidenceReasons={
+                hardenedGlance?.current_confidence_reasons ?? []
+              }
+              safetyReviewRequired={hardenedGlance?.safety_review_required}
               reviewCards={glanceQuery.data?.review_cards ?? []}
               onAction={(card, action) =>
                 highlightMutation.mutate({ card, action })

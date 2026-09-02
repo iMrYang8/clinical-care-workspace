@@ -25,6 +25,8 @@ const ready: ClinicalGlanceCard = {
     protected: false,
     components: { final: 0.5, learned: 0.08 },
   },
+  current_confidence_state: "unavailable",
+  current_confidence_reasons: ["CONFIDENCE_NOT_APPLICABLE"],
 }
 
 const abstained: ClinicalGlanceCard = {
@@ -87,6 +89,7 @@ describe("trustworthy Current priorities", () => {
       />,
     )
     expect(screen.getByText("Reviewed medication plan")).toBeInTheDocument()
+    expect(screen.getByText("Confidence not applicable")).toBeInTheDocument()
     expect(screen.getByText("Needs clinical review")).toBeInTheDocument()
     expect(screen.getByText("Unverified severe allergy")).toBeInTheDocument()
     expect(screen.getByText("Critical · unverified")).toBeInTheDocument()
@@ -102,6 +105,13 @@ describe("trustworthy Current priorities", () => {
             review_state: "ready",
             current_priority_eligible: false,
           },
+          {
+            ...ready,
+            highlight_id: "44444444-4444-4444-8444-444444444444",
+            label: "Unassessed AI candidate",
+            current_confidence_state: "review_required",
+            current_confidence_reasons: ["AI_HIGHLIGHT_ASSESSMENT_MISSING"],
+          },
         ]}
         onSource={vi.fn()}
       />,
@@ -109,6 +119,7 @@ describe("trustworthy Current priorities", () => {
     expect(screen.getByText("1/5")).toBeInTheDocument()
     expect(screen.getByText("Unverified severe allergy")).toBeInTheDocument()
     expect(screen.getByText("Critical · unverified")).toBeInTheDocument()
+    expect(screen.getByText("Unassessed AI candidate")).toBeInTheDocument()
   })
 
   it("discloses shadow learning without claiming weight updates or a personal profile", () => {

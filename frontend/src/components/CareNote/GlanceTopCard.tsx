@@ -31,6 +31,9 @@ type GlanceTopCardProps = {
   outageMessage?: string | null
   fallbackKind?: "stored" | "rule_derived" | null | string
   importanceMode?: "shadow" | "disabled" | "active" | string
+  currentConfidenceState?: "qualified" | "unavailable" | "review_required" | string
+  currentConfidenceReasons?: string[]
+  safetyReviewRequired?: boolean
   canReview?: boolean
   canResolveSupport?: boolean
   onSource: (card: ClinicalGlanceCard) => void | Promise<void>
@@ -210,9 +213,9 @@ function DecisionDetails({
       : finalImportance - learnedAdjustment
   const currentConfidenceState =
     details?.current_confidence_state ??
-    (recordValue(confidence, "band", "unavailable") === "unavailable"
-      ? "unavailable"
-      : "qualified")
+    card.current_confidence_state ??
+    "unavailable"
+  const currentConfidenceReasons = card.current_confidence_reasons ?? []
 
   return (
     <details
@@ -297,16 +300,15 @@ function DecisionDetails({
           )}
           {currentConfidenceState !== "qualified" && (
             <p className="font-medium text-warning-muted-foreground">
-              Current confidence is {currentConfidenceState.replace(/_/g, " ")}.
-              Requalification failed or is incomplete, so this item remains
-              review required.
+              {currentConfidenceReasons.includes("CONFIDENCE_NOT_APPLICABLE")
+                ? "Confidence not applicable."
+                : "Confidence unavailable · review required."}
             </p>
           )}
-          {(details?.confidence_qualification_reasons?.length ?? 0) > 0 && (
+          {currentConfidenceReasons.length > 0 && (
             <p className="text-xs text-warning-muted-foreground">
-              Requalification:{" "}
-              {details?.confidence_qualification_reasons
-                ?.map((reason) => reason.replace(/_/g, " "))
+              {currentConfidenceReasons
+                .map((reason: string) => reason.replace(/_/g, " "))
                 .join(", ")}
             </p>
           )}
@@ -326,6 +328,9 @@ export function GlanceTopCard({
   outageMessage = null,
   fallbackKind = null,
   importanceMode,
+  currentConfidenceState,
+  currentConfidenceReasons = [],
+  safetyReviewRequired = false,
   canReview = false,
   canResolveSupport = false,
   onSource,
@@ -342,6 +347,7 @@ export function GlanceTopCard({
     card.review_state !== "ready" ||
     card.support_review_required === true ||
     card.current_priority_eligible === false ||
+    card.current_confidence_state === "review_required" ||
     (card.importance as Record<string, unknown> | undefined)?.protected === true
   const visibleCards = [
     ...new Map(
@@ -364,6 +370,18 @@ export function GlanceTopCard({
 
   return (
     <div className="space-y-4">
+      {(safetyReviewRequired ||
+        currentConfidenceState === "review_required") && (
+        <Alert className="border-warning/40 bg-warning-muted text-warning-muted-foreground">
+          <AlertTriangle className="size-4" />
+          <AlertDescription>
+            Confidence unavailable · review required
+            {currentConfidenceReasons.length
+              ? `: ${currentConfidenceReasons.join(", ")}`
+              : "."}
+          </AlertDescription>
+        </Alert>
+      )}
       {(freshnessState !== "fresh" || providerOutage || fallbackKind) && (
         <Alert className="border-warning/40 bg-warning-muted text-warning-muted-foreground">
           <AlertTriangle className="size-4" />
@@ -447,11 +465,17 @@ export function GlanceTopCard({
                               {riskReasonLabel(card.risk_reason)}
                             </Badge>
                             <Badge className="bg-primary/10 text-primary">
-                              {recordValue(
-                                card.confidence,
-                                "band",
-                                "not applicable",
-                              )}
+                              {card.current_confidence_state === "qualified"
+                                ? recordValue(
+                                    card.confidence,
+                                    "band",
+                                    "qualified",
+                                  )
+                                : card.current_confidence_reasons?.includes(
+                                      "CONFIDENCE_NOT_APPLICABLE",
+                                    )
+                                  ? "Confidence not applicable"
+                                  : "Confidence unavailable · review required"}
                             </Badge>
                             <Badge variant="outline">
                               Source {card.support_state ?? "current"}
