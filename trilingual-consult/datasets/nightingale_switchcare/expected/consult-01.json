@@ -1,0 +1,58 @@
+{
+  "consult_id": "consult-01",
+  "synthetic": true,
+  "speaker_roles": {
+    "SPEAKER_00": "clinician",
+    "SPEAKER_01": "patient",
+    "SPEAKER_02": "family"
+  },
+  "facts": [
+    {
+      "fact_type": "medication",
+      "key": "metformin",
+      "speaker_role": "clinician",
+      "source_language": "en",
+      "review_required": false
+    },
+    {
+      "fact_type": "dose",
+      "key": "metformin",
+      "value": "500mg",
+      "speaker_role": "clinician",
+      "review_required": false
+    },
+    {
+      "fact_type": "frequency",
+      "key": "metformin",
+      "value": "twice_daily",
+      "speaker_role": "clinician",
+      "review_required": false
+    },
+    {
+      "fact_type": "allergy",
+      "key": "penicillin",
+      "polarity": "absent",
+      "speaker_role": "patient",
+      "source_language": "zh",
+      "review_required": false
+    },
+    {
+      "fact_type": "allergy",
+      "key": "penicillin",
+      "polarity": "present",
+      "speaker_role": "family",
+      "source_language": "ms",
+      "review_required": true
+    }
+  ],
+  "conflicts": [
+    {
+      "key": "penicillin",
+      "severity": "critical",
+      "auto_resolved": false
+    }
+  ],
+  "publish_blocked": true,
+  "patient_summary_must_contain": ["盘尼西林", "家属"],
+  "warning_codes_required": ["UNRESOLVED_ALLERGY_CONFLICT", "PUBLISH_BLOCKED"]
+}

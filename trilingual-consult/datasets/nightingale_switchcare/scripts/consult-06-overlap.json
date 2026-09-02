@@ -1,0 +1,30 @@
+{
+  "id": "consult-06-overlap",
+  "synthetic": true,
+  "not_clinical_validation": true,
+  "attribution": "Overlapping clinician and family turns. Family role is unlabeled. Every fact from the overlap group is review_required.",
+  "enabled_languages": ["en", "ms", "zh", "nan"],
+  "turns": [
+    {
+      "speaker_id": "SPEAKER_00",
+      "speaker_role": "clinician",
+      "source_language": "en",
+      "language_confidence": 0.9,
+      "start_ms": 0,
+      "end_ms": 5200,
+      "overlap_group_id": "overlap-1",
+      "text": "We'll continue metformin 500 mg twice daily.",
+      "tagged_text": "We'll continue [[EN]] metformin 500 mg [[/EN]] twice daily."
+    },
+    {
+      "speaker_id": "SPEAKER_02",
+      "source_language": "ms",
+      "language_confidence": 0.84,
+      "start_ms": 1800,
+      "end_ms": 7000,
+      "overlap_group_id": "overlap-1",
+      "text": "Dia ada alahan kepada penicillin masa kecil.",
+      "tagged_text": "Dia ada alahan kepada [[EN]] penicillin [[/EN]] masa kecil."
+    }
+  ]
+}

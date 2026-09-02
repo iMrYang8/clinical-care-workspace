@@ -17,7 +17,11 @@ from app.models import (
     VoiceSession,
     get_datetime_utc,
 )
-from app.services.conflicts import extract_normalized_facts, normalize_language_code
+from app.services.conflicts import (
+    NormalizedFact,
+    extract_normalized_facts,
+    normalize_language_code,
+)
 from app.services.nightingale import emit_change
 from app.services.voice.egress_policy import remote_audio_egress_denial
 from app.services.voice.language import clinic_supported_language_codes
@@ -28,6 +32,17 @@ from app.services.voice.live_providers import (
 )
 
 _CAPTURE_STATES = {"recording"}
+_LIVE_CONSULT_MAX_TURNS = 50
+_live_consult_buffers: dict[uuid.UUID, list] = {}
+
+
+def clear_live_consult_buffer(session_id: uuid.UUID | None = None) -> None:
+    """Drop in-memory completed-caption state. Tests call this between cases."""
+
+    if session_id is None:
+        _live_consult_buffers.clear()
+        return
+    _live_consult_buffers.pop(session_id, None)
 
 
 def configured_live_provider(
@@ -156,6 +171,59 @@ def safety_identifier(context: RequestContext) -> str:
     return hmac.new(settings.SECRET_KEY.encode(), value, hashlib.sha256).hexdigest()
 
 
+def _agent_allergy_facts_for_completed_caption(
+    voice_session: VoiceSession,
+    *,
+    text: str,
+    source_language: str | None,
+) -> list[NormalizedFact]:
+    """Re-run consult agents on a bounded completed-caption buffer.
+
+    Proposals only. Does not write ConflictCase rows. Flag-off callers never
+    reach this function.
+    """
+
+    from app.services.voice.multi_agent import (
+        consult_fact_candidates,
+        run_consult_on_segments,
+    )
+    from app.services.voice.providers.base import TranscriptSegmentResult
+
+    buffer: list[TranscriptSegmentResult] = _live_consult_buffers.setdefault(
+        voice_session.id, []
+    )
+    index = len(buffer)
+    speaker = f"SPEAKER_{index:02d}"
+    segment = TranscriptSegmentResult(
+        text=text,
+        start_ms=index * 1_000,
+        end_ms=index * 1_000 + 800,
+        speaker_id=speaker,
+        detected_language=source_language,
+        confidence=0.9,
+        confidence_source="live_caption",
+        overlap_group_id=None,
+        text_start=0,
+        text_end=len(text),
+        source_language=source_language,
+        language_confidence=0.9,
+        speaker_ids=(speaker,),
+    )
+    buffer.append(segment)
+    del buffer[:-_LIVE_CONSULT_MAX_TURNS]
+    state = run_consult_on_segments(buffer, consult_id=f"live-{voice_session.id.hex}")
+    candidates, _extra = consult_fact_candidates(state, buffer)
+    latest = buffer[-1]
+    facts: list[NormalizedFact] = []
+    for fact, _start, _end, origin in candidates:
+        if fact.fact_type != "allergy":
+            continue
+        if origin is not latest:
+            continue
+        facts.append(fact)
+    return facts
+
+
 def persist_completed_safety_alerts(
     db: Session,
     context: RequestContext,
@@ -190,10 +258,20 @@ def persist_completed_safety_alerts(
     explicit_language_disallowed = not aggregate_language_hint and (
         language == "und" or language not in supported_languages
     )
-    facts = extract_normalized_facts(
-        normalized_text,
-        source_language=language_hint,
+    facts = list(
+        extract_normalized_facts(
+            normalized_text,
+            source_language=language_hint,
+        )
     )
+    if settings.VOICE_MULTI_AGENT_PIPELINE:
+        facts.extend(
+            _agent_allergy_facts_for_completed_caption(
+                voice_session,
+                text=normalized_text,
+                source_language=language_hint,
+            )
+        )
     created: list[ProvisionalSafetyAlert] = []
     for fact in facts:
         if fact.fact_type != "allergy":

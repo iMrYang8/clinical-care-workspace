@@ -273,19 +273,37 @@ class OpenAILiveTranscriptionProvider:
             ) from exc
 
 
+_LIVE_FIXTURE_PIECES: dict[str, tuple[tuple[str, str], ...]] = {
+    "code-switch-overlap-v1": (
+        ("Patient reports a penicillin allergy.", "en"),
+        ("医生会复核 medication and breathing difficulty.", "zh"),
+    ),
+    "trilingual-intrasentential-v1": (
+        ("We'll continue metformin 500 mg twice daily.", "en"),
+        ("我对盘尼西林不过敏，是胃不舒服。", "zh"),
+        ("Dia tui penicillin koe-bin masa kecil.", "ms"),
+    ),
+}
+
+
 class DeterministicLiveTranscriptionConnection:
     provider_name = "deterministic-synthetic-fixture"
     remote_audio_egress_required = False
 
-    def __init__(self, *, model: str, max_frame_bytes: int) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        max_frame_bytes: int,
+        pieces: tuple[tuple[str, str], ...] | None = None,
+    ) -> None:
         self.model = model
         self.max_frame_bytes = max_frame_bytes
         self._events: asyncio.Queue[LiveTranscriptEvent] = asyncio.Queue()
         self._pieces = iter(
-            (
-                ("Patient reports a penicillin allergy.", "en"),
-                ("医生会复核 medication and breathing difficulty.", "zh"),
-            )
+            pieces
+            or _LIVE_FIXTURE_PIECES.get(model)
+            or _LIVE_FIXTURE_PIECES["code-switch-overlap-v1"]
         )
         self._text = ""
         self._turn_no = 0
@@ -350,7 +368,7 @@ class DeterministicLiveTranscriptionProvider:
     provider_name = "deterministic-synthetic-fixture"
 
     def __init__(self, *, fixture_id: str, max_frame_bytes: int) -> None:
-        if fixture_id != "code-switch-overlap-v1":
+        if fixture_id not in _LIVE_FIXTURE_PIECES:
             raise ValueError("Unknown synthetic live transcript fixture")
         self.model = fixture_id
         self.max_frame_bytes = max_frame_bytes
@@ -360,5 +378,7 @@ class DeterministicLiveTranscriptionProvider:
     ) -> DeterministicLiveTranscriptionConnection:
         del safety_identifier
         return DeterministicLiveTranscriptionConnection(
-            model=self.model, max_frame_bytes=self.max_frame_bytes
+            model=self.model,
+            max_frame_bytes=self.max_frame_bytes,
+            pieces=_LIVE_FIXTURE_PIECES[self.model],
         )

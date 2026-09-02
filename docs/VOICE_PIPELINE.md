@@ -6,9 +6,11 @@ Nightingale stores every accepted chunk before processing and never treats a
 deterministic fixture as speech recognition. An ordinary recording with no
 configured ASR provider retains encrypted audio and finishes in
 `needs_review` with `ASR_PROVIDER_DISABLED` (or another explicit configuration
-code). The only deterministic transcript is `code-switch-overlap-v1`, and the
-API accepts it only when the server is in development demo mode and the session
-was created with `synthetic_fixture=true`.
+code). Deterministic transcripts are `code-switch-overlap-v1` (en/zh overlap)
+and `trilingual-intrasentential-v1` (en/zh plus one Malay–English–Hokkien
+family utterance). The API accepts either only when the server is in
+development demo mode and the session was created with `synthetic_fixture=true`.
+Neither fixture is ASR.
 
 The implementation detects concurrent device tracks and provider-reported
 overlap as review signals. It does not claim blind-source separation or precise
@@ -123,7 +125,7 @@ docker compose run --rm backend \
 | OpenAI final transcription | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, `OPENAI_API_KEY`, `OPENAI_TRANSCRIBE_MODEL` | Sends the normalized audio only when every gate is true. `STRICT_NO_AUDIO_EGRESS=true` overrides all remote settings. Model IDs come from the environment. Calls have a bounded ASR timeout. |
 | faster-whisper | `compose.local-asr.yml`, a pre-cached `LOCAL_ASR_MODEL_DIR` | CPU/int8 and `local_files_only=True`; no runtime model download. Inference runs in a dedicated child process that is killed on timeout/cancellation, so retries cannot stack orphaned CTranslate2 threads. No diarization is claimed. |
 | pyannote experimental | `compose.diarization.yml`, accepted model terms, cached `PYANNOTE_MODEL_DIR` | Default off. Current code exposes a local readiness gate; it does not silently fetch or apply a gated model. |
-| Multi-agent consult pipeline | `VOICE_MULTI_AGENT_PIPELINE=true` | Default off. **Batch revision only** (not live captions). After a transcript exists, proposal-only consult agents replace lexicon fact extraction. Facts stay `proposed`. Unresolved conflicts set `needs_review` and `PUBLISH_BLOCKED`. The review UI shows consult `speaker_role` and a conflict card from `consult_agent`. `ConflictCase` rows are still created only when a human publishes contradictory assertions. This is not ASR, not a clinical-quality claim, and never publishes a note. |
+| Multi-agent consult pipeline | `VOICE_MULTI_AGENT_PIPELINE=true` | Default off. After a batch transcript exists, proposal-only consult agents replace lexicon fact extraction. When the flag is on, completed live captions also append to a bounded in-memory buffer (last 50 turns) and re-run those agents; allergy proposals reuse `ProvisionalSafetyAlert` dedupe. Flag off: live stays lexicon-only. Facts stay `proposed`. Unresolved conflicts set `needs_review` and `PUBLISH_BLOCKED`. The review UI shows consult `speaker_role` and a conflict card from `consult_agent`. `ConflictCase` rows are still created only when a human publishes contradictory assertions. This is not ASR, not a clinical-quality claim, and never publishes a note. |
 
 How to verify that path (gold-text extraction, not WER):
 
@@ -132,9 +134,9 @@ How to verify that path (gold-text extraction, not WER):
 3. Review UI: `VoiceReviewMode.test.tsx` consult-role + conflict card
 4. Snapshot: `tests/test_trilingual_snapshot.py` (sibling vs `backend/app/services/voice/_sandbox`; refresh with `scripts/sync-trilingual-sandbox.sh`)
 
-Do not claim live multi-agent extraction, real-audio WER/PolyWER, or that this is on `release-2026-09-02`.
+Do not claim live multi-agent extraction as default, real-audio WER/PolyWER on freeze, or that this is on `release-2026-09-02`.
 
-Enabling `VOICE_MULTI_AGENT_PIPELINE` does **not** change the live WebSocket path. Provisional safety alerts still come from `persist_completed_safety_alerts` (lexicon extraction on each completed caption). The seven agents need a whole consult to assign clinician/patient/family; they run only after a batch transcript revision exists.
+Enabling `VOICE_MULTI_AGENT_PIPELINE` changes live captions only at **completed** turns: `persist_completed_safety_alerts` still runs the lexicon, then (flag on) re-runs the seven agents on the session caption buffer. Agents still only propose; they do not write `ConflictCase`. Flag off is zero live behaviour change. There is no public Malay–English–Hokkien medical consult audio set; multilingual *capability* scores live in the sibling `trilingual-consult` `audio_bench` on ViMedCSS/ASCEND/etc., not in this product image.
 
 ### Provisional live-caption providers
 

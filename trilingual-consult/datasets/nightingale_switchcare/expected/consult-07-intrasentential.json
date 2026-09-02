@@ -1,0 +1,21 @@
+{
+  "consult_id": "consult-07-intrasentential",
+  "synthetic": true,
+  "speaker_roles": {
+    "SPEAKER_02": "family"
+  },
+  "facts": [
+    {
+      "fact_type": "allergy",
+      "key": "penicillin",
+      "polarity": "present",
+      "speaker_role": "family",
+      "source_language": "nan",
+      "review_required": true
+    }
+  ],
+  "conflicts": [],
+  "publish_blocked": false,
+  "patient_summary_must_contain": ["盘尼西林", "家属"],
+  "warning_codes_required": ["FAMILY_OR_UNKNOWN_SPEAKER", "MIXED_LANGUAGE_TURN"]
+}

@@ -1,0 +1,39 @@
+{
+  "id": "consult-01",
+  "synthetic": true,
+  "not_clinical_validation": true,
+  "attribution": "Rewritten from the PriMock57 mock-GP register (CC BY 4.0). Drug names kept in English as matrix-language islands (Myers-Scotton 1993; ViMedCSS).",
+  "enabled_languages": ["en", "ms", "zh", "nan"],
+  "turns": [
+    {
+      "speaker_id": "SPEAKER_00",
+      "speaker_role": "clinician",
+      "source_language": "en",
+      "language_confidence": 0.96,
+      "start_ms": 0,
+      "end_ms": 4500,
+      "text": "We'll continue metformin 500 mg twice daily.",
+      "tagged_text": "We'll continue [[EN]] metformin 500 mg [[/EN]] twice daily."
+    },
+    {
+      "speaker_id": "SPEAKER_01",
+      "speaker_role": "patient",
+      "source_language": "zh",
+      "language_confidence": 0.91,
+      "start_ms": 4600,
+      "end_ms": 9000,
+      "text": "我对盘尼西林不过敏，是胃不舒服。",
+      "tagged_text": "我对盘尼西林不过敏，是胃不舒服。"
+    },
+    {
+      "speaker_id": "SPEAKER_02",
+      "speaker_role": "family",
+      "source_language": "ms",
+      "language_confidence": 0.88,
+      "start_ms": 9100,
+      "end_ms": 14000,
+      "text": "Dia ada alahan kepada penicillin masa kecil.",
+      "tagged_text": "Dia ada alahan kepada [[EN]] penicillin [[/EN]] masa kecil."
+    }
+  ]
+}

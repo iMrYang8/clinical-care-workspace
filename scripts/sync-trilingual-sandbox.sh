@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-# Copy the sibling NightingaleSwitchCare package into the worker snapshot.
-# Source of truth: ../trilingual-consult/src/trilingual_consult
+# Copy the NightingaleSwitchCare package into the worker snapshot.
+#
+# Source of truth is the in-repo package at trilingual-consult/. A sibling
+# checkout beside the repository is still honoured so an existing working copy
+# keeps working, but the in-repo copy wins: it is the one a reviewer gets from
+# a single clone.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-src="$(cd "$root/.." && pwd)/trilingual-consult/src/trilingual_consult"
+in_repo="$root/trilingual-consult/src/trilingual_consult"
+sibling="$(cd "$root/.." && pwd)/trilingual-consult/src/trilingual_consult"
 dst="$root/backend/app/services/voice/_sandbox/trilingual_consult"
 
-if [[ ! -d "$src" ]]; then
-  echo "sibling sandbox not found: $src" >&2
+if [[ -d "$in_repo" ]]; then
+  src="$in_repo"
+elif [[ -d "$sibling" ]]; then
+  src="$sibling"
+else
+  echo "sandbox package not found in $in_repo or $sibling" >&2
   exit 1
 fi
 
@@ -21,6 +30,7 @@ rsync -a --delete \
   --exclude 'eval_audio.py' \
   --exclude 'report.py' \
   --exclude 'polywer.py' \
+  --exclude 'audio_bench.py' \
   --exclude '__main__.py' \
   "$src/" "$dst/"
 

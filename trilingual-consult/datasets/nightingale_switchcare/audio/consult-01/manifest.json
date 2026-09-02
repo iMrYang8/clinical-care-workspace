@@ -1,0 +1,32 @@
+{
+  "consult_id": "consult-01",
+  "synthetic": true,
+  "not_clinical_validation": true,
+  "tts_status": "macos_say",
+  "sample_rate_hz": 16000,
+  "turns": [
+    {
+      "speaker_id": "SPEAKER_00",
+      "role": "clinician",
+      "language": "en",
+      "file": "SPEAKER_00.wav"
+    },
+    {
+      "speaker_id": "SPEAKER_01",
+      "role": "patient",
+      "language": "zh",
+      "file": "SPEAKER_01.wav"
+    },
+    {
+      "speaker_id": "SPEAKER_02",
+      "role": "family",
+      "language": "ms",
+      "file": "SPEAKER_02.wav"
+    }
+  ],
+  "voice_notes": {
+    "SPEAKER_00": "Samantha (en)",
+    "SPEAKER_01": "Ting-Ting (zh)",
+    "SPEAKER_02": "Samantha speaking Malay text; not a Malay voice"
+  }
+}

@@ -67,6 +67,31 @@ def test_fixture_provider_is_explicit_and_normalized() -> None:
 
 
 @pytest.mark.unit
+def test_trilingual_intrasentential_fixture_is_explicit() -> None:
+    provider = SyntheticFixtureProvider()
+    result = provider.transcribe_fixture("trilingual-intrasentential-v1")
+    assert result.provider == "deterministic-synthetic-fixture"
+    assert result.model == "trilingual-intrasentential-v1"
+    assert [segment.speaker_id for segment in result.segments] == [
+        "SPEAKER_00",
+        "SPEAKER_01",
+        "SPEAKER_02",
+    ]
+    assert {segment.detected_language for segment in result.segments} == {
+        "en",
+        "zh",
+        "ms",
+    }
+    family = result.segments[2]
+    assert "penicillin" in family.text
+    assert "koe-bin" in family.text
+    assert family.overlap_group_id is None
+    assert "OVERLAP_REVIEW" not in result.warnings
+    assert "SYNTHETIC_FIXTURE" in result.warnings
+    validate_transcript_result(result)
+
+
+@pytest.mark.unit
 def test_invalid_transcript_segments_are_rejected() -> None:
     with pytest.raises(ValueError, match="segment time range"):
         validate_transcript_result(
