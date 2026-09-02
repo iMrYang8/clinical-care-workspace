@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 from app.core.config import settings
@@ -42,9 +43,10 @@ class _Response:
 class _AsyncClient:
     payload: Any = {}
     request: dict[str, Any] = {}
+    timeout: httpx.Timeout | None = None
 
-    def __init__(self, *, timeout: int) -> None:
-        self.timeout = timeout
+    def __init__(self, *, timeout: httpx.Timeout) -> None:
+        self.__class__.timeout = timeout
 
     async def __aenter__(self) -> "_AsyncClient":
         return self
@@ -89,7 +91,10 @@ def test_openai_audio_adapter_normalizes_timestamped_segments(
         "app.services.voice.providers.openai_audio.httpx.AsyncClient", _AsyncClient
     )
     provider = OpenAIAudioTranscriptionProvider(
-        api_key="TOKEN", model="gpt-final-transcribe", timeout_seconds=9
+        api_key="TOKEN",
+        model="gpt-final-transcribe",
+        timeout_seconds=9,
+        connect_timeout_seconds=4,
     )
 
     result = asyncio.run(provider.transcribe(audio))
@@ -105,6 +110,11 @@ def test_openai_audio_adapter_normalizes_timestamped_segments(
     assert result.warnings == ("PROVIDER_DROPPED_INVALID_SEGMENT_RANGE",)
     assert _AsyncClient.request["data"]["response_format"] == "diarized_json"
     assert _AsyncClient.request["headers"] == {"Authorization": "Bearer TOKEN"}
+    assert _AsyncClient.timeout is not None
+    assert _AsyncClient.timeout.connect == 4
+    assert _AsyncClient.timeout.read == 9
+    assert _AsyncClient.timeout.write == 9
+    assert _AsyncClient.timeout.pool == 9
 
 
 @pytest.mark.unit

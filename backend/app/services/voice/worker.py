@@ -7,11 +7,12 @@ import stat
 import tempfile
 import uuid
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app.api.deps import RequestContext
@@ -24,6 +25,7 @@ from app.models import (
     ClinicalFact,
     Job,
     JobAttempt,
+    ProviderCircuitState,
     TranscriptRevision,
     TranscriptSegment,
     VoiceDevice,
@@ -32,16 +34,44 @@ from app.models import (
 )
 from app.services.ai_jobs import active_worker_for_context, claim_job
 from app.services.clinic_ai_settings import clinic_ai_runtime
+from app.services.conflicts import (
+    NormalizedFact,
+    detect_language_spans,
+    extract_normalized_facts,
+    normalize_language_code,
+)
 from app.services.decisioning import (
     evaluation_manifest_sha256,
     matching_calibration_report,
 )
 from app.services.nightingale import emit_change
+from app.services.provider_resilience import (
+    ProviderCircuitOpen,
+    ProviderFailure,
+    classify_provider_failure,
+    retry_delay_seconds,
+)
+from app.services.voice.diarization import (
+    LocalPyannoteDiarizer,
+    apply_local_diarization,
+    pyannote_runtime_status,
+)
+from app.services.voice.egress_policy import remote_audio_egress_denial
 from app.services.voice.ffmpeg import (
     AudioPreprocessingError,
     DeviceAudio,
     preprocess_audio,
     write_private_file,
+)
+from app.services.voice.language import (
+    CLINIC_CONFIGURABLE_LANGUAGE_CODES,
+    AddressableLanguageSpan,
+    LanguageCode,
+    apply_clinic_language_policy,
+    clinic_supported_language_codes,
+    language_span_from_payload,
+    language_span_payload,
+    validate_addressable_language_spans,
 )
 from app.services.voice.provenance import validate_fact_evidence
 from app.services.voice.providers.base import (
@@ -69,6 +99,97 @@ _VOICE_PROCESSING_STATES = {
     "redacting",
     "extracting",
 }
+_AUDIO_PROVIDER = "openai"
+_AUDIO_CAPABILITY = "audio_transcription"
+
+
+def _audio_circuit(
+    db: Session, clinic_id: uuid.UUID, *, lock: bool = False
+) -> ProviderCircuitState | None:
+    statement = select(ProviderCircuitState).where(
+        ProviderCircuitState.clinic_id == clinic_id,
+        ProviderCircuitState.provider == _AUDIO_PROVIDER,
+        ProviderCircuitState.capability == _AUDIO_CAPABILITY,
+    )
+    if lock:
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
+    return db.exec(statement).first()
+
+
+def _assert_audio_circuit_available(db: Session, clinic_id: uuid.UUID) -> None:
+    circuit = _audio_circuit(db, clinic_id, lock=True)
+    if circuit is None or circuit.state == "closed":
+        return
+    now = get_datetime_utc()
+    if circuit.next_probe_at is not None and circuit.next_probe_at > now:
+        raise ProviderCircuitOpen("PROVIDER_CIRCUIT_OPEN")
+    circuit.state = "half_open"
+    circuit.updated_at = now
+    db.add(circuit)
+    db.flush()
+
+
+def _record_audio_provider_failure(
+    db: Session,
+    job: Job,
+    failure: ProviderFailure,
+    *,
+    attempt_no: int,
+) -> tuple[datetime | None, ProviderCircuitState]:
+    now = get_datetime_utc()
+    retryable = failure.retryable and attempt_no < job.max_attempts
+    next_retry = (
+        now + timedelta(seconds=retry_delay_seconds(job.id, attempt_no))
+        if retryable
+        else None
+    )
+    circuit = _audio_circuit(db, job.clinic_id, lock=True)
+    if circuit is None:
+        candidate = ProviderCircuitState(
+            clinic_id=job.clinic_id,
+            provider=_AUDIO_PROVIDER,
+            capability=_AUDIO_CAPABILITY,
+        )
+        try:
+            with db.begin_nested():
+                db.add(candidate)
+                db.flush()
+            circuit = candidate
+        except IntegrityError:
+            circuit = _audio_circuit(db, job.clinic_id, lock=True)
+            if circuit is None:
+                raise
+    circuit.state = "open" if failure.retryable else "closed"
+    circuit.consecutive_failures += 1
+    circuit.last_error_class = failure.failure_class
+    circuit.opened_at = circuit.opened_at or now
+    circuit.next_probe_at = (
+        next_retry
+        if next_retry is not None
+        else now + timedelta(seconds=3_600)
+        if failure.retryable
+        else None
+    )
+    circuit.updated_at = now
+    db.add(circuit)
+    return next_retry, circuit
+
+
+def _record_audio_provider_success(db: Session, job: Job) -> None:
+    circuit = _audio_circuit(db, job.clinic_id, lock=True)
+    if circuit is None:
+        return
+    now = get_datetime_utc()
+    circuit.state = "closed"
+    circuit.consecutive_failures = 0
+    circuit.last_error_class = None
+    circuit.opened_at = None
+    circuit.next_probe_at = None
+    circuit.last_success_at = now
+    circuit.updated_at = now
+    db.add(circuit)
 
 
 def _payload(context: RequestContext, job: Job) -> dict[str, Any]:
@@ -342,17 +463,24 @@ def _configured_provider(
     if settings.VOICE_TRANSCRIPTION_PROVIDER == "disabled":
         return None, "ASR_PROVIDER_DISABLED"
     if settings.VOICE_TRANSCRIPTION_PROVIDER == "openai":
-        runtime = clinic_ai_runtime(db, voice_session.clinic_id)
         if settings.STRICT_NO_AUDIO_EGRESS:
             return None, "STRICT_NO_AUDIO_EGRESS"
         if not settings.REMOTE_AUDIO_EGRESS_ENABLED:
             return None, "REMOTE_AUDIO_EGRESS_DISABLED"
+        policy_denial = remote_audio_egress_denial(db, voice_session)
+        if policy_denial is not None:
+            return None, policy_denial
+        # Load clinic credentials only after both policy and consent pass. A
+        # denied PHI egress path must not touch the provider secret boundary.
+        runtime = clinic_ai_runtime(db, voice_session.clinic_id)
         if not runtime.api_key or not runtime.transcribe_model:
             return None, "OPENAI_AUDIO_NOT_CONFIGURED"
         return (
             OpenAIAudioTranscriptionProvider(
                 api_key=runtime.api_key,
                 model=runtime.transcribe_model,
+                timeout_seconds=settings.REMOTE_REQUEST_TIMEOUT_SECONDS,
+                connect_timeout_seconds=settings.REMOTE_CONNECT_TIMEOUT_SECONDS,
             ),
             None,
         )
@@ -374,35 +502,114 @@ def _configured_provider(
 
 async def _transcribe(
     db: Session, voice_session: VoiceSession, asset_payload: bytes
-) -> tuple[TranscriptResult | None, str | None]:
+) -> tuple[TranscriptResult | None, str | None, ProviderFailure | None]:
     if voice_session.synthetic_fixture:
         if not voice_session.fixture_id:
-            return None, "SYNTHETIC_FIXTURE_ID_MISSING"
+            return None, "SYNTHETIC_FIXTURE_ID_MISSING", None
         return (
             SyntheticFixtureProvider().transcribe_fixture(voice_session.fixture_id),
+            None,
             None,
         )
     provider, reason = _configured_provider(db, voice_session)
     if provider is None:
-        return None, reason
+        return None, reason, None
+    remote_provider = provider.provider_name == _AUDIO_PROVIDER
+    if remote_provider:
+        try:
+            _assert_audio_circuit_available(db, voice_session.clinic_id)
+        except ProviderCircuitOpen as exc:
+            failure = classify_provider_failure(exc)
+            return None, failure.code, failure
     with tempfile.TemporaryDirectory(prefix="nightingale-asr-") as temp_name:
         temp_dir = Path(temp_name)
         os.chmod(temp_dir, stat.S_IRWXU)
         audio_path = temp_dir / "normalized.wav"
         write_private_file(audio_path, asset_payload)
         try:
+            request_timeout = (
+                settings.VOICE_ASR_TIMEOUT_SECONDS
+                if provider.provider_name.endswith("-local")
+                else settings.REMOTE_REQUEST_TIMEOUT_SECONDS
+            )
             result = await asyncio.wait_for(
                 provider.transcribe(audio_path),
-                timeout=max(1, settings.VOICE_ASR_TIMEOUT_SECONDS),
+                timeout=max(1, request_timeout),
             )
-        except TimeoutError:
-            return None, "ASR_TIMEOUT"
-        return validate_transcript_result(result), None
+        except Exception as exc:
+            if remote_provider:
+                failure = classify_provider_failure(exc)
+                return None, failure.code, failure
+            if isinstance(exc, TimeoutError):
+                return None, "ASR_TIMEOUT", None
+            raise
+        if provider.provider_name.endswith("-local") and settings.PYANNOTE_ENABLED:
+            ready, readiness_code = pyannote_runtime_status()
+            if not ready:
+                result = replace(
+                    result,
+                    warnings=tuple(
+                        sorted(
+                            {
+                                *result.warnings,
+                                readiness_code,
+                                "LOCAL_DIARIZATION_UNAVAILABLE",
+                            }
+                        )
+                    ),
+                )
+            else:
+                try:
+                    assert settings.PYANNOTE_MODEL_DIR is not None
+                    diarizer = LocalPyannoteDiarizer(
+                        settings.PYANNOTE_MODEL_DIR,
+                        timeout_seconds=min(
+                            300, max(1, settings.VOICE_ASR_TIMEOUT_SECONDS)
+                        ),
+                    )
+                    turns = await diarizer.diarize(audio_path)
+                    result = apply_local_diarization(result, turns)
+                except TimeoutError:
+                    result = replace(
+                        result,
+                        warnings=tuple(
+                            sorted(
+                                {
+                                    *result.warnings,
+                                    "LOCAL_DIARIZATION_TIMEOUT",
+                                    "LOCAL_DIARIZATION_UNAVAILABLE",
+                                }
+                            )
+                        ),
+                    )
+                except (RuntimeError, ValueError):
+                    result = replace(
+                        result,
+                        warnings=tuple(
+                            sorted(
+                                {
+                                    *result.warnings,
+                                    "LOCAL_DIARIZATION_UNAVAILABLE",
+                                }
+                            )
+                        ),
+                    )
+        return validate_transcript_result(result), None, None
 
 
 def _normalized_segments(
-    result: TranscriptResult, asset: AudioAsset
+    result: TranscriptResult,
+    asset: AudioAsset,
+    *,
+    supported_languages: frozenset[LanguageCode] | None = None,
 ) -> tuple[list[TranscriptSegmentResult], list[str]]:
+    # Unit callers without a database exercise the full product language set.
+    # Runtime callers always pass the clinic allowlist loaded from PostgreSQL.
+    language_policy = (
+        CLINIC_CONFIGURABLE_LANGUAGE_CODES
+        if supported_languages is None
+        else supported_languages
+    )
     cursor = 0
     output: list[TranscriptSegmentResult] = []
     warnings: list[str] = []
@@ -422,39 +629,135 @@ def _normalized_segments(
         if segment.start_ms >= asset.duration_ms or segment.end_ms > asset.duration_ms:
             warnings.append("SEGMENT_TIME_OUT_OF_BOUNDS")
             continue
+        raw_language = (
+            segment.source_language
+            or segment.detected_language
+            or result.detected_language
+        )
+        provider_source_language = normalize_language_code(raw_language)
+        if segment.language_spans:
+            try:
+                language_spans = validate_addressable_language_spans(
+                    segment.text, segment.language_spans
+                )
+            except ValueError as exc:
+                raise VoiceJobError("INVALID_LANGUAGE_SPAN_METADATA") from exc
+        else:
+            detected_spans = detect_language_spans(
+                segment.text,
+                source_language=raw_language,
+                source_confidence=segment.language_confidence,
+            )
+            language_spans = tuple(
+                AddressableLanguageSpan(
+                    start_offset=span.start,
+                    end_offset=span.end,
+                    language_code=span.source_language,
+                    confidence=span.confidence,
+                    detection_source=span.detection_source,
+                    review_required=span.review_required,
+                )
+                for span in detected_spans
+            )
+            validate_addressable_language_spans(segment.text, language_spans)
+        policy_violation = any(
+            span.language_code == "und" or span.language_code not in language_policy
+            for span in language_spans
+        )
+        language_spans = apply_clinic_language_policy(language_spans, language_policy)
+        if policy_violation:
+            warnings.append("CLINIC_LANGUAGE_POLICY_REVIEW_REQUIRED")
+        qualified_languages = {
+            span.language_code for span in language_spans if span.language_code != "und"
+        }
+        language_review_required = any(span.review_required for span in language_spans)
+        if language_review_required:
+            source_language = "und"
+            language_confidence = None
+            warnings.append("MIXED_LANGUAGE_SEGMENT_REVIEW")
+        elif len(qualified_languages) > 1:
+            # The aggregate segment has no single language, but each clean
+            # configured span remains independently eligible for extraction.
+            source_language = "und"
+            language_confidence = None
+            warnings.append("MIXED_LANGUAGE_SEGMENT_REVIEW")
+        elif len(qualified_languages) == 1:
+            source_language = next(iter(qualified_languages))
+            language_confidence = segment.language_confidence
+        else:
+            source_language = provider_source_language
+            language_confidence = segment.language_confidence
+            if source_language == "und":
+                warnings.append("SOURCE_LANGUAGE_UNAVAILABLE")
         output.append(
             replace(
                 segment,
                 text_start=start,
                 text_end=end,
+                detected_language=normalize_language_code(
+                    segment.detected_language or result.detected_language
+                ),
+                source_language=source_language,
+                language_confidence=language_confidence,
+                language_spans=language_spans,
             )
         )
     if not output:
         raise VoiceJobError("NO_VALID_TRANSCRIPT_SEGMENTS")
-    return output, warnings
+    return output, sorted(set(warnings))
 
 
-def _fact_candidate(
-    text: str, segments: list[TranscriptSegmentResult]
-) -> tuple[str, str, int, int, TranscriptSegmentResult] | None:
-    lowered = text.lower()
-    for phrase, value in (
-        ("penicillin allergy", "penicillin allergy"),
-        ("allergy to penicillin", "penicillin allergy"),
-    ):
-        start = lowered.find(phrase)
-        if start < 0:
+def _fact_candidates(
+    segments: list[TranscriptSegmentResult],
+) -> list[tuple[NormalizedFact, int, int, TranscriptSegmentResult]]:
+    output: list[tuple[NormalizedFact, int, int, TranscriptSegmentResult]] = []
+    for segment in segments:
+        if segment.text_start is None or segment.text_end is None:
             continue
-        end = start + len(phrase)
-        for segment in segments:
-            if (
-                segment.text_start is not None
-                and segment.text_end is not None
-                and segment.text_start <= start
-                and segment.text_end >= end
+        language_spans = segment.language_spans or (
+            AddressableLanguageSpan(
+                start_offset=0,
+                end_offset=len(segment.text),
+                language_code="und",
+                confidence=None,
+                detection_source="unavailable",
+                review_required=True,
+            ),
+        )
+        for language_span in language_spans:
+            fragment = segment.text[
+                language_span.start_offset : language_span.end_offset
+            ]
+            for extracted in extract_normalized_facts(
+                fragment, source_language=language_span.language_code
             ):
-                return text[start:end], value, start, end, segment
-    return None
+                if extracted.fact_type not in {
+                    "allergy",
+                    "medication",
+                    "dose",
+                    "route",
+                    "frequency",
+                }:
+                    continue
+                fact = extracted
+                if language_span.review_required:
+                    fact = replace(
+                        fact,
+                        review_required=True,
+                        source_language=language_span.language_code,
+                        polarity=(
+                            "unknown" if fact.fact_type == "allergy" else fact.polarity
+                        ),
+                        value=(
+                            "unknown" if fact.fact_type == "allergy" else fact.value
+                        ),
+                    )
+                start = segment.text_start + language_span.start_offset + fact.start
+                end = segment.text_start + language_span.start_offset + fact.end
+                if not (segment.text_start <= start <= end <= segment.text_end):
+                    continue
+                output.append((fact, start, end, segment))
+    return output
 
 
 def _apply_calibration(
@@ -488,7 +791,12 @@ def _create_revision(
     previous_revision: TranscriptRevision | None = None,
     reanalyzed: bool = False,
 ) -> TranscriptRevision:
-    segments, span_warnings = _normalized_segments(result, asset)
+    supported_languages = clinic_supported_language_codes(db, context.clinic_id)
+    segments, span_warnings = _normalized_segments(
+        result,
+        asset,
+        supported_languages=supported_languages,
+    )
     calibration = matching_calibration_report(
         db,
         clinic_id=context.clinic_id,
@@ -503,26 +811,28 @@ def _create_revision(
         code_commit=settings.NIGHTINGALE_SOURCE_COMMIT,
     )
     segments = _apply_calibration(segments, calibration)
-    fact_candidate = _fact_candidate(result.text, segments)
-    fact_valid = False
-    if fact_candidate is not None:
-        quote, _value, start, end, source_segment = fact_candidate
-        fact_valid = validate_fact_evidence(
+    fact_candidates = _fact_candidates(segments)
+    fact_validity = [
+        validate_fact_evidence(
             transcript=result.text,
             transcript_start=start,
             transcript_end=end,
-            exact_quote=quote,
-            quote_sha256=hashlib.sha256(quote.encode()).hexdigest(),
+            exact_quote=result.text[start:end],
+            quote_sha256=hashlib.sha256(result.text[start:end].encode()).hexdigest(),
             segment_start_ms=source_segment.start_ms,
             segment_end_ms=source_segment.end_ms,
             audio_start_ms=source_segment.start_ms,
             audio_end_ms=source_segment.end_ms,
             asset_duration_ms=asset.duration_ms,
         )
+        for _fact, start, end, source_segment in fact_candidates
+    ]
+    fact_valid = bool(fact_candidates) and all(fact_validity)
     preprocessing_warning_map = {
         "silence_review": "SILENCE_REVIEW",
         "clipping_review": "CLIPPING_REVIEW",
         "noise_review": "NOISE_REVIEW",
+        "low_signal_review": "LOW_SIGNAL_REVIEW",
         "overlap_review": "MULTI_DEVICE_OVERLAP_REVIEW",
     }
     preprocessing_warnings = {
@@ -540,10 +850,12 @@ def _create_revision(
         warnings.append("CONFIDENCE_UNAVAILABLE")
     if overlap:
         warnings.append("OVERLAP_REVIEW")
-    if fact_candidate is None:
+    if not fact_candidates:
         warnings.append("NO_STRUCTURED_FACTS")
     elif not fact_valid:
         warnings.append("INVALID_FACT_EVIDENCE")
+    if any(candidate[0].review_required for candidate in fact_candidates):
+        warnings.append("CLINICAL_LANGUAGE_OR_CONCEPT_REVIEW_REQUIRED")
     warnings = sorted(set(warnings))
     # Provider and preprocessing warnings are review signals.  A clinician can
     # still explicitly publish evidence-backed facts, but the UI never labels
@@ -556,8 +868,8 @@ def _create_revision(
         or bool(warnings)
     )
     summary = (
-        "Recorded allergy information is ready for clinician review."
-        if fact_candidate is not None
+        "Recorded clinical information is ready for clinician review."
+        if fact_candidates
         else "Clinical recording processed; structured facts require clinician review."
     )
     revision_id = uuid.uuid4()
@@ -577,7 +889,7 @@ def _create_revision(
         ),
         provider=result.provider,
         model=result.model,
-        detected_language=result.detected_language,
+        detected_language=normalize_language_code(result.detected_language),
         status="needs_review" if needs_review else "ready",
         needs_review=needs_review,
         stale=False,
@@ -609,7 +921,13 @@ def _create_revision(
             start_ms=item.start_ms,
             end_ms=item.end_ms,
             speaker_id=item.speaker_id,
+            speaker_ids_json=list(item.speaker_ids),
             detected_language=item.detected_language,
+            source_language=item.source_language or "und",
+            language_confidence=item.language_confidence,
+            language_spans_json=[
+                language_span_payload(span) for span in item.language_spans
+            ],
             confidence=item.confidence,
             confidence_source=item.confidence_source,
             overlap_group_id=item.overlap_group_id,
@@ -619,8 +937,14 @@ def _create_revision(
         db.add(row)
         persisted_segments.append((row, item))
     db.flush()
-    if fact_candidate is not None:
-        quote, value, start, end, source_segment = fact_candidate
+    for ordinal, candidate in enumerate(fact_candidates):
+        fact, start, end, source_segment = candidate
+        quote = result.text[start:end]
+        value = (
+            f"{fact.key} allergy:{fact.polarity}"
+            if fact.fact_type == "allergy"
+            else fact.value
+        )
         segment_row = next(
             row for row, candidate in persisted_segments if candidate is source_segment
         )
@@ -638,7 +962,7 @@ def _create_revision(
             audio_end_ms=source_segment.end_ms,
             asset_duration_ms=asset.duration_ms,
         )
-        if valid and fact_valid:
+        if valid:
             db.add(
                 ClinicalFact(
                     id=fact_id,
@@ -646,8 +970,8 @@ def _create_revision(
                     session_id=voice_session.id,
                     revision_id=revision.id,
                     segment_id=segment_row.id,
-                    ordinal=0,
-                    fact_type="allergy",
+                    ordinal=ordinal,
+                    fact_type=fact.fact_type,
                     value_ciphertext=field_codec.encrypt_text(
                         context.clinic_id, "clinical_fact.value", fact_id, value
                     ),
@@ -679,21 +1003,76 @@ def _complete_attempt(
     voice_session: VoiceSession,
     *,
     needs_review: bool,
+    outcome_error_code: str | None = None,
+    outcome_error_class: str | None = None,
+    provider_failure: ProviderFailure | None = None,
 ) -> Job:
-    target_state = "needs_review" if needs_review else "ready"
-    if voice_session.state != target_state and voice_session.state not in {
+    terminal_target_state = "needs_review" if needs_review else "ready"
+    if voice_session.state != terminal_target_state and voice_session.state not in {
         "transcribing",
         "redacting",
         "extracting",
     }:
         raise VoiceJobError("VOICE_STATE_TRANSITION_CONFLICT")
-    attempt.status = "completed"
-    attempt.completed_at = get_datetime_utc()
-    job.state = "needs_review" if needs_review else "completed"
+    completed_at = get_datetime_utc()
+    next_retry_at: datetime | None = None
+    circuit: ProviderCircuitState | None = None
+    if provider_failure is not None:
+        next_retry_at, circuit = _record_audio_provider_failure(
+            db,
+            job,
+            provider_failure,
+            attempt_no=attempt.attempt_no,
+        )
+        outcome_error_code = provider_failure.code
+        outcome_error_class = provider_failure.failure_class
+    # A retryable provider failure has not completed clinical processing. Keep
+    # the session in its durable processing stage so both the session and job
+    # polling loops continue until the worker retries or exhausts attempts.
+    target_state = (
+        voice_session.state if next_retry_at is not None else terminal_target_state
+    )
+    attempt.status = "failed" if provider_failure is not None else "completed"
+    attempt.error_code = outcome_error_code
+    attempt.error_class = outcome_error_class
+    attempt.completed_at = completed_at
+    job.state = (
+        "failed"
+        if next_retry_at is not None
+        else "needs_review"
+        if needs_review
+        else "completed"
+    )
     job.locked_by = None
     job.locked_until = None
-    job.error_code = None
-    job.updated_at = get_datetime_utc()
+    job.error_code = outcome_error_code
+    job.error_class = outcome_error_class
+    job.next_run_at = next_retry_at
+    job.provider_outage = bool(provider_failure and provider_failure.retryable)
+    job.last_attempt_at = completed_at
+    if outcome_error_code is None:
+        job.delayed_at = None
+    else:
+        job.delayed_at = completed_at
+        if outcome_error_class == "timeout":
+            job.timed_out_at = completed_at
+        history = list(job.retry_history_json)
+        history.append(
+            {
+                "attempt": attempt.attempt_no,
+                "error_code": outcome_error_code,
+                "error_class": outcome_error_class or "unavailable",
+                "attempted_at": completed_at.isoformat(),
+                "next_retry_at": (
+                    next_retry_at.isoformat() if next_retry_at is not None else None
+                ),
+                "provider": _AUDIO_PROVIDER if provider_failure else None,
+                "capability": _AUDIO_CAPABILITY if provider_failure else None,
+                "circuit_state": circuit.state if circuit is not None else None,
+            }
+        )
+        job.retry_history_json = history
+    job.updated_at = completed_at
     voice_session.state = target_state
     if not needs_review:
         voice_session.error_code = None
@@ -704,7 +1083,11 @@ def _complete_attempt(
     emit_change(
         db,
         context,
-        action="voice.processing_completed",
+        action=(
+            "voice.processing_delayed"
+            if next_retry_at is not None
+            else "voice.processing_completed"
+        ),
         resource_type="voice_session",
         resource_id=voice_session.id,
         metadata={"job_id": str(job.id), "state": voice_session.state},
@@ -830,7 +1213,7 @@ async def process_voice_job(
             )
             job, attempt = _renew_claim(db, context, job_id, token)
             voice_session = _session_from_payload(db, context, job, payload)
-            result, unavailable_reason = await _transcribe(
+            result, unavailable_reason, provider_failure = await _transcribe(
                 db, voice_session, asset_payload
             )
             job, attempt = _claim_is_current(db, context, job_id, token)
@@ -849,18 +1232,35 @@ async def process_voice_job(
                     attempt,
                     voice_session,
                     needs_review=True,
+                    outcome_error_code=voice_session.error_code,
+                    outcome_error_class=(
+                        provider_failure.failure_class
+                        if provider_failure is not None
+                        else "timeout"
+                        if voice_session.error_code == "ASR_TIMEOUT"
+                        else "unavailable"
+                    ),
+                    provider_failure=provider_failure,
                 )
+            if result.provider == _AUDIO_PROVIDER:
+                _record_audio_provider_success(db, job)
             if voice_session.state == "transcribing":
                 voice_session = _transition_state(
                     db,
                     context,
                     voice_session.id,
                     expected={"transcribing"},
-                    target="redacting",
+                    # Voice audio remains local by default and structured
+                    # extraction operates on the local transcript. Do not
+                    # claim a no-op redaction boundary that has transformed
+                    # neither audio nor transcript text.
+                    target="extracting",
                 )
                 db.commit()
                 job, attempt = _claim_is_current(db, context, job_id, token)
                 voice_session = _session_from_payload(db, context, job, payload)
+            # Backward-compatible recovery for jobs persisted before the
+            # no-op redacting stage was removed.
             if voice_session.state == "redacting":
                 voice_session = _transition_state(
                     db,
@@ -913,7 +1313,14 @@ async def process_voice_job(
                     start_ms=row.start_ms,
                     end_ms=row.end_ms,
                     speaker_id=row.speaker_id,
+                    speaker_ids=tuple(row.speaker_ids_json),
                     detected_language=row.detected_language,
+                    source_language=row.source_language,
+                    language_confidence=row.language_confidence,
+                    language_spans=tuple(
+                        language_span_from_payload(payload)
+                        for payload in row.language_spans_json
+                    ),
                     confidence=row.confidence,
                     confidence_source=row.confidence_source,
                     overlap_group_id=row.overlap_group_id,
@@ -1001,23 +1408,35 @@ async def process_voice_job(
             current_voice_session = None
         if (
             current_voice_session is not None
-            and current_voice_session.state in _VOICE_PROCESSING_STATES
             and current_voice_session.published_entry_id is None
+            and (
+                current_voice_session.state in _VOICE_PROCESSING_STATES
+                or (
+                    current_voice_session.state == "needs_review"
+                    and job.attempt_count >= job.max_attempts
+                )
+            )
         ):
-            if job.attempt_count >= job.max_attempts:
-                # Only an exhausted job releases the session from its CAS
-                # processing barrier. A retryable failed attempt remains in
-                # its last durable processing state so publish, correction,
-                # and competing reanalysis cannot race the next auto-claim.
+            # Generic failures do not schedule an automatic retry; claim_job
+            # requires an explicit clinical retry. Initial processing has no
+            # derived revision to protect, so release it to manual review at
+            # once. A failed reanalysis keeps its CAS barrier until that
+            # explicit retry (or exhaustion), preventing publication of the
+            # pre-reanalysis revision as if the requested work had succeeded.
+            has_existing_revision = (
+                current_voice_session.current_transcript_revision_id is not None
+            )
+            attempts_exhausted = job.attempt_count >= job.max_attempts
+            if not has_existing_revision or attempts_exhausted:
+                warnings = {
+                    *current_voice_session.warning_codes_json,
+                    "PROCESSING_FAILED",
+                }
+                if attempts_exhausted:
+                    warnings.add("VOICE_WORKER_ATTEMPTS_EXHAUSTED")
                 current_voice_session.state = "needs_review"
                 current_voice_session.error_code = code
-                current_voice_session.warning_codes_json = sorted(
-                    {
-                        *current_voice_session.warning_codes_json,
-                        "PROCESSING_FAILED",
-                        "VOICE_WORKER_ATTEMPTS_EXHAUSTED",
-                    }
-                )
+                current_voice_session.warning_codes_json = sorted(warnings)
                 current_voice_session.updated_at = get_datetime_utc()
                 db.add(current_voice_session)
         db.commit()

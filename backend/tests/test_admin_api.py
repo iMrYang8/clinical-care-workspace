@@ -191,6 +191,11 @@ def test_admin_invites_then_recipient_accepts_before_membership_exists(
     )
     assert deactivated.status_code == 200
     assert deactivated.json()["is_active"] is False
+    after_deactivation = client.get("/api/v1/admin/memberships", headers=admin)
+    assert after_deactivation.status_code == 200, after_deactivation.text
+    assert accepted.json()["id"] not in {
+        item["id"] for item in after_deactivation.json()["data"]
+    }
     assert (
         client.post(
             f"/api/v1/admin/memberships/{demo_id('membership-admin')}/deactivate",
@@ -423,6 +428,8 @@ def test_admin_audit_is_metadata_only_and_cross_clinic_hidden(
             "resource_id",
             "version_id",
             "created_at",
+            "reason_code",
+            "clinical_rationale_present",
         }
 
 

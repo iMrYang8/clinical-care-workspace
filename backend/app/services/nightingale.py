@@ -1,21 +1,25 @@
 import difflib
 import hashlib
+import re
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, cast
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
 from sqlalchemy import desc
 from sqlmodel import Session, col, select
 
 from app.api.deps import RequestContext
+from app.core.config import settings
 from app.core.field_crypto import field_codec
 from app.models import (
     AIRun,
     AuditEvent,
+    ClinicalFactAssertion,
     ClinicMembership,
+    ClinicOperationalSetting,
     ConflictCase,
     DecisionAssessment,
     DomainEvent,
@@ -29,6 +33,9 @@ from app.models import (
     EntryVersion,
     EntryVersionPublic,
     Highlight,
+    HighlightSupportReview,
+    ImportanceCandidateExposure,
+    ImportanceCandidateSet,
     Job,
     JobAttempt,
     Patient,
@@ -44,18 +51,121 @@ from app.models import (
     ProvenancePointer,
     User,
     get_datetime_utc,
+    normalize_risk_reason,
 )
 from app.services.decisioning import (
     assessment_review_state,
     decision_payload,
+    public_confidence_projection,
     redaction_is_qualified,
+    requalify_assessment_confidence,
 )
-from app.services.importance import record_feedback, refresh_highlight_score
+from app.services.importance import (
+    IMPORTANCE_EXPOSURE_REPORT_VERSION,
+    is_safety_protected,
+    qualify_importance_mode,
+    record_feedback,
+    refresh_highlight_score,
+)
 
 
 class VersionConflictError(Exception):
     def __init__(self, current_version_id: uuid.UUID) -> None:
         self.current_version_id = current_version_id
+
+
+def clinic_day_bounds(
+    session: Session, clinic_id: uuid.UUID
+) -> tuple[datetime, datetime]:
+    """Resolve today's UTC bounds from the clinic's audited timezone setting."""
+
+    operational = session.exec(
+        select(ClinicOperationalSetting).where(
+            ClinicOperationalSetting.clinic_id == clinic_id
+        )
+    ).first()
+    timezone_name = (
+        operational.timezone if operational is not None else "Asia/Singapore"
+    )
+    try:
+        clinic_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        # Onboarding preflight rejects invalid timezones.  This fallback keeps
+        # legacy clinics usable while making the misconfiguration visible there.
+        clinic_timezone = ZoneInfo("Asia/Singapore")
+    clinic_today = datetime.now(clinic_timezone).date()
+    day_start = datetime.combine(
+        clinic_today, time.min, tzinfo=clinic_timezone
+    ).astimezone(UTC)
+    return day_start, day_start + timedelta(days=1)
+
+
+_AUDIT_MACHINE_METADATA_KEYS = {
+    "accepted_fact_ids",
+    "anchor_state",
+    "archived_count",
+    "assigned_membership_id",
+    "candidate_count",
+    "capture_kind",
+    "careful_model",
+    "concept_code",
+    "correction_entry_id",
+    "entry_id",
+    "entry_version_id",
+    "error_code",
+    "fallback",
+    "fast_model",
+    "job_id",
+    "key_changed",
+    "kind",
+    "last_chunk_index",
+    "medication_review_assertion_ids",
+    "policy",
+    "previous_version_id",
+    "provider",
+    "provider_outage",
+    "reason_code",
+    "recovery_job_id",
+    "replacement_publication_id",
+    "reverted_from_version_id",
+    "review_status",
+    "revision_id",
+    "role",
+    "section",
+    "session_id",
+    "severity",
+    "state",
+    "status",
+    "storage_tier",
+    "support_review_id",
+    "transcribe_model",
+    "version_id",
+}
+_AUDIT_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{2,79}$")
+
+
+def _allowlisted_audit_metadata(
+    metadata: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Keep only bounded, non-clinical machine fields in operational audit JSON."""
+
+    output: dict[str, object] = {}
+    for key, value in (metadata or {}).items():
+        if key not in _AUDIT_MACHINE_METADATA_KEYS:
+            continue
+        if value is None or isinstance(value, (bool, int, float)):
+            output[key] = value
+        elif isinstance(value, str):
+            output[key] = value[:200]
+        elif (
+            isinstance(value, list)
+            and len(value) <= 100
+            and all(isinstance(item, (str, int, float, bool)) for item in value)
+        ):
+            output[key] = [
+                item[:200] if isinstance(item, str) else item for item in value
+            ]
+    return output
 
 
 def normalize_etag(value: str) -> str:
@@ -73,18 +183,40 @@ def emit_change(
     resource_type: str,
     resource_id: uuid.UUID,
     metadata: Mapping[str, object] | None = None,
+    reason_code: str = "not_specified",
+    clinical_rationale: str | None = None,
 ) -> None:
-    safe_metadata = dict(metadata or {})
-    session.add(
-        AuditEvent(
-            clinic_id=context.clinic_id,
-            actor_id=context.user_id,
-            action=action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            metadata_json=safe_metadata,
-        )
+    safe_metadata = _allowlisted_audit_metadata(metadata)
+    candidate_reason_code = (
+        reason_code if reason_code != "not_specified" else action.replace(".", "_")[:80]
     )
+    effective_reason_code = (
+        candidate_reason_code
+        if _AUDIT_REASON_CODE.fullmatch(candidate_reason_code)
+        else "invalid_reason_code"
+    )
+    audit_id = uuid.uuid4()
+    audit = AuditEvent(
+        id=audit_id,
+        clinic_id=context.clinic_id,
+        actor_id=context.user_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        reason_code=effective_reason_code,
+        clinical_rationale_ciphertext=(
+            field_codec.encrypt_text(
+                context.clinic_id,
+                "audit_event.clinical_rationale",
+                audit_id,
+                clinical_rationale,
+            )
+            if clinical_rationale
+            else None
+        ),
+        metadata_json=safe_metadata,
+    )
+    session.add(audit)
     session.add(
         DomainEvent(
             clinic_id=context.clinic_id,
@@ -92,7 +224,7 @@ def emit_change(
             aggregate_type=resource_type,
             aggregate_id=resource_id,
             actor_id=context.user_id,
-            payload_json=safe_metadata,
+            payload_json={**safe_metadata, "reason_code": effective_reason_code},
         )
     )
 
@@ -155,12 +287,7 @@ def list_patients(
         if patient_ids
         else []
     )
-    singapore = ZoneInfo("Asia/Singapore")
-    singapore_today = datetime.now(singapore).date()
-    day_start = datetime.combine(
-        singapore_today, time.min, tzinfo=singapore
-    ).astimezone(UTC)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = clinic_day_bounds(session, context.clinic_id)
     visits = (
         session.exec(
             select(PatientVisit)
@@ -230,6 +357,7 @@ def list_patients(
                 display_name=display_name,
                 date_of_birth=dob,
                 medical_record_number=mrn_by_patient.get(patient.id),
+                today_visit_id=today_visit.id if today_visit is not None else None,
                 today_visit_at=(
                     today_visit.scheduled_at if today_visit is not None else None
                 ),
@@ -632,8 +760,25 @@ def _record_clinician_publication(
     entry: Entry,
     version: EntryVersion,
     content: str,
+    *,
+    medication_review_verified: bool = False,
 ) -> PatientPublication:
     """Bind a clinician sharing decision to an exact immutable text span."""
+
+    if not medication_review_verified:
+        from app.services.conflicts import extract_normalized_facts
+
+        if any(
+            fact.fact_type in {"medication", "dose", "route", "frequency"}
+            for fact in extract_normalized_facts(content)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "MEDICATION_REVIEW_REQUIRED",
+                    "message": "Confirm medication, dose, unit, route, and frequency before publication.",
+                },
+            )
 
     unresolved = session.exec(
         select(ConflictCase).where(
@@ -678,6 +823,7 @@ def _record_clinician_publication(
     superseded_at = get_datetime_utc()
     if active_publication is not None:
         active_publication.withdrawn_at = superseded_at
+        active_publication.withdrawn_by_membership_id = context.membership.id
         session.add(active_publication)
         linked_requests = session.exec(
             select(PatientSharingRequest)
@@ -814,6 +960,73 @@ def record_patient_sharing_request(
     return request
 
 
+def _invalidate_highlight_support_for_source_edit(
+    session: Session,
+    context: RequestContext,
+    entry: Entry,
+    next_version: EntryVersion,
+) -> tuple[list[Highlight], set[uuid.UUID]]:
+    """Move every immutable highlight source on an edited entry to review.
+
+    This transition is actor-neutral by design: patient-, staff-, and
+    clinician-owned entries all invalidate downstream support when their
+    current wording changes. Learning feedback remains a separate clinical
+    team action in ``patch_entry``.
+    """
+
+    related_highlights = session.exec(
+        select(Highlight).where(
+            Highlight.clinic_id == context.clinic_id,
+            Highlight.entry_id == entry.id,
+        )
+    ).all()
+    affected_patients: set[uuid.UUID] = set()
+    for highlight in related_highlights:
+        if highlight.source_entry_version_id == next_version.id:
+            continue
+        # The original source pointer remains immutable and resolvable, but it
+        # is no longer evidence from the entry's current version.
+        highlight.support_state = "historical"
+        highlight.support_review_required = True
+        highlight.current_priority_eligible = False
+        session.add(highlight)
+        obsolete_reviews = session.exec(
+            select(HighlightSupportReview)
+            .where(
+                HighlightSupportReview.clinic_id == context.clinic_id,
+                HighlightSupportReview.highlight_id == highlight.id,
+                HighlightSupportReview.review_status == "pending",
+                HighlightSupportReview.observed_current_version_id != next_version.id,
+            )
+            .with_for_update()
+        ).all()
+        for obsolete in obsolete_reviews:
+            obsolete.review_status = "superseded"
+            obsolete.reviewed_at = get_datetime_utc()
+            session.add(obsolete)
+        existing_support_review = session.exec(
+            select(HighlightSupportReview).where(
+                HighlightSupportReview.clinic_id == context.clinic_id,
+                HighlightSupportReview.highlight_id == highlight.id,
+                HighlightSupportReview.observed_current_version_id == next_version.id,
+            )
+        ).first()
+        if existing_support_review is None:
+            session.add(
+                HighlightSupportReview(
+                    clinic_id=context.clinic_id,
+                    patient_id=highlight.patient_id,
+                    highlight_id=highlight.id,
+                    source_entry_version_id=highlight.source_entry_version_id,
+                    observed_current_version_id=next_version.id,
+                    support_state="historical",
+                    review_status="pending",
+                )
+            )
+        affected_patients.add(highlight.patient_id)
+    return list(related_highlights), affected_patients
+
+
 def create_entry(
     session: Session, context: RequestContext, data: EntryCreate
 ) -> EntryPublic:
@@ -847,7 +1060,7 @@ def create_entry(
 
     from app.services.conflicts import detect_conflicts_for_version
 
-    conflicts = detect_conflicts_for_version(
+    conflicts, conflict_affected_patients = detect_conflicts_for_version(
         session, context, entry, version, data.content
     )
     if patient_facing and conflicts:
@@ -904,6 +1117,8 @@ def create_entry(
             resource_id=sharing_request.id,
             metadata={"version_id": str(version.id), "entry_id": str(entry.id)},
         )
+    for patient_id in conflict_affected_patients:
+        rebuild_glance(session, context, patient_id)
     session.commit()
     session.refresh(entry)
     return entry_public(session, entry)
@@ -922,6 +1137,7 @@ def patch_entry(
     action: str = "entry.updated",
     approved_patient_sharing: bool = False,
     withdrawn_patient_sharing: bool = False,
+    medication_review_verified: bool = False,
     commit: bool = True,
 ) -> EntryPublic:
     entry = get_scoped_entry(session, context, entry_id, lock=True)
@@ -952,11 +1168,14 @@ def patch_entry(
         # gate, never by toggling a generic entry field.
         effective_patient_facing = False
     sharing_changed = effective_patient_facing != entry.patient_facing
+    next_title = title if title is not None else current_title
+    next_content = content if content is not None else current_content
+    source_changed = next_title != current_title or next_content != current_content
     next_version = _new_version(
         entry=entry,
         version_no=current.version_no + 1,
-        title=title if title is not None else current_title,
-        content=content if content is not None else current_content,
+        title=next_title,
+        content=next_content,
         author_id=context.user_id,
         patient_facing=effective_patient_facing,
         reverted_from_version_id=reverted_from_version_id,
@@ -985,6 +1204,7 @@ def patch_entry(
         withdrawn_at = get_datetime_utc()
         for publication in active_publications:
             publication.withdrawn_at = withdrawn_at
+            publication.withdrawn_by_membership_id = context.membership.id
             session.add(publication)
             linked_requests = session.exec(
                 select(PatientSharingRequest)
@@ -1011,7 +1231,7 @@ def patch_entry(
             )
     from app.services.conflicts import detect_conflicts_for_version
 
-    conflicts = detect_conflicts_for_version(
+    conflicts, conflict_affected_patients = detect_conflicts_for_version(
         session,
         context,
         entry,
@@ -1041,6 +1261,7 @@ def patch_entry(
             entry,
             next_version,
             content if content is not None else current_content,
+            medication_review_verified=medication_review_verified,
         )
     if context.role == "staff" and patient_facing:
         sharing_request = record_patient_sharing_request(
@@ -1054,18 +1275,33 @@ def patch_entry(
             resource_id=sharing_request.id,
             metadata={"entry_id": str(entry.id), "version_id": str(next_version.id)},
         )
-    affected_patients: set[uuid.UUID] = set()
+    affected_patients: set[uuid.UUID] = set(conflict_affected_patients)
     if sharing_changed:
         # Patient-facing Glance is precomputed. A sharing withdrawal must
         # invalidate that projection even when the entry has no feedback rows.
         affected_patients.add(entry.patient_id)
+    related_highlights: list[Highlight] = []
+    if source_changed:
+        (
+            related_highlights,
+            support_affected_patients,
+        ) = _invalidate_highlight_support_for_source_edit(
+            session,
+            context,
+            entry,
+            next_version,
+        )
+        affected_patients.update(support_affected_patients)
+    elif context.role in {"staff", "clinician"}:
+        related_highlights = list(
+            session.exec(
+                select(Highlight).where(
+                    Highlight.clinic_id == context.clinic_id,
+                    Highlight.entry_id == entry.id,
+                )
+            ).all()
+        )
     if context.role in {"staff", "clinician"}:
-        related_highlights = session.exec(
-            select(Highlight).where(
-                Highlight.clinic_id == context.clinic_id,
-                Highlight.entry_id == entry.id,
-            )
-        ).all()
         for highlight in related_highlights:
             _, affected = record_feedback(
                 session,
@@ -1296,20 +1532,88 @@ def rebuild_glance(
     session: Session, context: RequestContext, patient_id: uuid.UUID
 ) -> PatientGlanceSnapshot:
     get_patient(session, context, patient_id)
-    eligible = session.exec(
+    existing_snapshot = session.exec(
+        select(PatientGlanceSnapshot).where(
+            PatientGlanceSnapshot.clinic_id == context.clinic_id,
+            PatientGlanceSnapshot.patient_id == patient_id,
+        )
+    ).first()
+    importance_qualification = qualify_importance_mode(session, context.clinic_id)
+    importance_mode = importance_qualification.effective_mode
+    importance_report_id = (
+        importance_qualification.report.id
+        if importance_qualification.current
+        and importance_qualification.report is not None
+        else None
+    )
+    importance_report_expires_at = (
+        importance_qualification.report.expires_at
+        if importance_qualification.current
+        and importance_qualification.report is not None
+        else None
+    )
+    importance_report_version = (
+        importance_qualification.report.report_version
+        if importance_qualification.current
+        and importance_qualification.report is not None
+        else None
+    )
+    # Patient RLS intentionally hides clinic-wide qualification reports. Reuse
+    # only a still-current active qualification already projected into this
+    # patient's snapshot; configuration changes always demote immediately.
+    if context.role == "patient":
+        now = get_datetime_utc()
+        if (
+            settings.IMPORTANCE_LEARNING_MODE == "active"
+            and existing_snapshot is not None
+            and existing_snapshot.importance_mode == "active"
+            and existing_snapshot.importance_qualification_report_version
+            == IMPORTANCE_EXPOSURE_REPORT_VERSION
+            and existing_snapshot.importance_qualification_expires_at is not None
+            and existing_snapshot.importance_qualification_expires_at > now
+        ):
+            importance_mode = "active"
+            importance_report_id = existing_snapshot.importance_qualification_report_id
+            importance_report_version = (
+                existing_snapshot.importance_qualification_report_version
+            )
+            importance_report_expires_at = (
+                existing_snapshot.importance_qualification_expires_at
+            )
+        else:
+            importance_mode = (
+                "disabled"
+                if settings.IMPORTANCE_LEARNING_MODE == "disabled"
+                else "shadow"
+            )
+            importance_report_id = None
+            importance_report_version = None
+            importance_report_expires_at = None
+    protected_candidate = (
+        col(Highlight.pinned).is_(True)
+        | col(Highlight.critical).is_(True)
+        | col(Highlight.unresolved).is_(True)
+        | col(Highlight.review_required).is_(True)
+        | col(Highlight.support_review_required).is_(True)
+        | col(Highlight.clinician_confirmed).is_(True)
+        | col(Highlight.feature_keys_json).contains(["entity:allergy"])
+    )
+    active_candidate = col(Highlight.status).in_(["pending", "accepted"])
+    review_candidate = active_candidate | protected_candidate
+    candidates = session.exec(
         select(Highlight)
         .where(
             Highlight.clinic_id == context.clinic_id,
             Highlight.patient_id == patient_id,
-            (col(Highlight.status) == "accepted") | col(Highlight.pinned).is_(True),
-            Highlight.anchor_state == "resolved",
-            col(Highlight.review_required).is_(False),
+            review_candidate,
         )
         .execution_options(populate_existing=True)
     ).all()
     score_components = {
-        highlight.id: refresh_highlight_score(session, highlight).components
-        for highlight in eligible
+        highlight.id: refresh_highlight_score(
+            session, highlight, importance_mode=importance_mode
+        ).components
+        for highlight in candidates
     }
     session.flush()
     highlights = session.exec(
@@ -1317,9 +1621,7 @@ def rebuild_glance(
         .where(
             Highlight.clinic_id == context.clinic_id,
             Highlight.patient_id == patient_id,
-            (col(Highlight.status) == "accepted") | col(Highlight.pinned).is_(True),
-            Highlight.anchor_state == "resolved",
-            col(Highlight.review_required).is_(False),
+            review_candidate,
         )
         .order_by(
             desc(col(Highlight.pinned)),
@@ -1331,12 +1633,55 @@ def rebuild_glance(
         )
         .execution_options(populate_existing=True)
     ).all()
+    critical_conflicts = session.exec(
+        select(ConflictCase).where(
+            ConflictCase.clinic_id == context.clinic_id,
+            ConflictCase.patient_id == patient_id,
+            ConflictCase.status == "unresolved",
+            ConflictCase.severity == "critical",
+        )
+    ).all()
+    conflict_assertion_ids = {
+        assertion_id
+        for conflict in critical_conflicts
+        for assertion_id in (
+            conflict.left_assertion_id,
+            conflict.right_assertion_id,
+        )
+        if assertion_id is not None
+    }
+    conflict_critical_highlight_ids: set[uuid.UUID] = set()
+    if conflict_assertion_ids:
+        conflict_critical_highlight_ids = {
+            assertion.highlight_id
+            for assertion in session.exec(
+                select(ClinicalFactAssertion).where(
+                    ClinicalFactAssertion.clinic_id == context.clinic_id,
+                    col(ClinicalFactAssertion.id).in_(conflict_assertion_ids),
+                    col(ClinicalFactAssertion.highlight_id).is_not(None),
+                )
+            ).all()
+            if assertion.highlight_id is not None
+        }
+
     cards: list[dict[str, object]] = []
     review_cards: list[dict[str, object]] = []
     patient_cards: list[dict[str, object]] = []
-    for highlight in highlights:
-        if len(cards) >= 5 and len(patient_cards) >= 5 and len(review_cards) >= 20:
-            break
+    candidate_set_id = f"glance:{patient_id}:{uuid.uuid4()}"
+    observed_at = get_datetime_utc()
+    current_priority_rank = 0
+    clinical_review_rank = 0
+    candidate_counts = {
+        "current_priorities": {"protected": 0, "ordinary": 0, "displayed": 0},
+        "clinical_review": {"protected": 0, "ordinary": 0, "displayed": 0},
+    }
+    for _rank, highlight in enumerate(highlights, start=1):
+        effective_critical = bool(
+            highlight.critical or highlight.id in conflict_critical_highlight_ids
+        )
+        protected = is_safety_protected(
+            highlight, effective_critical=effective_critical
+        )
         pointer = session.exec(
             select(ProvenancePointer).where(
                 ProvenancePointer.clinic_id == context.clinic_id,
@@ -1344,8 +1689,28 @@ def rebuild_glance(
             )
         ).first()
         if pointer is None:
-            continue
-        if pointer.anchor_state != "resolved" or pointer.review_required:
+            clinical_review_rank += 1
+            candidate_counts["clinical_review"][
+                "protected" if protected else "ordinary"
+            ] += 1
+            session.add(
+                ImportanceCandidateExposure(
+                    clinic_id=context.clinic_id,
+                    patient_id=patient_id,
+                    highlight_id=highlight.id,
+                    viewer_membership_id=context.membership.id,
+                    view_event_id=candidate_set_id,
+                    candidate_set_id=candidate_set_id,
+                    rank=clinical_review_rank,
+                    surface="clinical_review",
+                    feature_keys_json=highlight.feature_keys_json,
+                    shadow_score=highlight.final_score,
+                    protected=protected,
+                    displayed=False,
+                    exposure_probability=0.0,
+                    observed_at=observed_at,
+                )
+            )
             continue
         source_entry = session.exec(
             select(Entry).where(
@@ -1374,10 +1739,52 @@ def rebuild_glance(
                 DecisionAssessment.highlight_id == highlight.id,
             )
         ).first()
+        rule_derived = bool(
+            assessment is not None
+            and assessment.output_type == "rule_derived_suggestion"
+        )
+        confidence_qualification = requalify_assessment_confidence(session, assessment)
         decision = decision_payload(
             assessment=assessment,
             highlight=highlight,
             score_components=score_components.get(highlight.id, {}),
+            confidence_qualification=confidence_qualification,
+            importance_mode=importance_mode,
+        )
+        conflict_critical = highlight.id in conflict_critical_highlight_ids
+        if conflict_critical:
+            # Conflict severity is a live projection over immutable assertion
+            # anchors. Keep the stored Highlight.critical/features frozen while
+            # presenting one coherent critical/protected decision everywhere.
+            risk = decision["risk"]
+            risk["effective"] = "critical"
+            risk["floor"] = "critical"
+            projected_rule_ids = risk.get("rule_ids")
+            existing_rule_ids = (
+                projected_rule_ids if isinstance(projected_rule_ids, list) else []
+            )
+            risk["rule_ids"] = sorted(
+                {
+                    *(str(item) for item in existing_rule_ids),
+                    "ALLERGY_CONFLICT",
+                }
+            )
+            decision["importance"]["protected"] = True
+            decision["review_state"] = "review_required"
+        provenance_ready = (
+            pointer.anchor_state == "resolved"
+            and not pointer.review_required
+            and highlight.anchor_state == "resolved"
+            and not highlight.review_required
+        )
+        current_priority_ready = bool(
+            provenance_ready
+            and highlight.current_priority_eligible
+            and not highlight.support_review_required
+            and highlight.support_state != "superseded"
+        )
+        current_confidence_state, current_confidence_reasons = (
+            public_confidence_projection(confidence_qualification)
         )
         card: dict[str, object] = {
             "highlight_id": str(highlight.id),
@@ -1387,44 +1794,146 @@ def rebuild_glance(
                 highlight.id,
                 highlight.label_ciphertext,
             ),
-            "critical": highlight.critical,
+            # Conflict severity is a current projection. The persisted anchor's
+            # critical flag remains immutable while an active source-linked
+            # critical ConflictCase can still surface this card as Critical.
+            "critical": effective_critical,
             "pinned": highlight.pinned,
             # This is an effective projection, not a copy of the original
             # highlight flag. Withdrawing the current Entry immediately makes
             # its immutable source unsuitable for patients.
             "patient_facing": currently_patient_facing,
-            "risk_reason": highlight.risk_reason,
+            "risk_reason": (
+                normalize_risk_reason("unresolved")
+                if conflict_critical
+                else normalize_risk_reason(highlight.risk_reason)
+            ),
             "score_components": score_components.get(highlight.id, {}),
             "provenance_pointer_id": str(pointer.id),
+            "support_state": highlight.support_state,
+            "support_review_required": highlight.support_review_required,
+            "current_priority_eligible": current_priority_ready,
+            "current_confidence_state": current_confidence_state,
+            "current_confidence_reasons": current_confidence_reasons,
+            "fallback_kind": ("rule_derived" if rule_derived else None),
             **decision,
         }
-        review_state = assessment_review_state(assessment, highlight)
-        if review_state == "ready" and len(cards) < 5:
+        review_state = assessment_review_state(
+            assessment, highlight, confidence_qualification
+        )
+        promoted = highlight.status == "accepted" or highlight.pinned
+        ordinary_eligible = bool(
+            not protected
+            and promoted
+            and review_state == "ready"
+            and current_priority_ready
+        )
+        if ordinary_eligible:
+            current_priority_rank += 1
+        else:
+            clinical_review_rank += 1
+        displayed_in_priorities = ordinary_eligible and len(cards) < 5
+        displayed_in_review = not ordinary_eligible
+        selected_surface = (
+            "clinical_review" if displayed_in_review else "current_priorities"
+        )
+        selected_rank = (
+            clinical_review_rank if displayed_in_review else current_priority_rank
+        )
+        displayed = displayed_in_priorities or displayed_in_review
+        candidate_counts[selected_surface][
+            "protected" if protected else "ordinary"
+        ] += 1
+        if displayed:
+            candidate_counts[selected_surface]["displayed"] += 1
+        session.add(
+            ImportanceCandidateExposure(
+                clinic_id=context.clinic_id,
+                patient_id=patient_id,
+                highlight_id=highlight.id,
+                viewer_membership_id=context.membership.id,
+                view_event_id=candidate_set_id,
+                candidate_set_id=candidate_set_id,
+                rank=max(1, selected_rank),
+                surface=selected_surface,
+                feature_keys_json=highlight.feature_keys_json,
+                shadow_score=highlight.final_score,
+                protected=protected,
+                displayed=displayed,
+                exposure_probability=1.0 if displayed else 0.0,
+                observed_at=observed_at,
+            )
+        )
+        if displayed_in_priorities:
             cards.append(card)
         # Patient eligibility is applied before the independent top-five cut;
         # high-scoring internal cards therefore cannot crowd out a sixth public
         # candidate from the patient projection.
-        if (
-            review_state == "ready"
-            and currently_patient_facing
-            and len(patient_cards) < 5
-        ):
+        if ordinary_eligible and currently_patient_facing and len(patient_cards) < 5:
             patient_cards.append(
                 {
                     "highlight_id": card["highlight_id"],
                     "label": card["label"],
                     "patient_facing": True,
                     "provenance_pointer_id": card["provenance_pointer_id"],
+                    "support_state": highlight.support_state,
                 }
             )
-        if review_state != "ready" and len(review_cards) < 20:
+        if displayed_in_review:
             review_cards.append(card)
-    snapshot = session.exec(
-        select(PatientGlanceSnapshot).where(
-            PatientGlanceSnapshot.clinic_id == context.clinic_id,
-            PatientGlanceSnapshot.patient_id == patient_id,
+    current_priority_candidates = (
+        candidate_counts["current_priorities"]["protected"]
+        + candidate_counts["current_priorities"]["ordinary"]
+    )
+    clinical_review_candidates = (
+        candidate_counts["clinical_review"]["protected"]
+        + candidate_counts["clinical_review"]["ordinary"]
+    )
+    session.add(
+        ImportanceCandidateSet(
+            clinic_id=context.clinic_id,
+            patient_id=patient_id,
+            viewer_membership_id=context.membership.id,
+            candidate_set_id=candidate_set_id,
+            total_candidate_count=(
+                current_priority_candidates + clinical_review_candidates
+            ),
+            current_priorities_candidate_count=current_priority_candidates,
+            clinical_review_candidate_count=clinical_review_candidates,
+            current_priorities_protected_candidate_count=candidate_counts[
+                "current_priorities"
+            ]["protected"],
+            current_priorities_ordinary_candidate_count=candidate_counts[
+                "current_priorities"
+            ]["ordinary"],
+            clinical_review_protected_candidate_count=candidate_counts[
+                "clinical_review"
+            ]["protected"],
+            clinical_review_ordinary_candidate_count=candidate_counts[
+                "clinical_review"
+            ]["ordinary"],
+            protected_candidate_count=(
+                candidate_counts["current_priorities"]["protected"]
+                + candidate_counts["clinical_review"]["protected"]
+            ),
+            ordinary_candidate_count=(
+                candidate_counts["current_priorities"]["ordinary"]
+                + candidate_counts["clinical_review"]["ordinary"]
+            ),
+            current_priorities_displayed_count=candidate_counts["current_priorities"][
+                "displayed"
+            ],
+            clinical_review_displayed_count=candidate_counts["clinical_review"][
+                "displayed"
+            ],
+            displayed_count=(
+                candidate_counts["current_priorities"]["displayed"]
+                + candidate_counts["clinical_review"]["displayed"]
+            ),
+            observed_at=observed_at,
         )
-    ).first()
+    )
+    snapshot = existing_snapshot
     if snapshot is None:
         snapshot = PatientGlanceSnapshot(
             clinic_id=context.clinic_id,
@@ -1432,6 +1941,10 @@ def rebuild_glance(
             payload_ciphertext=b"pending",
         )
     snapshot.generated_at = get_datetime_utc()
+    snapshot.importance_mode = importance_mode
+    snapshot.importance_qualification_report_id = importance_report_id
+    snapshot.importance_qualification_report_version = importance_report_version
+    snapshot.importance_qualification_expires_at = importance_report_expires_at
     snapshot.payload_ciphertext = field_codec.encrypt_json(
         context.clinic_id,
         "glance.payload",
@@ -1444,6 +1957,41 @@ def rebuild_glance(
     )
     session.add(snapshot)
     return snapshot
+
+
+def requalify_glance_on_read(
+    session: Session,
+    context: RequestContext,
+    patient_id: uuid.UUID,
+) -> PatientGlanceSnapshot:
+    """Refresh trust decisions while preserving the stored snapshot's true age."""
+
+    existing = session.exec(
+        select(PatientGlanceSnapshot).where(
+            PatientGlanceSnapshot.clinic_id == context.clinic_id,
+            PatientGlanceSnapshot.patient_id == patient_id,
+        )
+    ).first()
+    if existing is None:
+        return rebuild_glance(session, context, patient_id)
+    source_state = (
+        existing.generated_at,
+        existing.freshness_state,
+        existing.provider_outage,
+        existing.outage_started_at,
+        existing.fallback_kind,
+    )
+    refreshed = rebuild_glance(session, context, patient_id)
+    (
+        refreshed.generated_at,
+        refreshed.freshness_state,
+        refreshed.provider_outage,
+        refreshed.outage_started_at,
+        refreshed.fallback_kind,
+    ) = source_state
+    session.add(refreshed)
+    session.flush()
+    return refreshed
 
 
 def read_glance(
@@ -1494,4 +2042,7 @@ def read_review_glance(
     cards = payload.get("review_cards", [])
     if not isinstance(cards, list):
         cards = []
-    return cast(list[dict[str, object]], cards[:20]), snapshot.generated_at
+    # Safety review is intentionally independent of the top-five ranking and
+    # has no truncation cap: critical/unresolved/pending-support items may not
+    # disappear because many other candidates exist.
+    return cast(list[dict[str, object]], cards), snapshot.generated_at

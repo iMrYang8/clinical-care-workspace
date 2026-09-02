@@ -11,13 +11,15 @@ import {
   WifiOff,
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { MePublic } from "@/client"
+import type { MePublic, VoiceSessionCreate, VoiceSessionPublic } from "@/client"
 import { VoiceService } from "@/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { clinicalApi, type ProvisionalSafetyAlert } from "@/features/api"
 import {
   recordingCodeFromSessionId,
   sessionIdFromRecordingCode,
@@ -59,6 +61,96 @@ type VoiceCaptureProps = {
   onFinalized?: (sessionId: string) => void
 }
 
+export const LIVE_SAFETY_ALERT_POLL_MS = 2_000
+
+export function ProvisionalSafetyAlertPanel({
+  alerts,
+  viewerRole,
+  busyAlertId,
+  onReview,
+}: {
+  alerts: ProvisionalSafetyAlert[]
+  viewerRole: MePublic["role"]
+  busyAlertId?: string
+  onReview: (
+    alert: ProvisionalSafetyAlert,
+    action: "confirm" | "dismiss",
+  ) => void | Promise<void>
+}) {
+  const pending = alerts.filter((alert) => alert.state === "pending")
+  if (pending.length === 0) return null
+  return (
+    <section
+      aria-labelledby="live-allergy-alerts"
+      className="space-y-3 rounded-xl border-2 border-critical/50 bg-critical-muted/30 p-4"
+    >
+      <div>
+        <h2
+          className="flex items-center gap-2 font-serif text-lg font-semibold text-critical-muted-foreground"
+          id="live-allergy-alerts"
+        >
+          <AlertTriangle /> Provisional live allergy alerts
+        </h2>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          Detected from a completed live segment. This remains a provisional
+          alert until a clinician confirms it; uncertain or unsupported language
+          never becomes “no allergy.”
+        </p>
+      </div>
+      {pending.map((alert) => (
+        <article
+          className="space-y-2 rounded-lg border bg-card p-3"
+          data-testid={`live-safety-alert-${alert.id}`}
+          key={alert.id}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="font-semibold">
+                {alert.concept_code.replace(/^allergy:/, "") ||
+                  "Possible allergy statement"}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                Completed segment {alert.source_event_id} · source span{" "}
+                {alert.source_start_offset}–{alert.source_end_offset}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              <Badge variant="destructive">{alert.severity}</Badge>
+              <Badge variant="outline">{alert.source_language}</Badge>
+              <Badge variant="outline">
+                {alert.polarity} · {alert.assertion_scope.replace(/_/g, " ")}
+              </Badge>
+            </div>
+          </div>
+          {viewerRole === "clinician" ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={busyAlertId === alert.id}
+                onClick={() => onReview(alert, "confirm")}
+                size="sm"
+              >
+                <CheckCircle2 /> Confirm clinical fact
+              </Button>
+              <Button
+                disabled={busyAlertId === alert.id}
+                onClick={() => onReview(alert, "dismiss")}
+                size="sm"
+                variant="outline"
+              >
+                Dismiss provisional alert
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm font-medium text-critical-muted-foreground">
+              A clinician must confirm or dismiss this alert.
+            </p>
+          )}
+        </article>
+      ))}
+    </section>
+  )
+}
+
 function browserDeviceId(): string {
   const key = "nightingale_voice_browser_device_id"
   const existing = localStorage.getItem(key)
@@ -87,6 +179,9 @@ export function VoiceCapture({
   >("idle")
   const [existingSessionId, setExistingSessionId] = useState("")
   const [activeSessionId, setActiveSessionId] = useState<string>()
+  const [remoteAudioConsent, setRemoteAudioConsent] = useState(false)
+  const [sessionAudioConsent, setSessionAudioConsent] =
+    useState<VoiceSessionPublic>()
   const [captureId, setCaptureId] = useState<string>()
   const [permission, setPermission] = useState<
     "unknown" | "granted" | "denied"
@@ -104,6 +199,8 @@ export function VoiceCapture({
   const [message, setMessage] = useState<string>()
   const [liveStatus, setLiveStatus] = useState<LiveCaptionStatus>("not_started")
   const [provisionalTranscript, setProvisionalTranscript] = useState("")
+  const [safetyAlerts, setSafetyAlerts] = useState<ProvisionalSafetyAlert[]>([])
+  const [busyAlertId, setBusyAlertId] = useState<string>()
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -251,6 +348,50 @@ export function VoiceCapture({
     }
   }, [captureId, refreshRecovery, scheduleFlush])
 
+  const refreshSafetyAlerts = useCallback(async (sessionId: string) => {
+    try {
+      const alerts = await clinicalApi.liveSafetyAlerts(sessionId)
+      if (mountedRef.current) setSafetyAlerts(alerts)
+    } catch {
+      // Live safety detection is an additional review channel. Recording and
+      // the durable post-visit analysis continue if this poll is interrupted.
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!activeSessionId || (state !== "recording" && state !== "finalizing"))
+      return
+    void refreshSafetyAlerts(activeSessionId)
+    const timer = window.setInterval(
+      () => void refreshSafetyAlerts(activeSessionId),
+      LIVE_SAFETY_ALERT_POLL_MS,
+    )
+    return () => window.clearInterval(timer)
+  }, [activeSessionId, refreshSafetyAlerts, state])
+
+  const reviewSafetyAlert = async (
+    alert: ProvisionalSafetyAlert,
+    action: "confirm" | "dismiss",
+  ) => {
+    if (role !== "clinician") return
+    setBusyAlertId(alert.id)
+    try {
+      if (action === "confirm")
+        await clinicalApi.confirmLiveSafetyAlert(alert.id)
+      else await clinicalApi.dismissLiveSafetyAlert(alert.id)
+      if (activeSessionId) await refreshSafetyAlerts(activeSessionId)
+      setMessage(
+        action === "confirm"
+          ? "Allergy alert confirmed as a clinical fact."
+          : "Provisional allergy alert dismissed with its source retained.",
+      )
+    } catch {
+      setMessage("The provisional allergy alert could not be reviewed.")
+    } finally {
+      setBusyAlertId(undefined)
+    }
+  }
+
   useEffect(() => {
     mountedRef.current = true
     return () => {
@@ -298,6 +439,7 @@ export function VoiceCapture({
     setMessage(undefined)
     setLiveStatus("not_started")
     setProvisionalTranscript("")
+    setSessionAudioConsent(undefined)
     let joinedSessionId: string | undefined
     let joinedDeviceId: string | undefined
     let localCapturePersisted = false
@@ -319,6 +461,7 @@ export function VoiceCapture({
             "The joined session belongs to a different patient or capture context.",
           )
         }
+        setSessionAudioConsent(existing)
         serverSessionId = existing.id
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -331,16 +474,20 @@ export function VoiceCapture({
       const track = stream.getAudioTracks()[0]
       setInputLabel(track?.label || "Microphone permission granted")
       if (!serverSessionId) {
-        serverSessionId = (
+        const body: VoiceSessionCreate = {
+          patient_id: patientId,
+          capture_kind: captureKind,
+          synthetic_fixture: false,
+          fixture_id: null,
+          remote_audio_consent: remoteAudioConsent,
+        }
+        const created = (
           await VoiceService.createSession({
-            body: {
-              patient_id: patientId,
-              capture_kind: captureKind,
-              synthetic_fixture: false,
-              fixture_id: null,
-            },
+            body,
           })
-        ).data.id
+        ).data
+        serverSessionId = created.id
+        setSessionAudioConsent(created)
         if (isStale()) {
           await releaseCaptureHardware()
           return
@@ -429,7 +576,10 @@ export function VoiceCapture({
           if (!isStale()) setProvisionalTranscript((current) => current + text)
         },
         onCompleted: (text) => {
-          if (!isStale()) setProvisionalTranscript(text)
+          if (!isStale()) {
+            setProvisionalTranscript(text)
+            void refreshSafetyAlerts(serverSessionId)
+          }
         },
       }).then((control) => {
         if (isStale()) {
@@ -476,7 +626,6 @@ export function VoiceCapture({
   const stop = async () => {
     const recorder = recorderRef.current
     if (!recorder || !captureId) return
-    startGenerationRef.current += 1
     if (mountedRef.current) {
       setState("finalizing")
       // Provisional text is intentionally ephemeral. Stop displaying it as
@@ -494,6 +643,11 @@ export function VoiceCapture({
       const live = liveTranscriptRef.current
       liveTranscriptRef.current = null
       await live?.commit()
+      if (activeSessionId) await refreshSafetyAlerts(activeSessionId)
+      // commit() waits for the post-commit completed turn (or its bounded
+      // timeout). Only then invalidate the capture callbacks; otherwise the
+      // final completed segment and its safety alert disappear at Stop.
+      startGenerationRef.current += 1
       await releaseCaptureHardware()
       await writeChainRef.current
       if (writeErrorRef.current) throw writeErrorRef.current
@@ -618,7 +772,11 @@ export function VoiceCapture({
               <Input
                 id="existing-session"
                 value={existingSessionId}
-                onChange={(event) => setExistingSessionId(event.target.value)}
+                onChange={(event) => {
+                  const value = event.target.value
+                  setExistingSessionId(value)
+                  if (value.trim()) setRemoteAudioConsent(false)
+                }}
                 placeholder="Enter the recording code"
                 disabled={state !== "idle"}
               />
@@ -628,6 +786,67 @@ export function VoiceCapture({
               </p>
             </div>
           </div>
+
+          <section
+            aria-labelledby="remote-audio-egress-heading"
+            className="space-y-3 rounded-lg border border-ai/30 bg-ai-muted/20 p-4"
+          >
+            <div className="flex items-start gap-3">
+              <Checkbox
+                aria-describedby="remote-audio-egress-description"
+                checked={remoteAudioConsent}
+                disabled={state !== "idle" || Boolean(existingSessionId.trim())}
+                id="remote-audio-egress-consent"
+                onCheckedChange={(checked) =>
+                  setRemoteAudioConsent(checked === true)
+                }
+              />
+              <div className="space-y-1">
+                <Label
+                  className="font-medium leading-5"
+                  htmlFor="remote-audio-egress-consent"
+                  id="remote-audio-egress-heading"
+                >
+                  Allow remote audio processing for this recording
+                </Label>
+                <p
+                  className="text-sm leading-6 text-muted-foreground"
+                  id="remote-audio-egress-description"
+                >
+                  Optional PHI-bearing egress. Local ASR remains the default and
+                  does not require this consent. Remote audio is used only when
+                  this session consent and clinic policy are both enabled.
+                </p>
+              </div>
+            </div>
+            <div aria-live="polite" className="flex flex-wrap gap-2">
+              {sessionAudioConsent?.remote_audio_consent_recorded ? (
+                <Badge className="bg-review-required-muted text-review-required-muted-foreground">
+                  Consent recorded · clinic policy still controls remote use
+                </Badge>
+              ) : existingSessionId.trim() && !sessionAudioConsent ? (
+                <Badge variant="outline">
+                  Existing session policy will be checked when you join
+                </Badge>
+              ) : remoteAudioConsent ? (
+                <Badge className="bg-review-required-muted text-review-required-muted-foreground">
+                  Consent selected · clinic policy is still required
+                </Badge>
+              ) : (
+                <Badge variant="outline">
+                  Local ASR only · remote audio consent not recorded
+                </Badge>
+              )}
+              {sessionAudioConsent?.remote_audio_consent_at && (
+                <Badge variant="outline">
+                  Consent recorded{" "}
+                  {new Date(
+                    sessionAudioConsent.remote_audio_consent_at,
+                  ).toLocaleString()}
+                </Badge>
+              )}
+            </div>
+          </section>
 
           <div className="rounded-lg border bg-muted/40 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -707,6 +926,13 @@ export function VoiceCapture({
               )}
             </div>
           )}
+
+          <ProvisionalSafetyAlertPanel
+            alerts={safetyAlerts}
+            busyAlertId={busyAlertId}
+            onReview={reviewSafetyAlert}
+            viewerRole={role}
+          />
 
           <div className="flex flex-wrap items-center gap-3">
             {state === "recording" ? (

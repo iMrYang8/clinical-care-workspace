@@ -96,7 +96,16 @@ async function api<T = Record<string, unknown>>(
 async function patientAndTimeline(page: Page, displayName = "Alex Tan") {
   const patients = await api<{ data: Patient[] }>(
     page,
-    `/api/v1/patients?search=${encodeURIComponent(displayName)}&limit=100`,
+    "/api/v1/patients/search",
+    {
+      body: {
+        limit: 100,
+        offset: 0,
+        search: displayName,
+        visit_scope: "all",
+      },
+      method: "POST",
+    },
   )
   expect(patients.status).toBe(200)
   const patient = patients.body.data.find(
@@ -247,7 +256,7 @@ test("[Scenario A] Glance opens the exact immutable timeline span", async ({
   ).toHaveCount(1)
 })
 
-test("[Scenario B] collaboration, immutable diff/revert, audit and learning are demonstrable", async ({
+test("[Scenario B] collaboration, immutable diff/revert, audit and shadow-learning safety are demonstrable", async ({
   page,
 }, testInfo) => {
   await login(page, "Care staff")
@@ -396,8 +405,10 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
     })
 
   // Two independently persisted, non-critical priorities share a bounded
-  // feature. A finally block removes them after every repeat without weakening
-  // protected-priority behavior. Pinning the source must lift the peer score.
+  // feature. In the default shadow mode, pinning records feedback and moves the
+  // selected item into the protected review queue without changing peer
+  // weights. Teardown rejects ordinary fixtures but never weakens a protection
+  // merely to make cleanup easier.
   const learningRun = `${testInfo.repeatEachIndex}_${Date.now()}`
   const featureKey = `entry_type:medication_review_${testInfo.repeatEachIndex}_${Date.now()}`
   const sourceLabel = `Medication safety priority ${learningRun}`
@@ -470,18 +481,41 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
       cards: Array<{
         highlight_id: string
         label: string
+        pinned: boolean
+        score_components: { final: number; learned: number }
+      }>
+      importance_mode: "active" | "disabled" | "shadow"
+      review_cards: Array<{
+        critical: boolean
+        highlight_id: string
+        label: string
+        pinned: boolean
         score_components: { final: number; learned: number }
       }>
     }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
+    expect(beforeGlance.body.importance_mode).toBe("shadow")
     const peerBefore = beforeGlance.body.cards.find(
       (card) => card.highlight_id === peerHighlightId,
     )
     expect(peerBefore).toBeDefined()
 
-    const seededCritical = beforeGlance.body.cards.find(
+    const seededCritical = beforeGlance.body.review_cards.find(
       (card) => card.label === "Fall risk remains elevated",
     )
-    expect(seededCritical).toBeDefined()
+    expect(seededCritical).toMatchObject({ critical: true })
+    expect(
+      beforeGlance.body.cards.some(
+        (card) => card.highlight_id === seededCritical?.highlight_id,
+      ),
+    ).toBe(false)
+    const protectedReviewQueue = page.locator('[data-slot="card"]').filter({
+      has: page.getByRole("heading", { name: "Needs clinical review" }),
+    })
+    await expect(
+      protectedReviewQueue.getByText("Fall risk remains elevated", {
+        exact: true,
+      }),
+    ).toBeVisible()
     const protectedReject = await api<{ detail: { code: string } }>(
       page,
       `/api/v1/highlights/${seededCritical?.highlight_id}/reject`,
@@ -507,34 +541,32 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
     await expect
       .poll(async () => {
         const glance = await api<{
-          cards: Array<{
+          review_cards: Array<{
             highlight_id: string
-            score_components: { final: number; learned: number }
+            pinned: boolean
           }>
         }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
-        return (
-          glance.body.cards.find(
-            (card) => card.highlight_id === peerHighlightId,
-          )?.score_components.learned ?? Number.NEGATIVE_INFINITY
-        )
+        return glance.body.review_cards.find(
+          (card) => card.highlight_id === sourceHighlightId,
+        )?.pinned
       })
-      .toBeGreaterThan(
-        peerBefore?.score_components.learned ?? Number.POSITIVE_INFINITY,
-      )
+      .toBe(true)
     const afterGlance = await api<{
       cards: Array<{
         highlight_id: string
         score_components: { final: number; learned: number }
       }>
+      importance_mode: "active" | "disabled" | "shadow"
     }>(page, `/api/v1/patients/${initialData.patient.id}/glance`)
     const peerAfter = afterGlance.body.cards.find(
       (card) => card.highlight_id === peerHighlightId,
     )
-    expect(peerAfter?.score_components.learned).toBeGreaterThan(
-      peerBefore?.score_components.learned ?? Number.POSITIVE_INFINITY,
+    expect(afterGlance.body.importance_mode).toBe("shadow")
+    expect(peerAfter?.score_components.learned).toBe(
+      peerBefore?.score_components.learned,
     )
-    expect(peerAfter?.score_components.final).toBeGreaterThan(
-      peerBefore?.score_components.final ?? Number.POSITIVE_INFINITY,
+    expect(peerAfter?.score_components.final).toBe(
+      peerBefore?.score_components.final,
     )
     expect(
       afterGlance.body.cards.findIndex(
@@ -543,7 +575,7 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
     ).toBeLessThan(5)
   } finally {
     for (const highlightId of createdHighlightIds) {
-      const rejected = await api(
+      const rejected = await api<{ detail?: { code?: string } }>(
         page,
         `/api/v1/highlights/${highlightId}/reject`,
         {
@@ -551,7 +583,13 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
           method: "POST",
         },
       )
-      expect(rejected.status).toBe(200)
+      if (rejected.status === 409) {
+        expect(rejected.body.detail?.code).toBe(
+          "PROTECTED_PRIORITY_REQUIRES_CLINICIAN_RESOLUTION",
+        )
+      } else {
+        expect(rejected.status).toBe(200)
+      }
     }
   }
 
@@ -564,6 +602,7 @@ test("[Scenario B] collaboration, immutable diff/revert, audit and learning are 
   ).toBeVisible()
   await expect(page.getByText("Activity log", { exact: true })).toBeVisible()
   await expect(page.getByText("Earlier note restored").first()).toBeVisible()
+  await expect(page.getByText("Priority pinned").first()).toBeVisible()
   await expect(page.getByText("Medication list reviewed during")).toHaveCount(0)
 })
 

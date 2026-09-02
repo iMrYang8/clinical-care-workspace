@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from app.services.voice.language import (
+    AddressableLanguageSpan,
+    validate_addressable_language_spans,
+)
+
 
 @dataclass(frozen=True)
 class TranscriptSegmentResult:
@@ -17,6 +22,17 @@ class TranscriptSegmentResult:
     overlap_group_id: str | None
     text_start: int | None = None
     text_end: int | None = None
+    # `detected_language` is retained for provider compatibility. These fields
+    # preserve the source-language claim separately from ASR word confidence.
+    source_language: str | None = None
+    language_confidence: float | None = None
+    # All intersecting diarization speakers remain addressable. `speaker_id`
+    # is the compatibility primary (largest measured overlap), never the only
+    # evidence when simultaneous speakers were detected.
+    speaker_ids: tuple[str, ...] = ()
+    # Complete segment-relative intervals preserve code-switches without
+    # rewriting or splitting the immutable source text.
+    language_spans: tuple[AddressableLanguageSpan, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -55,6 +71,21 @@ def validate_transcript_result(result: TranscriptResult) -> TranscriptResult:
         previous_end_ms = max(previous_end_ms, segment.end_ms)
         if segment.confidence is not None and not 0 <= segment.confidence <= 1:
             raise ValueError("segment confidence must be between zero and one")
+        if (
+            segment.language_confidence is not None
+            and not 0 <= segment.language_confidence <= 1
+        ):
+            raise ValueError("language confidence must be between zero and one")
+        if any(not item.strip() for item in segment.speaker_ids):
+            raise ValueError("speaker identifiers must not be empty")
+        if len(set(segment.speaker_ids)) != len(segment.speaker_ids):
+            raise ValueError("speaker identifiers must be unique")
+        if segment.speaker_id is not None and segment.speaker_ids:
+            if segment.speaker_id not in segment.speaker_ids:
+                raise ValueError(
+                    "primary speaker must be retained in speaker identifiers"
+                )
+        validate_addressable_language_spans(segment.text, segment.language_spans)
         start = segment.text_start
         end = segment.text_end
         if (start is None) != (end is None):

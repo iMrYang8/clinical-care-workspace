@@ -24,7 +24,7 @@ from app.models import (
 )
 from app.seed import demo_id, seed_demo_data
 from app.services.decay import list_decay_candidates
-from app.services.nightingale import read_glance, rebuild_glance
+from app.services.nightingale import read_glance, read_review_glance, rebuild_glance
 
 
 def test_full_demo_fixture_is_idempotent_and_covers_delivery_scenarios(
@@ -32,6 +32,27 @@ def test_full_demo_fixture_is_idempotent_and_covers_delivery_scenarios(
 ) -> None:
     seed_demo_data(owner_session)
     seed_demo_data(owner_session)
+
+    persona_kinds: dict[str, str] = {}
+    for persona in (
+        "patient",
+        "staff",
+        "clinician",
+        "admin",
+        "worker",
+        "other_staff",
+    ):
+        user = owner_session.get(User, demo_id(f"user-{persona}"))
+        assert user is not None
+        persona_kinds[persona] = user.account_kind
+    assert persona_kinds == {
+        "patient": "patient",
+        "staff": "staff",
+        "clinician": "staff",
+        "admin": "staff",
+        "worker": "service",
+        "other_staff": "staff",
+    }
 
     entries = owner_session.exec(
         select(Entry).where(Entry.clinic_id == demo_id("clinic-primary"))
@@ -69,16 +90,18 @@ def test_full_demo_fixture_is_idempotent_and_covers_delivery_scenarios(
     snapshot = owner_session.get(PatientGlanceSnapshot, demo_id("glance-primary"))
     assert snapshot is not None
     cards, _ = read_glance(snapshot)
-    assert 3 <= len(cards) <= 5
-    assert all(card["provenance_pointer_id"] for card in cards)
-    assert any(card["critical"] for card in cards)
+    review_cards, _ = read_review_glance(snapshot)
+    assert len(cards) == 1
+    assert len(review_cards) == 3
+    assert all(card["provenance_pointer_id"] for card in [*cards, *review_cards])
+    assert any(card["critical"] for card in review_cards)
     ai_review = owner_session.get(Highlight, demo_id("highlight-ai-doctor-review"))
     assert ai_review is not None
     ai_source = owner_session.get(Entry, ai_review.entry_id)
     assert ai_source is not None
     assert ai_source.origin == "ai"
     assert ai_source.entry_type == "ai_doctor_consult_summary"
-    assert str(ai_review.id) in {card["highlight_id"] for card in cards}
+    assert str(ai_review.id) in {card["highlight_id"] for card in review_cards}
 
     assert owner_session.get(Comment, demo_id("comment-clinician-assignment"))
     assert owner_session.get(CommentMention, demo_id("comment-mention-clinician"))
@@ -255,9 +278,12 @@ def test_longitudinal_patient_fixture_is_visible_source_linked_and_collaborative
     snapshot = owner_session.get(PatientGlanceSnapshot, demo_id("glance-decay"))
     assert snapshot is not None
     cards, _ = read_glance(snapshot)
-    assert len(cards) == 5
-    assert any("AI-scribed handover" in str(card["label"]) for card in cards)
-    assert all(card["provenance_pointer_id"] for card in cards)
+    review_cards, _ = read_review_glance(snapshot)
+    assert cards == []
+    # The safety-review surface is intentionally not top-five capped.
+    assert len(review_cards) > 5
+    assert any("AI-scribed handover" in str(card["label"]) for card in review_cards)
+    assert all(card["provenance_pointer_id"] for card in review_cards)
 
     assert owner_session.get(Comment, demo_id("comment-jordan-hydration-conflict"))
     assert owner_session.get(
@@ -323,8 +349,10 @@ def test_other_clinic_fixture_has_independent_realistic_patient_records(
             )
         ).one()
         cards, _ = read_glance(snapshot)
-        assert cards
-        assert all(card["provenance_pointer_id"] for card in cards)
+        review_cards, _ = read_review_glance(snapshot)
+        visible_cards = [*cards, *review_cards]
+        assert visible_cards
+        assert all(card["provenance_pointer_id"] for card in visible_cards)
 
 
 def test_other_clinic_examples_are_visible_only_through_other_clinic_login(
@@ -342,8 +370,9 @@ def test_other_clinic_examples_are_visible_only_through_other_clinic_login(
     )
     assert other_login.status_code == 200, other_login.text
     other_token = other_login.json()["access_token"]
-    other_patients = client.get(
-        "/api/v1/patients/?search=Taylor%20Lee",
+    other_patients = client.post(
+        "/api/v1/patients/search",
+        json={"search": "Taylor Lee", "limit": 50},
         headers={"Authorization": f"Bearer {other_token}"},
     )
     assert other_patients.status_code == 200, other_patients.text
@@ -361,8 +390,9 @@ def test_other_clinic_examples_are_visible_only_through_other_clinic_login(
     )
     assert primary_login.status_code == 200, primary_login.text
     primary_token = primary_login.json()["access_token"]
-    primary_patients = client.get(
-        "/api/v1/patients/?search=Taylor%20Lee",
+    primary_patients = client.post(
+        "/api/v1/patients/search",
+        json={"search": "Taylor Lee", "limit": 50},
         headers={"Authorization": f"Bearer {primary_token}"},
     )
     assert primary_patients.status_code == 200, primary_patients.text
@@ -401,8 +431,10 @@ def test_patient_directory_search_pagination_and_same_name_warning(
     assert previous.status_code == 200, previous.text
     assert previous.json()["count"] == page.json()["count"] - today.json()["count"]
     assert all(item["today_visit_at"] is None for item in previous.json()["data"])
-    duplicate_name = client.get(
-        "/api/v1/patients/?search=Jamie%20Tan&limit=100", headers=headers
+    duplicate_name = client.post(
+        "/api/v1/patients/search",
+        json={"search": "Jamie Tan", "limit": 100},
+        headers=headers,
     )
     assert duplicate_name.status_code == 200
     assert duplicate_name.json()["count"] == 2

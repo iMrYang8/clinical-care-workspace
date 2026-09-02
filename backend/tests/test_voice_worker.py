@@ -23,12 +23,15 @@ from app.core.field_crypto import field_codec
 from app.core.security import create_access_token
 from app.models import (
     AudioAsset,
+    AudioChunk,
     ClinicalFact,
     ClinicMembership,
+    ClinicOperationalSetting,
     Job,
     JobAttempt,
     ProvenancePointer,
     TranscriptRevision,
+    TranscriptSegment,
     User,
     VoiceSession,
     get_datetime_utc,
@@ -248,17 +251,43 @@ def test_synthetic_worker_persists_normalized_review_and_is_idempotent(
     assert status.json()["state"] == "needs_review"
     assert status.json()["live_transcript_status"] == "replaced"
     assert status.json()["live_transcript_reason_code"] is None
+    status_quality = status.json()["audio_quality"]
+    assert status.json()["audio_quality_unavailable_reason"] is None
+    assert status_quality["measurement_stage"] == "decoded-pre-normalization"
+    assert status_quality["processing_chain_version"] == (
+        "nightingale-voice-working-copy-v1"
+    )
+    assert status_quality["denoise_applied"] is True
+    assert "device_signals" not in status_quality
+    assert "normalized_output_signals" not in status_quality
+    assert "denoise_filter" not in status_quality
     transcript = client.get(
         f"/api/v1/voice/sessions/{session_id}/transcript", headers=headers
     )
     assert transcript.status_code == 200, transcript.text
     body = transcript.json()
+    assert body["audio_quality"] == status_quality
+    assert body["audio_quality_unavailable_reason"] is None
     assert body["provider"] == "deterministic-synthetic-fixture"
     assert [item["speaker_id"] for item in body["segments"]] == [
         "SPEAKER_00",
         "SPEAKER_01",
     ]
     assert {item["detected_language"] for item in body["segments"]} == {"en", "zh"}
+    assert [
+        [span["language_code"] for span in item["language_spans"]]
+        for item in body["segments"]
+    ] == [["en"], ["zh"]]
+    assert all(
+        item["text"][span["start_offset"] : span["end_offset"]] == item["text"]
+        for item in body["segments"]
+        for span in item["language_spans"]
+    )
+    assert {
+        span["detection_source"]
+        for item in body["segments"]
+        for span in item["language_spans"]
+    } == {"lexicon_and_provider"}
     assert body["segments"][1]["overlap_group_id"] == "overlap-1"
     assert body["facts"][0]["exact_quote"] == "penicillin allergy"
     audio = client.get(f"/api/v1/voice/sessions/{session_id}/audio", headers=headers)
@@ -343,9 +372,10 @@ def test_provider_disabled_retains_encrypted_audio_without_fake_transcript(
 
     async def restored_provider(
         *_args: object, **_kwargs: object
-    ) -> tuple[TranscriptResult, None]:
+    ) -> tuple[TranscriptResult, None, None]:
         return (
             SyntheticFixtureProvider().transcribe_fixture("code-switch-overlap-v1"),
+            None,
             None,
         )
 
@@ -380,11 +410,12 @@ def test_worker_revocation_during_asr_fences_all_derived_writes(
 
     async def delayed_provider(
         *_args: object, **_kwargs: object
-    ) -> tuple[TranscriptResult, None]:
+    ) -> tuple[TranscriptResult, None, None]:
         provider_entered.set()
         await release_provider.wait()
         return (
             SyntheticFixtureProvider().transcribe_fixture("code-switch-overlap-v1"),
+            None,
             None,
         )
 
@@ -495,7 +526,7 @@ def test_out_of_bounds_provider_time_never_becomes_fact_provenance(
 
     async def out_of_bounds_provider(
         *_args: object, **_kwargs: object
-    ) -> tuple[TranscriptResult, None]:
+    ) -> tuple[TranscriptResult, None, None]:
         return (
             validate_transcript_result(
                 TranscriptResult(
@@ -530,6 +561,7 @@ def test_out_of_bounds_provider_time_never_becomes_fact_provenance(
                     model="outside-audio-v1",
                 )
             ),
+            None,
             None,
         )
 
@@ -670,10 +702,29 @@ def test_invalid_encrypted_voice_payload_still_terminalizes_attempt(
         assert retryable_job is not None and retryable_session is not None
         assert retryable_job.state == "failed"
         assert retryable_job.attempt_count == 1
-        assert retryable_session.state == "finalizing"
+        assert retryable_job.next_run_at is None
+        assert retryable_session.state == "needs_review"
+        assert retryable_session.error_code == "VOICE_JOB_FAILED"
+        encrypted_chunk = db.exec(
+            select(AudioChunk).where(AudioChunk.session_id == session_uuid)
+        ).one()
+        assert encrypted_chunk.payload_ciphertext[:1] == b"\x01"
 
-    _run_job(job_id)
-    _run_job(job_id)
+    # A permanent/malformed failure has no scheduled retry and cannot spin in
+    # the poller. Each further attempt requires an explicit clinical action.
+    with pytest.raises(HTTPException) as not_claimable:
+        _run_job(job_id)
+    assert not_claimable.value.detail == {"code": "JOB_NOT_CLAIMABLE"}
+
+    for expected_attempt in range(2, 7):
+        retried = client.post(f"/api/v1/jobs/{job_id}/retry", headers=clinician)
+        assert retried.status_code == 200, retried.text
+        assert retried.json()["state"] == "pending"
+        _run_job(job_id)
+        with Session(engine) as db:
+            failed = db.get(Job, job_uuid)
+            assert failed is not None
+            assert failed.attempt_count == expected_attempt
 
     with Session(engine) as db:
         terminal_job = db.get(Job, job_uuid)
@@ -681,12 +732,240 @@ def test_invalid_encrypted_voice_payload_still_terminalizes_attempt(
         assert terminal_job is not None and terminal_session is not None
         assert terminal_job.state == "failed"
         assert terminal_job.error_code == "VOICE_JOB_FAILED"
-        assert terminal_job.attempt_count == terminal_job.max_attempts == 3
+        assert terminal_job.attempt_count == terminal_job.max_attempts == 6
         assert terminal_session.state == "needs_review"
         assert terminal_session.error_code == "VOICE_JOB_FAILED"
         assert "VOICE_WORKER_ATTEMPTS_EXHAUSTED" in (
             terminal_session.warning_codes_json
         )
+
+
+def test_code_switched_language_spans_persist_and_survive_api_reload(
+    client: TestClient, auth_headers
+) -> None:
+    clinician = auth_headers("clinician")
+    _patient_id, session_id, job_id = _create_recording(
+        client, clinician, synthetic_fixture=True
+    )
+    _run_job(job_id)
+    initial = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert initial.status_code == 200, initial.text
+
+    source_text = (
+        "Started metformin 500mg. "
+        "Pesakit mula aspirin 100mg secara oral dua kali sehari."
+    )
+    corrected = client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript/correct",
+        headers=clinician,
+        json={
+            "expected_revision_id": initial.json()["id"],
+            "text": source_text,
+        },
+    )
+    assert corrected.status_code == 201, corrected.text
+    segment = corrected.json()["segments"][0]
+    assert segment["text"] == source_text
+    assert segment["source_language"] == "und"
+    assert [span["language_code"] for span in segment["language_spans"]] == [
+        "en",
+        "ms",
+    ]
+    assert [
+        source_text[span["start_offset"] : span["end_offset"]]
+        for span in segment["language_spans"]
+    ] == [
+        "Started metformin 500mg.",
+        " Pesakit mula aspirin 100mg secara oral dua kali sehari.",
+    ]
+
+    revision_id = uuid.UUID(corrected.json()["id"])
+    with Session(engine) as db:
+        stored = db.exec(
+            select(TranscriptSegment).where(
+                TranscriptSegment.revision_id == revision_id
+            )
+        ).one()
+        assert stored.language_spans_json == segment["language_spans"]
+        assert (
+            field_codec.decrypt_text(
+                stored.clinic_id,
+                "transcript_segment.text",
+                stored.id,
+                stored.text_ciphertext,
+            )
+            == source_text
+        )
+
+    reloaded = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert reloaded.status_code == 200, reloaded.text
+    assert reloaded.json()["segments"][0] == segment
+
+
+def test_clinic_language_policy_fails_closed_without_rewriting_code_switch(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    clinician = auth_headers("clinician")
+    patient_id, session_id, job_id = _create_recording(
+        client, clinician, synthetic_fixture=True
+    )
+    _run_job(job_id)
+    initial = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert initial.status_code == 200, initial.text
+
+    operational = owner_session.exec(
+        select(ClinicOperationalSetting).where(
+            ClinicOperationalSetting.clinic_id == demo_id("clinic-primary")
+        )
+    ).one()
+    operational.supported_languages_json = ["en"]
+    owner_session.add(operational)
+    owner_session.commit()
+
+    source_text = (
+        "Patient is allergic to penicillin; "
+        "pesakit alahan kepada amoksisilin; "
+        "tùi aspirin kòe-bín."
+    )
+    corrected = client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript/correct",
+        headers=clinician,
+        json={
+            "expected_revision_id": initial.json()["id"],
+            "text": source_text,
+        },
+    )
+    assert corrected.status_code == 201, corrected.text
+    corrected_body = corrected.json()
+    assert corrected_body["text"] == source_text
+    spans = corrected_body["segments"][0]["language_spans"]
+    assert [item["language_code"] for item in spans] == ["en", "ms", "nan"]
+    assert [item["review_required"] for item in spans] == [False, True, True]
+    assert [
+        source_text[item["start_offset"] : item["end_offset"]] for item in spans
+    ] == [
+        "Patient is allergic to penicillin;",
+        " pesakit alahan kepada amoksisilin;",
+        " tùi aspirin kòe-bín.",
+    ]
+    assert "CLINIC_LANGUAGE_POLICY_REVIEW_REQUIRED" in corrected_body["warning_codes"]
+
+    queued = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "clinic-language-policy-reanalysis"},
+        json={"expected_revision_id": corrected_body["id"]},
+    )
+    assert queued.status_code == 202, queued.text
+    _run_job(queued.json()["job_id"])
+    reviewed = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["text"] == source_text
+    assert {
+        (item["exact_quote"], item["value"])
+        for item in reviewed.json()["facts"]
+        if item["fact_type"] == "allergy"
+    } == {
+        ("allergic to penicillin", "penicillin allergy:present"),
+        ("alahan kepada amoksisilin", "amoxicillin allergy:unknown"),
+        ("tùi aspirin kòe-bín", "aspirin allergy:unknown"),
+    }
+
+    published = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=clinician,
+        json={"expected_revision_id": reviewed.json()["id"]},
+    )
+    assert published.status_code == 200, published.text
+    assertions = client.get(
+        f"/api/v1/patients/{patient_id}/clinical-facts", headers=clinician
+    )
+    assert assertions.status_code == 200, assertions.text
+    voice_assertions = [item for item in assertions.json() if item["origin"] == "voice"]
+    by_language = {item["source_language"]: item for item in voice_assertions}
+    assert by_language["en"]["clinical_status"] == "active"
+    assert by_language["ms"]["clinical_status"] == "review_required"
+    assert by_language["nan"]["clinical_status"] == "review_required"
+
+
+def test_voice_publish_requalifies_current_clinic_language_policy(
+    client: TestClient, auth_headers, owner_session: Session
+) -> None:
+    clinician = auth_headers("clinician")
+    patient_id, session_id, job_id = _create_recording(
+        client, clinician, synthetic_fixture=True
+    )
+    _run_job(job_id)
+    initial = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert initial.status_code == 200, initial.text
+
+    source_text = (
+        "Patient is allergic to penicillin; pesakit alahan kepada amoksisilin."
+    )
+    corrected = client.post(
+        f"/api/v1/voice/sessions/{session_id}/transcript/correct",
+        headers=clinician,
+        json={"expected_revision_id": initial.json()["id"], "text": source_text},
+    )
+    assert corrected.status_code == 201, corrected.text
+    assert [
+        item["review_required"]
+        for item in corrected.json()["segments"][0]["language_spans"]
+    ] == [False, False]
+
+    queued = client.post(
+        f"/api/v1/voice/sessions/{session_id}/reanalyze",
+        headers=clinician | {"Idempotency-Key": "language-policy-publish-recheck"},
+        json={"expected_revision_id": corrected.json()["id"]},
+    )
+    assert queued.status_code == 202, queued.text
+    _run_job(queued.json()["job_id"])
+    reviewed = client.get(
+        f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    assert {
+        (item["exact_quote"], item["value"])
+        for item in reviewed.json()["facts"]
+        if item["fact_type"] == "allergy"
+    } == {
+        ("allergic to penicillin", "penicillin allergy:present"),
+        ("alahan kepada amoksisilin", "amoxicillin allergy:present"),
+    }
+
+    # Policy changes are effective at use time, not only at transcription.
+    operational = owner_session.exec(
+        select(ClinicOperationalSetting).where(
+            ClinicOperationalSetting.clinic_id == demo_id("clinic-primary")
+        )
+    ).one()
+    operational.supported_languages_json = ["en"]
+    owner_session.add(operational)
+    owner_session.commit()
+
+    published = client.post(
+        f"/api/v1/voice/sessions/{session_id}/publish",
+        headers=clinician,
+        json={"expected_revision_id": reviewed.json()["id"]},
+    )
+    assert published.status_code == 200, published.text
+    assertions = client.get(
+        f"/api/v1/patients/{patient_id}/clinical-facts", headers=clinician
+    )
+    assert assertions.status_code == 200, assertions.text
+    voice_assertions = [item for item in assertions.json() if item["origin"] == "voice"]
+    by_language = {item["source_language"]: item for item in voice_assertions}
+    assert by_language["en"]["clinical_status"] == "active"
+    assert by_language["ms"]["clinical_status"] == "review_required"
 
 
 def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
@@ -749,6 +1028,16 @@ def test_correction_marks_stale_reanalysis_restores_provenance_and_publish(
     assert corrected.status_code == 201, corrected.text
     assert corrected.json()["stale"] is True
     assert "DOWNSTREAM_RESULTS_STALE" in corrected.json()["warning_codes"]
+    assert corrected.json()["segments"][0]["language_spans"] == [
+        {
+            "start_offset": 0,
+            "end_offset": len("Patient confirms a penicillin allergy during review."),
+            "language_code": "en",
+            "confidence": None,
+            "detection_source": "lexicon_rule",
+            "review_required": False,
+        }
+    ]
     stale_correction = client.post(
         f"/api/v1/voice/sessions/{session_id}/transcript/correct",
         headers=clinician,
@@ -1051,8 +1340,12 @@ def test_retryable_reanalysis_failure_keeps_cas_barrier_until_auto_retry(
     assert competing.status_code == 409
     assert competing.json()["detail"]["code"] == "VOICE_REANALYSIS_IN_PROGRESS"
 
-    # The normal worker poller claims failed jobs below max_attempts. The next
-    # attempt succeeds without exposing the old revision between attempts.
+    # A generic extraction failure has no durable automatic retry schedule.
+    # The old revision remains fenced until a clinician explicitly retries;
+    # the next attempt then succeeds without exposing it between attempts.
+    retried = client.post(f"/api/v1/jobs/{reanalysis_job_id}/retry", headers=clinician)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["state"] == "pending"
     _run_job(reanalysis_job_id)
     reviewed = client.get(
         f"/api/v1/voice/sessions/{session_id}/transcript", headers=clinician

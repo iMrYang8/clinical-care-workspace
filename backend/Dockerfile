@@ -110,4 +110,6 @@ LABEL org.opencontainers.image.revision=$NIGHTINGALE_SOURCE_COMMIT
 
 WORKDIR /app/backend/
 
-CMD ["fastapi", "run", "--workers", "4"]
+# Uvicorn's standard access format contains the raw request target (including
+# query strings). The application emits its own allowlisted route-name log.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--no-access-log"]

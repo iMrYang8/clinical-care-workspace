@@ -1,166 +1,279 @@
 <?xml version='1.0' encoding='utf-8'?>
-<mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1010" math="0" shadow="0" adaptiveColors="auto" background="#FAF8F3">
-  <root>
-    <mxCell id="0" />
-    <mxCell id="1" parent="0" />
-    <mxCell id="title" value="Nightingale · Trustworthy Clinical Memory" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=26;fontColor=#17324D;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
-      <mxGeometry x="44" y="30" width="1512" height="42" as="geometry" />
-    </mxCell>
-    <mxCell id="subtitle" value="Request-derived tenancy, immutable evidence and optional inference behind a single audited FastAPI boundary" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#607386;fontStyle=0;whiteSpace=wrap;" vertex="1" parent="1">
-      <mxGeometry x="46" y="70" width="1508" height="30" as="geometry" />
-    </mxCell>
-    <mxCell id="exp" value="EXPERIENCE PLANE" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F2F5F4;strokeColor=#D7DEDB;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="44" y="116" width="1512" height="130" as="geometry" />
-    </mxCell>
-    <mxCell id="edge" value="TRUSTED EDGE &amp; API" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EEF5F7;strokeColor=#CADCE4;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="44" y="280" width="1512" height="128" as="geometry" />
-    </mxCell>
-    <mxCell id="services" value="DOMAIN SERVICES" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F5F2FA;strokeColor=#DCD4EB;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="44" y="444" width="1512" height="244" as="geometry" />
-    </mxCell>
-    <mxCell id="infra" value="DATA, WORKERS &amp; PROVIDERS" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F1F5F2;strokeColor=#D3DDD6;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="44" y="724" width="1512" height="220" as="geometry" />
-    </mxCell>
-    <mxCell id="a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="clinician" target="traefik">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="patient_ui" target="traefik">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="admin_ui" target="traefik">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="capture" target="traefik">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a5" value="TLS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="traefik" target="fastapi">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a6" value="derive" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="fastapi" target="scope">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="fastapi" target="care">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="fastapi" target="trust">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="fastapi" target="redaction">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="fastapi" target="voice">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="care" target="collab">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a12" value="rank" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="trust" target="glance">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a13" value="safe text" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="redaction" target="ai">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a14" value="finalize" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="voice" target="events">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="care" target="postgres">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="collab" target="postgres">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="glance" target="postgres">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a18" value="enqueue" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="ai" target="worker">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a19" value="lease" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="events" target="worker">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a20" value="contract" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="worker" target="providers">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a21" value="write" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="worker" target="postgres">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a22" value="cold" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="postgres" target="archive">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a23" value="publish" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="events" target="sse">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="a24" value="invalidate" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="sse" target="clinician">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="clinician" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;Clinician workspace&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Care Note · Review Mode · provenance&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="70" y="158" width="330" height="66" as="geometry" />
-    </mxCell>
-    <mxCell id="patient_ui" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;Patient My Care&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Patient-safe Glance · insight · voice&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="425" y="158" width="330" height="66" as="geometry" />
-    </mxCell>
-    <mxCell id="admin_ui" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;Admin console&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Membership lifecycle · metadata audit&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="780" y="158" width="330" height="66" as="geometry" />
-    </mxCell>
-    <mxCell id="capture" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;Browser voice capture&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;MediaRecorder · WebCrypto · IndexedDB&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1135" y="158" width="395" height="66" as="geometry" />
-    </mxCell>
-    <mxCell id="traefik" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;Traefik&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Local TLS · loopback exposure&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="82" y="321" width="300" height="65" as="geometry" />
-    </mxCell>
-    <mxCell id="fastapi" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;FastAPI /api/v1&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Secure HttpOnly cookie · CSRF/Origin&lt;br&gt;OpenAPI contract · no-store PHI&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="460" y="314" width="390" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="scope" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;Trusted request scope&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;User + ClinicMembership + role&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="928" y="321" width="280" height="65" as="geometry" />
-    </mxCell>
-    <mxCell id="sse" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;SSE event stream&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Last-Event-ID · re-auth per poll&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1266" y="321" width="250" height="65" as="geometry" />
-    </mxCell>
-    <mxCell id="care" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;Care record&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Entries · immutable versions&lt;br&gt;ETag / If-Match · diff · revert&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="72" y="493" width="330" height="86" as="geometry" />
-    </mxCell>
-    <mxCell id="collab" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;Collaboration&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Anchored comments · mentions · tasks&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="72" y="589" width="330" height="70" as="geometry" />
-    </mxCell>
-    <mxCell id="trust" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;Trust &amp; Glance&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Highlights · risk reason · feedback&lt;br&gt;Immutable span/hash provenance&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="438" y="493" width="330" height="86" as="geometry" />
-    </mxCell>
-    <mxCell id="glance" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;Precomputed Glance&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Clinic-scoped top 5 · patient DTO&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="438" y="589" width="330" height="70" as="geometry" />
-    </mxCell>
-    <mxCell id="redaction" value="&lt;b&gt;&lt;font color=&quot;#BE4B5A&quot; style=&quot;font-size:13px&quot;&gt;Fail-closed redaction&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Known aliases + SG recognizers&lt;br&gt;Presidio + residual scan&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#BE4B5A;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="804" y="493" width="330" height="86" as="geometry" />
-    </mxCell>
-    <mxCell id="ai" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;AI extraction pipeline&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Redact → extract → review → publish&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="804" y="589" width="330" height="70" as="geometry" />
-    </mxCell>
-    <mxCell id="voice" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;Voice pipeline&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Chunk seal barrier · FFmpeg&lt;br&gt;transcript → facts → audio anchors&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1170" y="493" width="350" height="86" as="geometry" />
-    </mxCell>
-    <mxCell id="events" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;Jobs &amp; domain events&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Lease/retry/idempotency · audit outbox&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1170" y="589" width="350" height="70" as="geometry" />
-    </mxCell>
-    <mxCell id="postgres" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;PostgreSQL 16&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Restricted non-owner runtime role&lt;br&gt;clinic_id RLS + composite FKs&lt;br&gt;AES-256-GCM field envelopes&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="72" y="772" width="345" height="118" as="geometry" />
-    </mxCell>
-    <mxCell id="worker" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;Workers&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Job claim / lease / attempts&lt;br&gt;snapshot rebuild · decay&lt;br&gt;voice finalization&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="459" y="772" width="300" height="118" as="geometry" />
-    </mxCell>
-    <mxCell id="providers" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;Provider boundary&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Deterministic fixture (default CI)&lt;br&gt;OpenAI text/audio adapters&lt;br&gt;faster-whisper / pyannote gated&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="801" y="772" width="360" height="118" as="geometry" />
-    </mxCell>
-    <mxCell id="archive" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;Durable evidence&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;Audit + immutable provenance&lt;br&gt;zstd + AES-GCM cold archive&lt;br&gt;checksum + rehydrate&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1203" y="772" width="317" height="118" as="geometry" />
-    </mxCell>
-    <mxCell id="legend1" value="trusted boundary" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#E7F5F2;strokeColor=#0F766E;strokeWidth=1.5;fontColor=#0F766E;fontStyle=1;fontSize=12;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1004" y="956" width="145" height="30" as="geometry" />
-    </mxCell>
-    <mxCell id="legend2" value="async / optional" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#F1EBFF;strokeColor=#7C3AED;strokeWidth=1.5;fontColor=#7C3AED;fontStyle=1;fontSize=12;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1160" y="956" width="145" height="30" as="geometry" />
-    </mxCell>
-    <mxCell id="legend3" value="synthetic-data demo only" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#FFF4D6;strokeColor=#B7791F;strokeWidth=1.5;fontColor=#B7791F;fontStyle=1;fontSize=12;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1316" y="956" width="204" height="30" as="geometry" />
-    </mxCell>
-  </root>
-</mxGraphModel>
+<mxfile host="app.diagrams.net" agent="Codex" version="24.7.17" type="device">
+  <diagram id="nightingale-architecture-straight" name="Architecture">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1130" math="0" shadow="0" adaptiveColors="auto" background="#FFFFFF">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Nightingale · Trustworthy Clinical Memory" style="text=;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=26;fontColor=#17324D;fontStyle=1;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="44" y="26" width="1512" height="42" />
+        </mxCell>
+        <mxCell id="subtitle" value="System architecture and trust boundaries" style="text=;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="46" y="68" width="1508" height="24" />
+        </mxCell>
+        <mxCell id="exp" value="EXPERIENCE PLANE" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D7DEDB;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="44" y="120" width="1512" height="130" />
+        </mxCell>
+        <mxCell id="edge" value="TRUSTED EDGE &amp; API" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CADCE4;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="44" y="330" width="1512" height="145" />
+        </mxCell>
+        <mxCell id="services" value="DOMAIN SERVICES" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#DCD4EB;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="44" y="500" width="1512" height="260" />
+        </mxCell>
+        <mxCell id="infra" value="DATA, WORKERS &amp; PROVIDERS" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D3DDD6;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="44" y="820" width="1512" height="250" />
+        </mxCell>
+        <mxCell id="a1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#0F766E;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.545455;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="clinician" target="traefik">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="235" y="258" />
+              <mxPoint x="250" y="258" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#2563EB;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.681818;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="patient_ui" target="traefik">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="590" y="278" />
+              <mxPoint x="295" y="278" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#7C3AED;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.818182;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="admin_ui" target="traefik">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="945" y="298" />
+              <mxPoint x="340" y="298" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#B7791F;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.954545;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="capture" target="traefik">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1332.5" y="318" />
+              <mxPoint x="385" y="318" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#2563EB;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="traefik" target="fastapi">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#0F766E;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fastapi" target="scope">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#0F766E;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.0508475;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fastapi" target="care">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="470" y="480" />
+              <mxPoint x="235" y="480" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#7C3AED;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.262712;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fastapi" target="trust">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#BE4B5A;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.779661;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fastapi" target="redaction">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="900" y="480" />
+              <mxPoint x="955" y="480" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#B7791F;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.974576;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fastapi" target="voice">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1015" y="490" />
+              <mxPoint x="1335" y="490" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#2563EB;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="care" target="collab">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#B7791F;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="trust" target="glance">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#BE4B5A;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="redaction" target="ai">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#B7791F;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="voice" target="events">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#0F766E;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.583333;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="care" target="postgres">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="55" y="586" />
+              <mxPoint x="55" y="775" />
+              <mxPoint x="280" y="775" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#2563EB;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.878788;exitY=1;exitDx=0;exitDy=0;entryX=0.805556;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="collab" target="postgres">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#B7791F;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.0606061;exitY=1;exitDx=0;exitDy=0;entryX=0.944444;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="glance" target="postgres">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="450" y="795" />
+              <mxPoint x="410" y="795" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#7C3AED;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.030303;exitY=1;exitDx=0;exitDy=0;entryX=0.419355;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ai" target="worker">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="800" y="775" />
+              <mxPoint x="600" y="775" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a19" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#2563EB;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.0540541;exitY=1;exitDx=0;exitDy=0;entryX=0.935484;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="events" target="worker">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1170" y="805" />
+              <mxPoint x="760" y="805" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#7C3AED;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=1;fontFamily=Times New Roman;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" edge="1" parent="1" source="worker" target="providers">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a21" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#0F766E;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0;exitY=0.666667;exitDx=0;exitDy=0;entryX=1;entryY=0.666667;entryDx=0;entryDy=0;" edge="1" parent="1" source="worker" target="postgres">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="a22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#B7791F;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="postgres" target="archive">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="250" y="1030" />
+              <mxPoint x="1370" y="1030" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a23" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#B7791F;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;fontFamily=Times New Roman;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="events" target="sse">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1540" y="690" />
+              <mxPoint x="1540" y="410" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;curved=0;orthogonalLoop=1;jettySize=10;html=1;strokeColor=#B7791F;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=1;fontFamily=Times New Roman;exitX=0.857143;exitY=0;exitDx=0;exitDy=0;entryX=0.69697;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="sse" target="clinician">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="1500" y="300" />
+              <mxPoint x="1575" y="300" />
+              <mxPoint x="1575" y="105" />
+              <mxPoint x="300" y="105" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="clinician" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:15px&quot;&gt;Clinician workspace&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Care Note · Review Mode · provenance&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="160" width="330" height="70" />
+        </mxCell>
+        <mxCell id="patient_ui" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:15px&quot;&gt;Patient My Care&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Patient-safe Glance · insight · voice&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="425" y="160" width="330" height="70" />
+        </mxCell>
+        <mxCell id="admin_ui" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:15px&quot;&gt;Admin console&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Membership lifecycle · metadata audit&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="780" y="160" width="330" height="70" />
+        </mxCell>
+        <mxCell id="capture" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:15px&quot;&gt;Browser voice capture&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;MediaRecorder · WebCrypto · IndexedDB&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1135" y="160" width="395" height="70" />
+        </mxCell>
+        <mxCell id="traefik" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:15px&quot;&gt;Traefik&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Local TLS · loopback exposure&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="375" width="330" height="70" />
+        </mxCell>
+        <mxCell id="fastapi" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:15px&quot;&gt;FastAPI /api/v1&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Secure HttpOnly cookie · CSRF/Origin&lt;br&gt;OpenAPI contract · no-store PHI&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="440" y="365" width="590" height="90" />
+        </mxCell>
+        <mxCell id="scope" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:15px&quot;&gt;Trusted request scope&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;User + ClinicMembership + role&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1070" y="375" width="220" height="70" />
+        </mxCell>
+        <mxCell id="sse" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:15px&quot;&gt;SSE event stream&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Last-Event-ID · re-auth per poll&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1320" y="375" width="210" height="70" />
+        </mxCell>
+        <mxCell id="care" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:15px&quot;&gt;Care record&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Entries · immutable versions&lt;br&gt;ETag / If-Match · diff · revert&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="545" width="330" height="82" />
+        </mxCell>
+        <mxCell id="collab" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:15px&quot;&gt;Collaboration&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Anchored comments · mentions · tasks&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="655" width="330" height="72" />
+        </mxCell>
+        <mxCell id="trust" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:15px&quot;&gt;Trust &amp; Glance&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Highlights · risk reason · feedback&lt;br&gt;Immutable span/hash provenance&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="430" y="545" width="330" height="82" />
+        </mxCell>
+        <mxCell id="glance" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:15px&quot;&gt;Precomputed Glance&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Clinic-scoped top 5 · patient DTO&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="430" y="655" width="330" height="72" />
+        </mxCell>
+        <mxCell id="redaction" value="&lt;b&gt;&lt;font color=&quot;#BE4B5A&quot; style=&quot;font-size:15px&quot;&gt;Fail-closed redaction&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Known aliases + SG recognizers&lt;br&gt;Presidio + residual scan&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#BE4B5A;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="790" y="545" width="330" height="82" />
+        </mxCell>
+        <mxCell id="ai" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:15px&quot;&gt;AI extraction pipeline&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Redact → extract → review → publish&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="790" y="655" width="330" height="72" />
+        </mxCell>
+        <mxCell id="voice" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:15px&quot;&gt;Voice pipeline&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Chunk seal barrier · FFmpeg&lt;br&gt;transcript → facts → audio anchors&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1150" y="545" width="370" height="82" />
+        </mxCell>
+        <mxCell id="events" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:15px&quot;&gt;Jobs &amp; domain events&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Lease/retry/idempotency · audit outbox&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1150" y="655" width="370" height="72" />
+        </mxCell>
+        <mxCell id="postgres" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:15px&quot;&gt;PostgreSQL 16&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Restricted non-owner runtime role&lt;br&gt;clinic_id RLS + composite FKs&lt;br&gt;AES-256-GCM field envelopes&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="70" y="870" width="360" height="120" />
+        </mxCell>
+        <mxCell id="worker" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:15px&quot;&gt;Workers&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Job claim / lease / attempts&lt;br&gt;snapshot rebuild · decay&lt;br&gt;voice finalization&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="470" y="870" width="310" height="120" />
+        </mxCell>
+        <mxCell id="providers" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:15px&quot;&gt;Provider boundary&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Deterministic fixture (default CI)&lt;br&gt;OpenAI text/audio adapters&lt;br&gt;faster-whisper / pyannote gated&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="840" y="870" width="340" height="120" />
+        </mxCell>
+        <mxCell id="archive" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:15px&quot;&gt;Durable evidence&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11.5px&quot;&gt;Audit + immutable provenance&lt;br&gt;zstd + AES-GCM cold archive&lt;br&gt;checksum + rehydrate&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.7;align=left;verticalAlign=middle;spacingLeft=13;spacingRight=10;spacingTop=6;fontSize=11.5;fontColor=#607386;shadow=0;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1220" y="870" width="300" height="120" />
+        </mxCell>
+        <mxCell id="label_a5" value="TLS" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="405" y="397" width="30" height="15" />
+        </mxCell>
+        <mxCell id="label_a6" value="derive" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1032" y="397" width="36" height="15" />
+        </mxCell>
+        <mxCell id="label_a12" value="rank" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="602" y="632" width="28" height="15" />
+        </mxCell>
+        <mxCell id="label_a13" value="safe text" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="963" y="632" width="46" height="15" />
+        </mxCell>
+        <mxCell id="label_a14" value="finalize" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1343" y="632" width="42" height="15" />
+        </mxCell>
+        <mxCell id="label_a18" value="enqueue" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="665" y="762" width="46" height="15" />
+        </mxCell>
+        <mxCell id="label_a19" value="lease" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="960" y="792" width="30" height="15" />
+        </mxCell>
+        <mxCell id="label_a20" value="contract" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="787" y="884" width="46" height="15" />
+        </mxCell>
+        <mxCell id="label_a21" value="write" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="435" y="934" width="30" height="15" />
+        </mxCell>
+        <mxCell id="label_a22" value="cold" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1095" y="1017" width="30" height="15" />
+        </mxCell>
+        <mxCell id="label_a23" value="publish" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1490" y="485" width="42" height="15" />
+        </mxCell>
+        <mxCell id="label_a24" value="invalidate" style="text=;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;fontSize=10;fontColor=#607386;whiteSpace=wrap;fontFamily=Times New Roman;rounded=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1400" y="92" width="48" height="15" />
+        </mxCell>
+        <mxCell id="legend1" value="trusted boundary" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;fontColor=#0F766E;fontStyle=1;fontSize=11;align=center;verticalAlign=middle;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1004" y="1085" width="145" height="30" />
+        </mxCell>
+        <mxCell id="legend2" value="async / optional" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;fontColor=#7C3AED;fontStyle=1;fontSize=11;align=center;verticalAlign=middle;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1160" y="1085" width="145" height="30" />
+        </mxCell>
+        <mxCell id="legend3" value="synthetic-data demo only" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;fontColor=#B7791F;fontStyle=1;fontSize=11;align=center;verticalAlign=middle;fontFamily=Times New Roman;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1316" y="1085" width="204" height="30" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

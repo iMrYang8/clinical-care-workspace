@@ -2,6 +2,7 @@ import hashlib
 import math
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 
 import pytest
@@ -9,18 +10,21 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, delete, select
 
 from app.api.deps import RequestContext
-from app.core.db import engine, set_rls_clinic
+from app.core.config import settings
+from app.core.db import engine, set_rls_actor, set_rls_clinic
 from app.models import (
     AuditEvent,
     ClinicMembership,
     DomainEvent,
     Highlight,
+    ImportanceExposureQualificationReport,
     ImportanceFeatureStat,
     ImportanceFeedbackEvent,
     User,
 )
 from app.seed import demo_id
 from app.services.importance import (
+    IMPORTANCE_EXPOSURE_REPORT_VERSION,
     MAX_FEATURE_WEIGHT,
     apply_weight_delta,
     calculate_score,
@@ -58,6 +62,18 @@ def test_clinic_feedback_math_is_bounded_and_diminishing() -> None:
 
 
 @pytest.mark.unit
+def test_feature_weight_bound_is_declared_as_a_database_invariant() -> None:
+    constraints = {
+        constraint.name: constraint
+        for constraint in ImportanceFeatureStat.__table__.constraints
+    }
+    bound = constraints["ck_importance_feature_weight_bound"]
+    sql = str(getattr(bound, "sqltext", ""))
+    assert "weight >= -0.20" in sql
+    assert "weight <= 0.20" in sql
+
+
+@pytest.mark.unit
 def test_protected_highlight_ignores_negative_learned_score() -> None:
     score = calculate_score(
         critical=True,
@@ -81,9 +97,24 @@ def test_protected_highlight_ignores_negative_learned_score() -> None:
     )
     assert learned.risk_reason == "clinic_feedback"
 
+    allergy = calculate_score(
+        critical=False,
+        unresolved=False,
+        clinician_confirmed=False,
+        feature_keys=["entity:allergy"],
+        feature_weights={"entity:allergy": -0.2},
+        age_days=0,
+    )
+    assert allergy.learned == 0
+    assert allergy.final == allergy.base
+
 
 def _create_allergy_highlight(
-    client: TestClient, headers: dict[str, str], *, section: str
+    client: TestClient,
+    headers: dict[str, str],
+    *,
+    section: str,
+    feature_key: str = "entity:allergy",
 ) -> dict:
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
     entry = client.post(
@@ -107,7 +138,7 @@ def _create_allergy_highlight(
             "end_offset": 7,
             "exact_quote": "allergy",
             "label": "Allergy signal",
-            "feature_keys": ["entity:allergy"],
+            "feature_keys": [feature_key],
             "patient_facing": section == "clinician",
         },
     )
@@ -115,13 +146,84 @@ def _create_allergy_highlight(
     return response.json()
 
 
+def _persist_active_qualification(owner_session: Session) -> None:
+    now = datetime.now(UTC)
+    for clinic_key, membership_key in (
+        ("clinic-primary", "membership-clinician"),
+        ("clinic-other", "membership-other_staff"),
+    ):
+        owner_session.add(
+            ImportanceExposureQualificationReport(
+                clinic_id=demo_id(clinic_key),
+                report_version=IMPORTANCE_EXPOSURE_REPORT_VERSION,
+                window_start=now - timedelta(hours=24),
+                window_end=now,
+                source_candidate_set_count=1,
+                candidate_count=2,
+                telemetry_count=2,
+                displayed_count=2,
+                protected_candidate_count=1,
+                protected_displayed_count=1,
+                ordinary_candidate_count=1,
+                ordinary_displayed_count=1,
+                protected_recall=1.0,
+                ordinary_recall=1.0,
+                ordinary_exposure_rate=1.0,
+                missing_telemetry_count=0,
+                duplicate_telemetry_count=0,
+                surface_metrics_json={
+                    "current_priorities": {
+                        "candidate_count": 1,
+                        "telemetry_count": 1,
+                        "displayed_count": 1,
+                        "protected_candidate_count": 0,
+                        "protected_displayed_count": 0,
+                        "ordinary_candidate_count": 1,
+                        "ordinary_displayed_count": 1,
+                        "missing_telemetry_count": 0,
+                        "duplicate_telemetry_count": 0,
+                    },
+                    "clinical_review": {
+                        "candidate_count": 1,
+                        "telemetry_count": 1,
+                        "displayed_count": 1,
+                        "protected_candidate_count": 1,
+                        "protected_displayed_count": 1,
+                        "ordinary_candidate_count": 0,
+                        "ordinary_displayed_count": 0,
+                        "missing_telemetry_count": 0,
+                        "duplicate_telemetry_count": 0,
+                    },
+                },
+                qualified=True,
+                qualification_reasons_json=[],
+                generated_by_membership_id=demo_id(membership_key),
+                expires_at=now + timedelta(hours=24),
+                created_at=now,
+            )
+        )
+    owner_session.commit()
+
+
 def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
-    client: TestClient, auth_headers
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_session: Session,
 ) -> None:
+    # Active mode remains testable, while production/default behavior is
+    # separately pinned to shadow mode by the hardening acceptance suite.
+    monkeypatch.setattr(settings, "IMPORTANCE_LEARNING_MODE", "active")
+    _persist_active_qualification(owner_session)
     clinic_a = auth_headers("clinician")
     clinic_b = auth_headers("other_staff")
-    first_a = _create_allergy_highlight(client, clinic_a, section="clinician")
-    _create_allergy_highlight(client, clinic_b, section="staff")
+    feature_key = "entity:diagnosis"
+    first_a = _create_allergy_highlight(
+        client, clinic_a, section="clinician", feature_key=feature_key
+    )
+    _create_allergy_highlight(
+        client, clinic_b, section="staff", feature_key=feature_key
+    )
 
     pin_headers = clinic_a | {"Idempotency-Key": "pin-allergy-once"}
     for _ in range(2):
@@ -130,8 +232,12 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
         )
         assert response.status_code == 200, response.text
 
-    second_a = _create_allergy_highlight(client, clinic_a, section="clinician")
-    second_b = _create_allergy_highlight(client, clinic_b, section="staff")
+    second_a = _create_allergy_highlight(
+        client, clinic_a, section="clinician", feature_key=feature_key
+    )
+    second_b = _create_allergy_highlight(
+        client, clinic_b, section="staff", feature_key=feature_key
+    )
     assert second_a["learned_score"] > second_b["learned_score"]
 
     forged = client.post(
@@ -144,7 +250,9 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
     # Positive signals come only from their real state transitions; separate
     # synthetic highlights still drive the clinic statistic to its hard clamp.
     for index in range(5):
-        candidate = _create_allergy_highlight(client, clinic_a, section="clinician")
+        candidate = _create_allergy_highlight(
+            client, clinic_a, section="clinician", feature_key=feature_key
+        )
         response = client.post(
             f"/api/v1/highlights/{candidate['id']}/pin",
             headers=clinic_a | {"Idempotency-Key": f"bounded-{index}"},
@@ -154,7 +262,7 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
     with Session(engine) as session:
         stats = session.exec(
             select(ImportanceFeatureStat).where(
-                ImportanceFeatureStat.feature_key == "entity:allergy"
+                ImportanceFeatureStat.feature_key == feature_key
             )
         ).all()
         assert len(stats) == 1
@@ -172,21 +280,22 @@ def test_pin_learning_is_clinic_scoped_idempotent_clamped_and_patient_safe(
 
     with Session(engine) as session:
         set_rls_clinic(session, demo_id("clinic-other"))
+        set_rls_actor(session, demo_id("user-other_staff"), role="staff")
         other_stats = session.exec(
             select(ImportanceFeatureStat).where(
-                ImportanceFeatureStat.feature_key == "entity:allergy"
+                ImportanceFeatureStat.feature_key == feature_key
             )
         ).all()
         assert len(other_stats) == 1
         assert other_stats[0].weight < MAX_FEATURE_WEIGHT
 
     accepted = client.post(
-        f"/api/v1/highlights/{first_a['id']}/accept", headers=clinic_a
+        f"/api/v1/highlights/{second_a['id']}/accept", headers=auth_headers("staff")
     )
     assert accepted.status_code == 200
     patient_headers = auth_headers("patient")
     glance = client.get(
-        f"/api/v1/patients/{first_a['patient_id']}/glance",
+        f"/api/v1/patients/{second_a['patient_id']}/glance",
         headers=patient_headers,
     )
     assert glance.status_code == 200
@@ -198,8 +307,12 @@ def test_feedback_idempotency_key_is_bound_to_target_and_signal(
     client: TestClient, auth_headers
 ) -> None:
     headers = auth_headers("clinician")
-    first = _create_allergy_highlight(client, headers, section="clinician")
-    second = _create_allergy_highlight(client, headers, section="clinician")
+    first = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="topic:follow_up"
+    )
+    second = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="topic:follow_up"
+    )
     shared = headers | {"Idempotency-Key": "resource-bound-key"}
 
     accepted = client.post(f"/api/v1/highlights/{first['id']}/pin", headers=shared)
@@ -259,12 +372,79 @@ def test_patient_is_denied_before_internal_highlight_lookup(
         )
 
 
-def test_dismiss_feedback_is_negative_idempotent_and_resource_bound(
-    client: TestClient, auth_headers
+def test_allergy_feedback_is_telemetry_only_and_cannot_hide_the_priority(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_session: Session,
 ) -> None:
+    monkeypatch.setattr(settings, "IMPORTANCE_LEARNING_MODE", "active")
+    _persist_active_qualification(owner_session)
     headers = auth_headers("clinician")
-    first = _create_allergy_highlight(client, headers, section="clinician")
-    second = _create_allergy_highlight(client, headers, section="clinician")
+    highlight = _create_allergy_highlight(client, headers, section="clinician")
+
+    blocked = client.post(
+        f"/api/v1/highlights/{highlight['id']}/feedback",
+        headers=headers | {"Idempotency-Key": "allergy-negative-blocked"},
+        json={"signal": "dismiss", "reason": "not_relevant"},
+    )
+    assert blocked.status_code == 409, blocked.text
+    # Repeated end-of-shift fatigue telemetry must remain incapable of burying
+    # allergy evidence or incrementing any learned feature counter.
+    for index in range(50):
+        fatigue = client.post(
+            f"/api/v1/highlights/{highlight['id']}/feedback",
+            headers=headers | {"Idempotency-Key": f"allergy-fatigue-event-{index}"},
+            json={"signal": "dismiss", "reason": "too_busy_to_review"},
+        )
+        assert fatigue.status_code == 200, fatigue.text
+        assert fatigue.json()["status"] == "pending"
+        assert fatigue.json()["learned_score"] == 0
+
+    glance = client.get(
+        f"/api/v1/patients/{highlight['patient_id']}/glance", headers=headers
+    )
+    assert glance.status_code == 200, glance.text
+    assert highlight["id"] in {
+        card["highlight_id"] for card in glance.json()["review_cards"]
+    }
+    with Session(engine) as session:
+        stat = session.exec(
+            select(ImportanceFeatureStat).where(
+                ImportanceFeatureStat.feature_key == "entity:allergy"
+            )
+        ).first()
+        events = session.exec(
+            select(ImportanceFeedbackEvent).where(
+                ImportanceFeedbackEvent.highlight_id == uuid.UUID(highlight["id"])
+            )
+        ).all()
+    assert stat is None
+    fatigue_events = [event for event in events if event.reason == "too_busy_to_review"]
+    assert len(fatigue_events) == 50
+    assert all(event.applied_delta == 0 for event in fatigue_events)
+    # Manual highlight creation is separately captured as zero-delta exposure
+    # evidence; it is not a fatigue action and therefore is not counted above.
+    manual_events = [event for event in events if event.signal == "manual"]
+    assert len(manual_events) == 1
+    assert manual_events[0].applied_delta == 0
+
+
+def test_dismiss_feedback_is_negative_idempotent_and_resource_bound(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_session: Session,
+) -> None:
+    monkeypatch.setattr(settings, "IMPORTANCE_LEARNING_MODE", "active")
+    _persist_active_qualification(owner_session)
+    headers = auth_headers("clinician")
+    first = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="topic:follow_up"
+    )
+    second = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="topic:follow_up"
+    )
     shared = headers | {"Idempotency-Key": "dismiss-resource-bound"}
 
     for _ in range(2):
@@ -357,18 +537,27 @@ def test_stale_edit_feedback_refreshes_concurrent_pin_before_glance_rebuild(
     assert glance.status_code == 200, glance.text
     card = next(
         item
-        for item in glance.json()["cards"]
+        for item in glance.json()["review_cards"]
         if item["highlight_id"] == highlight["id"]
     )
     assert card["pinned"] is True
 
 
 def test_concurrent_first_feature_and_same_request_feedback_are_atomic(
-    client: TestClient, auth_headers, owner_session: Session
+    client: TestClient,
+    auth_headers,
+    owner_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(settings, "IMPORTANCE_LEARNING_MODE", "active")
+    _persist_active_qualification(owner_session)
     headers = auth_headers("clinician")
-    first = _create_allergy_highlight(client, headers, section="clinician")
-    second = _create_allergy_highlight(client, headers, section="clinician")
+    first = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="topic:follow_up"
+    )
+    second = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="topic:follow_up"
+    )
 
     # Highlight creation intentionally learns a manual signal. Remove that
     # owner-side fixture state so the concurrent pin requests race on the first
@@ -398,12 +587,14 @@ def test_concurrent_first_feature_and_same_request_feedback_are_atomic(
     with Session(engine) as session:
         stat = session.exec(
             select(ImportanceFeatureStat).where(
-                ImportanceFeatureStat.feature_key == "entity:allergy"
+                ImportanceFeatureStat.feature_key == "topic:follow_up"
             )
         ).one()
         assert stat.observation_count == 2
 
-    third = _create_allergy_highlight(client, headers, section="clinician")
+    third = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="topic:follow_up"
+    )
     replay_barrier = Barrier(2)
 
     def replay() -> int:
@@ -441,7 +632,9 @@ def test_concurrent_first_feature_and_same_request_feedback_are_atomic(
         assert len(audits) == 1
         assert len(domain_events) == 1
 
-    fourth = _create_allergy_highlight(client, headers, section="clinician")
+    fourth = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="topic:follow_up"
+    )
     transition_barrier = Barrier(2)
 
     def distinct_request(key: str) -> int:

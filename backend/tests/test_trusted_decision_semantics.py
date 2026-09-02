@@ -116,7 +116,11 @@ def test_critical_abstention_remains_visible_for_review(
         if item["highlight_id"] == highlight["id"]
     )
     assert review["critical"] is True
-    assert review["review_state"] == "abstained"
+    # Read-time calibration requalification is authoritative: this manually
+    # altered persisted assessment has no matching current report, so it is
+    # surfaced as unavailable/review-required rather than trusting a stale flag.
+    assert review["review_state"] == "review_required"
+    assert review["current_confidence_state"] == "review_required"
 
 
 @pytest.mark.unit
@@ -138,6 +142,10 @@ def test_medication_dose_route_frequency_conflicts() -> None:
     left_values = {(item.fact_type, item.key, item.value) for item in left}
     right_values = {(item.fact_type, item.key, item.value) for item in right}
     assert ("dose", "metformin", "1000mg") in left_values
+    narrative = extract_normalized_facts(
+        "The rash started yesterday. Continue the reviewed care plan."
+    )
+    assert not [item for item in narrative if item.fact_type == "medication"]
     assert ("route", "metformin", "oral") in left_values
     assert ("frequency", "metformin", "twice_daily") in left_values
     assert ("medication", "metformin", "stopped") in right_values
@@ -171,9 +179,12 @@ def test_calibration_report_model_and_hash_match(owner_session: Session) -> None
         task="voice_transcription",
         request_parameters_json=parameters,
         dataset_manifest_sha256="a" * 64,
-        code_commit="test",
+        code_commit="b" * 40,
         calibration_split="40 consultations",
         holdout_split="17 consultations",
+        total_sample_count=200,
+        calibration_sample_count=80,
+        holdout_sample_count=120,
         sample_count=120,
         status="completed",
     )
@@ -187,7 +198,10 @@ def test_calibration_report_model_and_hash_match(owner_session: Session) -> None
         task="voice_transcription",
         request_parameters_sha256=request_parameters_sha256(parameters),
         dataset_manifest_sha256="a" * 64,
-        code_commit="test",
+        code_commit="b" * 40,
+        total_sample_count=run.total_sample_count,
+        calibration_sample_count=run.calibration_sample_count,
+        holdout_sample_count=run.holdout_sample_count,
         sample_count=120,
         consultation_count=17,
         confidence_band="medium",
@@ -206,7 +220,7 @@ def test_calibration_report_model_and_hash_match(owner_session: Session) -> None
             task="voice_transcription",
             request_parameters=parameters,
             dataset_manifest_sha256="a" * 64,
-            code_commit="test",
+            code_commit="b" * 40,
         )
         is not None
     )
@@ -219,7 +233,7 @@ def test_calibration_report_model_and_hash_match(owner_session: Session) -> None
             task="voice_transcription",
             request_parameters=parameters,
             dataset_manifest_sha256="a" * 64,
-            code_commit="test",
+            code_commit="b" * 40,
         )
         is None
     )
@@ -232,7 +246,7 @@ def test_calibration_report_model_and_hash_match(owner_session: Session) -> None
             task="voice_transcription",
             request_parameters=parameters,
             dataset_manifest_sha256="a" * 64,
-            code_commit="changed-code",
+            code_commit="c" * 40,
         )
         is None
     )

@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import type { ClinicalGlanceCard } from "@/client"
-import { GlanceTopCard } from "./GlanceTopCard"
+import type { ClinicalGlanceCard, RiskReason } from "@/client"
+import { GlanceTopCard, riskReasonLabel } from "./GlanceTopCard"
 
 const ready: ClinicalGlanceCard = {
   highlight_id: "11111111-1111-4111-8111-111111111111",
@@ -40,6 +40,44 @@ const abstained: ClinicalGlanceCard = {
 afterEach(() => vi.useRealTimers())
 
 describe("trustworthy Current priorities", () => {
+  it("labels every generated server risk reason exhaustively", () => {
+    expect(
+      (
+        [
+          "critical",
+          "unresolved",
+          "clinician_confirmed",
+          "clinical_entity",
+          "clinic_feedback",
+          "recency",
+          "clinician_accepted",
+          "care_plan_conflict",
+          "clinician_confirmed_follow_up",
+          "medication_status_conflict",
+          "open_medication_reconciliation",
+          "scheduled_follow_up",
+          "synthetic_dataset_recent_encounter",
+          "unavailable_review_required",
+        ] satisfies RiskReason[]
+      ).map(riskReasonLabel),
+    ).toEqual([
+      "Critical risk",
+      "Unresolved clinical issue",
+      "Confirmed by clinician",
+      "Clinical fact requiring attention",
+      "Raised by clinic feedback",
+      "Recent information",
+      "Accepted by clinician",
+      "Conflicting care plan",
+      "Clinician-confirmed follow-up",
+      "Medication status conflict",
+      "Medication reconciliation open",
+      "Scheduled follow-up",
+      "Recent imported encounter",
+      "Reason unavailable · review required",
+    ])
+  })
+
   it("separates abstained critical information from ready priorities", () => {
     render(
       <GlanceTopCard
@@ -54,14 +92,102 @@ describe("trustworthy Current priorities", () => {
     expect(screen.getByText("Critical · unverified")).toBeInTheDocument()
   })
 
-  it("explains the clinic-level learning adjustment without claiming a personal profile", () => {
-    render(<GlanceTopCard cards={[ready]} onSource={vi.fn()} />)
+  it("fails closed when a protected item is accidentally returned in the top-five list", () => {
+    render(
+      <GlanceTopCard
+        cards={[
+          ready,
+          {
+            ...abstained,
+            review_state: "ready",
+            current_priority_eligible: false,
+          },
+        ]}
+        onSource={vi.fn()}
+      />,
+    )
+    expect(screen.getByText("1/5")).toBeInTheDocument()
+    expect(screen.getByText("Unverified severe allergy")).toBeInTheDocument()
+    expect(screen.getByText("Critical · unverified")).toBeInTheDocument()
+  })
+
+  it("discloses shadow learning without claiming weight updates or a personal profile", () => {
+    render(
+      <GlanceTopCard
+        cards={[ready]}
+        importanceMode="shadow"
+        onSource={vi.fn()}
+      />,
+    )
     fireEvent.click(screen.getByText("Why this decision?"))
-    expect(screen.getByText(/rule-based score of 0\.420/)).toBeInTheDocument()
     expect(
-      screen.getByText(/clinic feedback adjustment of \+0\.080/),
+      screen.getByText(/Importance learning is in shadow mode/),
     ).toBeInTheDocument()
-    expect(screen.getByText(/it is not a personal profile/)).toBeInTheDocument()
+    expect(
+      screen.getByText(/ranking weights are not changed/),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/not a personal profile/)).toBeInTheDocument()
+  })
+
+  it("distinguishes disabled and unavailable importance modes", () => {
+    const { rerender } = render(
+      <GlanceTopCard
+        cards={[ready]}
+        importanceMode="disabled"
+        onSource={vi.fn()}
+      />,
+    )
+    fireEvent.click(screen.getByText("Why this decision?"))
+    expect(
+      screen.getByText(/Importance learning is disabled/),
+    ).toBeInTheDocument()
+    rerender(<GlanceTopCard cards={[ready]} onSource={vi.fn()} />)
+    expect(
+      screen.getByText(/Importance mode is unavailable/),
+    ).toBeInTheDocument()
+  })
+
+  it("marks provider outage, stale age, fallback, and source review explicitly", () => {
+    const onResolveSupport = vi.fn()
+    render(
+      <GlanceTopCard
+        ageSeconds={3_600}
+        cards={[]}
+        fallbackKind="stored"
+        freshnessState="stale"
+        onSource={vi.fn()}
+        outageMessage="Provider circuit open for one hour."
+        providerOutage
+        canResolveSupport
+        onResolveSupport={onResolveSupport}
+        reviewCards={[
+          {
+            ...abstained,
+            fallback_kind: "rule_derived",
+            support_state: "superseded",
+            support_review_required: true,
+          },
+        ]}
+      />,
+    )
+    expect(
+      screen.getByText(/Provider circuit open for one hour/),
+    ).toHaveTextContent("Last generated 60 minutes ago")
+    expect(screen.getByText(/not limited to five/)).toBeInTheDocument()
+    expect(
+      screen.getByText("Rule-derived · review required"),
+    ).toBeInTheDocument()
+    expect(screen.getByText("Source superseded")).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reaffirm historical support" }),
+    )
+    expect(onResolveSupport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        highlight_id: abstained.highlight_id,
+        support_review_required: true,
+      }),
+      "reaffirm",
+    )
   })
 
   it("requires a dismissal reason and records an impression after two seconds", async () => {
@@ -110,6 +236,7 @@ describe("trustworthy Current priorities", () => {
       ready,
       1,
       expect.stringMatching(/^priority:/),
+      "current_priorities",
     )
     vi.unstubAllGlobals()
   })

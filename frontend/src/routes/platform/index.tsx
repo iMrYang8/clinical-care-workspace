@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
 import { Building2, LoaderCircle, LogOut, ShieldCheck } from "lucide-react"
 import { useEffect } from "react"
-
+import { OnboardClinicDialog } from "@/components/Platform/OnboardClinicDialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,7 @@ export const Route = createFileRoute("/platform/")({
 
 function PlatformDashboard() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const me = useQuery({
     queryKey: ["platform", "me"],
     queryFn: platformApi.me,
@@ -62,11 +63,20 @@ function PlatformDashboard() {
             views are read-only and recorded in the platform audit log.
           </AlertDescription>
         </Alert>
-        <div>
-          <h2 className="font-serif text-3xl font-semibold">Clinics</h2>
-          <p className="text-muted-foreground">
-            Select a clinic to inspect its patient records.
-          </p>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-serif text-3xl font-semibold">Clinics</h2>
+            <p className="text-muted-foreground">
+              Select a clinic to inspect its patient records.
+            </p>
+          </div>
+          <OnboardClinicDialog
+            onCreated={() =>
+              queryClient.invalidateQueries({
+                queryKey: ["platform", "clinics"],
+              })
+            }
+          />
         </div>
         {clinics.isLoading && (
           <LoaderCircle className="animate-spin text-primary" />

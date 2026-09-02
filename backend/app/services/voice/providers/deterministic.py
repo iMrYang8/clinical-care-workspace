@@ -64,6 +64,8 @@ class SyntheticFixtureProvider:
                     overlap_group_id=overlap,
                     text_start=text_start,
                     text_end=text_end,
+                    source_language=language,
+                    language_confidence=1.0,
                 )
             )
             cursor = text_end + (1 if index < len(fixture) - 1 else 0)

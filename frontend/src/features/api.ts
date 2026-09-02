@@ -2,9 +2,13 @@ import { AxiosError } from "axios"
 import type {
   AssignmentUpdate,
   AuditEventPublic,
+  ClinicAISettingPublic,
+  ClinicAISettingUpdate,
+  ClinicalFactAssertionPublic,
   ClinicalGlancePublic,
   CommentCreate,
   CommentPublic,
+  ConflictPublic,
   DecisionExplanationPublic,
   DiffPublic,
   EntryCreate,
@@ -13,13 +17,40 @@ import type {
   EntryVersionPublic,
   GlancePublic,
   HighlightPublic,
+  MedicationReviewAttestation,
   MembershipCreate,
   MembershipInvitationPublic,
   MembershipPublic,
   MePublic,
+  NotificationPublic,
+  PatientAccessEnrollStartRequest,
+  PatientAccessLoginStartRequest,
+  PatientAccessProvisionCreate,
+  PatientAccessProvisionPublic,
+  PatientAccessPublic,
+  PatientAccessRecoveryCreate,
+  PatientAccessVerifyPublic,
+  PatientAccessVerifyRequest,
+  PatientDetailPublic,
+  PatientDuplicateCandidate,
+  PatientDuplicateCheckPublic,
+  PatientIdentityInput,
+  PatientInvitationPreviewPublic,
+  PatientOTPChallengePublic,
+  PatientPortalEventPublic,
+  PatientPortalInvitationCreate,
+  PatientPortalInvitationPublic,
   PatientPublic,
+  PatientPublicationAcknowledgementPublic,
+  PatientPublicationCorrectionCreate,
+  PatientPublicationPublic,
+  PatientPublicationReceiptPublic,
+  PatientSharingRequestPublic,
+  PatientsPublic,
+  PatientsSearchRequest,
   PatientTimelineEntry,
   ProvenanceResolved,
+  ProvisionalSafetyAlertPublic,
   TeamMemberPublic,
 } from "@/client"
 import {
@@ -27,6 +58,7 @@ import {
   AuthService,
   CollaborationService,
   EntriesService,
+  PatientAccessService,
   PatientsService,
   TeamService,
   TrustService,
@@ -35,118 +67,84 @@ import {
   authenticatedFetch,
   notifyAuthenticationRejection,
 } from "@/features/authenticatedFetch"
+import {
+  type EditorPresenceRecord,
+  editorPresenceRecordFrom,
+} from "@/features/editorPresence"
+
+export type {
+  ClinicAISettingUpdate,
+  PatientDuplicateCandidate,
+  PatientIdentityInput,
+}
 
 export type DemoPersona = "patient" | "staff" | "clinician" | "admin"
 export type ClinicalRole = MePublic["role"]
+export type ClinicalComment = CommentPublic
 
 export type ClinicalTimelineEntry = PatientTimelineEntry & {
   origin: string
   author_id: string | null
 }
 
-export type PatientIdentityInput = {
-  display_name: string
-  date_of_birth: string
-  medical_record_number: string
-  identity_document_type: "nric_fin" | "passport" | "other"
-  identity_document_number: string
+export type PatientDuplicateCheck = PatientDuplicateCheckPublic
+
+export type PatientDetail = PatientDetailPublic & {
+  /** Compatibility for pre-hardening fixtures; current API uses today_visit_id. */
+  active_visit_id?: string | null
 }
 
-export type PatientDuplicateCandidate = {
-  patient_id: string
-  display_name: string
-  date_of_birth: string | null
-  medical_record_number: string | null
-  masked_identity_document: string | null
+export type ClinicalConflict = ConflictPublic
+
+export type ClinicalFactAssertion = ClinicalFactAssertionPublic
+
+export type PatientSharingRequest = PatientSharingRequestPublic
+
+export type MedicationAssertion = {
+  assertion_id: string
+  medication: string
+  dose_value: number
+  dose_unit: string
+  route: string
+  frequency: string
 }
 
-export type PatientDuplicateCheck = {
-  status: "clear" | "possible_match" | "exact_match"
-  candidates: PatientDuplicateCandidate[]
-  duplicate_confirmation_token?: string | null
-}
+export type MedicationReviewInput = MedicationAssertion &
+  Required<Pick<MedicationReviewAttestation, "confirmed">> & {
+    confirmed: true
+  }
 
-export type PatientDetail = PatientPublic & {
-  date_of_birth: string | null
-  medical_record_number: string | null
-  identity_document_type: string | null
-  masked_identity_document: string | null
-  portal_access_state: "not_invited" | "pending" | "active" | "deactivated"
-  status: string
-}
+export type PatientPublication = PatientPublicationPublic
 
-export type ClinicalConflict = {
-  id: string
-  patient_id: string
-  fact_type: string
-  normalized_key: string
-  severity: "high" | "critical" | string
-  status: string
-  left_entry_id: string
-  right_entry_id: string
-  left_pointer_id: string | null
-  right_pointer_id: string | null
-  resolution: string | null
-  created_at: string
-}
+export type PatientPublicationReceipt = PatientPublicationReceiptPublic
 
-export type ClinicalFactAssertion = {
-  id: string
-  fact_type: string
-  subject: string
-  normalized_value: string
-  clinical_status: string
-  effective_time: string | null
-  origin: "human" | "ai" | "voice" | string
-  source_entry_version_id: string
-  provenance_pointer_id: string
-}
+export type PatientPublicationAcknowledgement =
+  PatientPublicationAcknowledgementPublic
 
-export type PatientSharingRequest = {
-  id: string
-  patient_id: string
-  entry_id: string
-  entry_version_id: string
-  entry_title: string
-  entry_section: string
-  entry_origin: string
-  requested_by_name: string
-  status:
-    | "pending"
-    | "approved"
-    | "rejected"
-    | "superseded"
-    | "withdrawn"
-    | string
-  created_at: string
-  reviewed_at: string | null
-  reviewed_by_name: string | null
-  publication_id: string | null
-}
+export type PatientPortalEvent = PatientPortalEventPublic
 
-export type PatientPublication = {
-  id: string
-  patient_id: string
-  entry_id: string
-  entry_version_id: string
-  entry_title: string
-  approved_by_name: string
-  approval_policy_version: string
-  approved_at: string
-  withdrawn_at: string | null
-  items: Array<{
-    support_state: string
-    confidence_band: string
-  }>
-}
+/** UI discriminator over the two generated invitation request contracts. */
+export type PatientPortalInvitationInput =
+  | ({ channel: "email" } & PatientPortalInvitationCreate)
+  | {
+      channel: NonNullable<PatientAccessProvisionCreate["channel"]>
+      phone: PatientAccessProvisionCreate["phone"]
+    }
 
-export type PatientPublicationReceipt = {
-  entry_title: string
-  approved_by_name: string
-  approved_at: string
-  withdrawn_at: string | null
-  status: "active" | "withdrawn"
-}
+/** The API intentionally returns a different generated contract per channel. */
+export type PatientPortalInvitationResult =
+  | PatientPortalInvitationPublic
+  | PatientAccessProvisionPublic
+
+export type PatientAccessChallenge = PatientOTPChallengePublic
+
+export type PatientAccessSession = PatientAccessPublic
+
+export type PatientAccessVerifyResult = PatientAccessVerifyPublic
+
+export type NotificationDelivery = NotificationPublic
+
+export type ProvisionalSafetyAlert = ProvisionalSafetyAlertPublic
 
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await authenticatedFetch(
@@ -169,6 +167,25 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(detailMessage || `Request failed with ${response.status}`)
   }
   return (await response.json()) as T
+}
+
+async function heartbeatEditorPresence(
+  entryId: string,
+  entryVersionId: string,
+  signal?: AbortSignal,
+): Promise<EditorPresenceRecord> {
+  const payload = await jsonRequest<unknown>(
+    `/api/v1/entries/${entryId}/presence`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entry_version_id: entryVersionId }),
+      signal,
+    },
+  )
+  const presence = editorPresenceRecordFrom(payload)
+  if (!presence) throw new Error("Invalid editor presence response")
+  return presence
 }
 
 async function duplicateCheck(
@@ -198,11 +215,99 @@ async function patientDetail(patientId: string): Promise<PatientDetail> {
   return jsonRequest(`/api/v1/patients/${patientId}`)
 }
 
-async function invitePatient(patientId: string, email: string): Promise<void> {
-  await jsonRequest(`/api/v1/patients/${patientId}/portal-invitations`, {
+async function invitePatient(
+  patientId: string,
+  destination: string | PatientPortalInvitationInput,
+): Promise<PatientPortalInvitationResult> {
+  if (typeof destination === "string" || destination.channel === "email") {
+    const email =
+      typeof destination === "string" ? destination : destination.email
+    return (
+      await PatientsService.invitePatient({
+        path: { patient_id: patientId },
+        body: { email },
+      })
+    ).data
+  }
+  return (
+    await PatientAccessService.accessProvisionPatientAccess({
+      path: { patient_id: patientId },
+      body: { phone: destination.phone, channel: destination.channel },
+    })
+  ).data
+}
+
+async function revokePatientAccess(
+  patientId: string,
+): Promise<PatientAccessSession> {
+  return (
+    await PatientAccessService.accessRevokePatientAccess({
+      path: { patient_id: patientId },
+      body: { reason_code: "access_revoked_by_care_team" },
+    })
+  ).data
+}
+
+async function recoverPatientAccess(
+  patientId: string,
+  body: Pick<PatientAccessRecoveryCreate, "phone" | "channel">,
+): Promise<PatientPortalInvitationResult> {
+  return (
+    await PatientAccessService.accessRecoverPatientAccess({
+      path: { patient_id: patientId },
+      body: {
+        ...body,
+        reason_code: "patient_access_recovery_requested",
+      },
+    })
+  ).data
+}
+
+async function notificationDeliveries(
+  patientId: string,
+  visitId: string,
+): Promise<NotificationDelivery[]> {
+  const response = await jsonRequest<
+    NotificationDelivery[] | { data: NotificationDelivery[] }
+  >(`/api/v1/patients/${patientId}/visits/${visitId}/notifications`)
+  return Array.isArray(response) ? response : response.data
+}
+
+async function createAppointmentNotification(
+  patientId: string,
+  visitId: string,
+  body: {
+    channel: "email" | "sms" | "whatsapp"
+    destination: string
+  },
+): Promise<NotificationDelivery> {
+  return jsonRequest(
+    `/api/v1/patients/${patientId}/visits/${visitId}/notifications`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+async function resendNotification(
+  notificationId: string,
+): Promise<NotificationDelivery> {
+  return jsonRequest(`/api/v1/notifications/${notificationId}/resend`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+  })
+}
+
+async function revokeNotification(
+  notificationId: string,
+): Promise<NotificationDelivery> {
+  return jsonRequest(`/api/v1/notifications/${notificationId}/revoke`, {
+    method: "POST",
   })
 }
 
@@ -258,9 +363,12 @@ async function patientPublications(
 
 async function approvePatientSharing(
   requestId: string,
+  medicationReviews: MedicationReviewInput[] = [],
 ): Promise<PatientPublication> {
   return jsonRequest(`/api/v1/patient-sharing-requests/${requestId}/approve`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ medication_reviews: medicationReviews }),
   })
 }
 
@@ -269,6 +377,21 @@ async function withdrawPatientPublication(
 ): Promise<PatientPublication> {
   return jsonRequest(`/api/v1/patient-publications/${publicationId}/withdraw`, {
     method: "POST",
+  })
+}
+
+async function correctPatientPublication(
+  publicationId: string,
+  body: PatientPublicationCorrectionCreate,
+  idempotencyKey: string,
+): Promise<PatientPublication> {
+  return jsonRequest(`/api/v1/patient-publications/${publicationId}/correct`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
   })
 }
 
@@ -289,12 +412,7 @@ export function patientSharingErrorMessage(error: unknown): string {
   return "Patient sharing could not be completed. Review the note and try again."
 }
 
-export type PatientInvitationPreview = {
-  clinic_name: string
-  patient_display_name: string
-  email: string
-  account_exists: boolean
-}
+export type PatientInvitationPreview = PatientInvitationPreviewPublic
 
 async function previewPatientInvitation(body: {
   token: string
@@ -318,6 +436,31 @@ async function acceptPatientInvitation(body: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
+}
+
+async function requestPatientEnrollmentOtp(
+  body: PatientAccessEnrollStartRequest,
+): Promise<PatientAccessChallenge> {
+  return (await PatientAccessService.accessBeginPatientEnrollment({ body }))
+    .data
+}
+
+async function acceptPatientPhoneInvitation(
+  body: PatientAccessVerifyRequest,
+): Promise<PatientAccessVerifyResult> {
+  return (await PatientAccessService.accessVerifyPatientOtp({ body })).data
+}
+
+async function requestPatientLoginOtp(
+  body: PatientAccessLoginStartRequest,
+): Promise<PatientAccessChallenge> {
+  return (await PatientAccessService.accessBeginPatientLogin({ body })).data
+}
+
+async function verifyPatientLoginOtp(
+  body: PatientAccessVerifyRequest,
+): Promise<PatientAccessVerifyResult> {
+  return (await PatientAccessService.accessVerifyPatientOtp({ body })).data
 }
 
 // Deliberately narrower than GlancePublic. The patient view never receives
@@ -471,24 +614,7 @@ async function auditEvents(): Promise<AuditEventPublic[]> {
   return (await AdminService.auditEvents()).data.data
 }
 
-export type ClinicAISetting = {
-  provider: "openai"
-  api_key_configured: boolean
-  api_key_last4: string | null
-  credential_source: "clinic" | "environment" | "none"
-  fast_model: string
-  careful_model: string
-  transcribe_model: string
-  updated_at: string | null
-}
-
-export type ClinicAISettingUpdate = {
-  api_key?: string | null
-  clear_api_key?: boolean
-  fast_model: string
-  careful_model: string
-  transcribe_model: string
-}
+export type ClinicAISetting = ClinicAISettingPublic
 
 async function clinicAISettings(): Promise<ClinicAISetting> {
   return jsonRequest("/api/v1/admin/ai-settings")
@@ -508,22 +634,9 @@ async function patients(): Promise<PatientPublic[]> {
   return (await PatientsService.patients()).data.data
 }
 
-export type PatientDirectoryItem = PatientPublic & {
-  date_of_birth: string | null
-  medical_record_number: string | null
-  same_name_count: number
-  today_visit_at: string | null
-  today_visit_status: string | null
-  today_visit_type: string | null
-  last_activity_at: string | null
-}
+export type PatientDirectoryItem = PatientPublic
 
-export type PatientDirectoryPage = {
-  data: PatientDirectoryItem[]
-  count: number
-  offset: number
-  limit: number
-}
+export type PatientDirectoryPage = PatientsPublic
 
 async function patientDirectory(input: {
   search?: string
@@ -531,12 +644,13 @@ async function patientDirectory(input: {
   offset?: number
   limit?: number
 }): Promise<PatientDirectoryPage> {
-  const query = new URLSearchParams()
-  if (input.search) query.set("search", input.search)
-  if (input.visitScope) query.set("visit_scope", input.visitScope)
-  query.set("offset", String(input.offset ?? 0))
-  query.set("limit", String(input.limit ?? 24))
-  return jsonRequest(`/api/v1/patients?${query.toString()}`)
+  const body: PatientsSearchRequest = {
+    search: input.search ?? null,
+    visit_scope: input.visitScope ?? "all",
+    offset: input.offset ?? 0,
+    limit: input.limit ?? 24,
+  }
+  return (await PatientsService.searchPatients({ body })).data
 }
 
 async function patientTimeline(
@@ -563,6 +677,18 @@ async function clinicalTimeline(
       }
     }),
   )
+}
+
+async function readClinicalEntry(
+  entryId: string,
+): Promise<ClinicalTimelineEntry> {
+  const detail = (await EntriesService.read({ path: { entry_id: entryId } }))
+    .data
+  return {
+    ...detail,
+    origin: "origin" in detail ? detail.origin : "human",
+    author_id: "author_id" in detail ? detail.author_id : null,
+  } as ClinicalTimelineEntry
 }
 
 async function glance(patientId: string): Promise<ClinicalGlancePublic> {
@@ -593,6 +719,53 @@ async function patientPublicationReceipts(
   patientId: string,
 ): Promise<PatientPublicationReceipt[]> {
   return jsonRequest(`/api/v1/patients/${patientId}/publication-receipts`)
+}
+
+async function acknowledgePatientPublication(
+  publicationId: string,
+): Promise<PatientPublicationAcknowledgement> {
+  return jsonRequest(
+    `/api/v1/patient-publications/${publicationId}/acknowledgements`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type: "acknowledged" }),
+    },
+  )
+}
+
+async function patientPortalEvents(
+  patientId: string,
+  since?: string,
+): Promise<PatientPortalEvent[]> {
+  const query = new URLSearchParams({ limit: "100" })
+  if (since) query.set("since", since)
+  return jsonRequest(
+    `/api/v1/patients/${patientId}/portal-events?${query.toString()}`,
+  )
+}
+
+async function liveSafetyAlerts(
+  sessionId: string,
+): Promise<ProvisionalSafetyAlert[]> {
+  const response = await jsonRequest<
+    ProvisionalSafetyAlert[] | { data: ProvisionalSafetyAlert[] }
+  >(`/api/v1/voice/sessions/${sessionId}/safety-alerts`)
+  return Array.isArray(response) ? response : response.data
+}
+
+async function updateLiveSafetyAlert(
+  alertId: string,
+  action: "confirm" | "dismiss",
+): Promise<ProvisionalSafetyAlert> {
+  return jsonRequest(`/api/v1/voice/safety-alerts/${alertId}/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      reason_code:
+        action === "confirm" ? "clinician_confirmed" : "clinician_dismissed",
+    }),
+  })
 }
 
 async function createEntry(
@@ -680,58 +853,73 @@ async function revert(
   ).data
 }
 
-async function comments(entryId: string): Promise<CommentPublic[]> {
+async function comments(entryId: string): Promise<ClinicalComment[]> {
   return (
     await CollaborationService.listComments({ path: { entry_id: entryId } })
-  ).data
+  ).data as ClinicalComment[]
 }
 
 async function createComment(
   entryId: string,
   body: CommentCreate,
 ): Promise<CommentPublic> {
-  return (
-    await CollaborationService.createComment({
-      path: { entry_id: entryId },
-      body,
-    })
-  ).data
+  return jsonRequest(`/api/v1/entries/${entryId}/comments`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "If-Match": quotedEtag(body.entry_version_id),
+    },
+    body: JSON.stringify(body),
+  })
 }
 
 async function reply(
   commentId: string,
   body: CommentCreate,
 ): Promise<CommentPublic> {
-  return (
-    await CollaborationService.reply({
-      path: { comment_id: commentId },
-      body,
-    })
-  ).data
+  return jsonRequest(`/api/v1/comments/${commentId}/replies`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "If-Match": quotedEtag(body.entry_version_id),
+    },
+    body: JSON.stringify(body),
+  })
 }
 
-async function resolveComment(commentId: string): Promise<CommentPublic> {
-  return (
-    await CollaborationService.resolve({ path: { comment_id: commentId } })
-  ).data
+async function resolveComment(
+  commentId: string,
+  revision: number,
+): Promise<CommentPublic> {
+  return jsonRequest(`/api/v1/comments/${commentId}/resolve`, {
+    method: "POST",
+    headers: { "If-Match": quotedEtag(String(revision)) },
+  })
 }
 
-async function unresolveComment(commentId: string): Promise<CommentPublic> {
+async function unresolveComment(
+  commentId: string,
+  revision: number,
+): Promise<CommentPublic> {
   return jsonRequest(`/api/v1/comments/${commentId}/unresolve`, {
     method: "POST",
+    headers: { "If-Match": quotedEtag(String(revision)) },
   })
 }
 
 async function assignComment(
   commentId: string,
+  revision: number,
   body: AssignmentUpdate,
-): Promise<CommentPublic> {
-  return (
-    await CollaborationService.assign({
-      path: { comment_id: commentId },
-      body,
-    })
-  ).data
+): Promise<ClinicalComment> {
+  return jsonRequest(`/api/v1/comments/${commentId}/assignment`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "If-Match": quotedEtag(String(revision)),
+    },
+    body: JSON.stringify(body),
+  })
 }
 
 async function acceptHighlight(highlightId: string): Promise<HighlightPublic> {
@@ -789,10 +977,21 @@ async function requestHighlightReview(
   ).data
 }
 
+async function resolveHighlightSupportReview(
+  highlightId: string,
+  resolution: "reaffirm" | "supersede",
+): Promise<HighlightPublic> {
+  return jsonRequest(
+    `/api/v1/highlights/${highlightId}/support-review/${resolution}`,
+    { method: "POST" },
+  )
+}
+
 async function recordImportanceImpression(input: {
   highlightId: string
   viewEventId: string
   rank: number
+  surface: "current_priorities" | "clinical_review"
   exposureProbability: number
   visibleRatio: number
   visibleDurationMs: number
@@ -802,7 +1001,7 @@ async function recordImportanceImpression(input: {
       highlight_id: input.highlightId,
       view_event_id: input.viewEventId,
       rank: input.rank,
-      surface: "current_priorities",
+      surface: input.surface,
       exposure_probability: input.exposureProbability,
       visible_ratio: input.visibleRatio,
       visible_duration_ms: input.visibleDurationMs,
@@ -819,21 +1018,25 @@ async function resolveProvenance(
 }
 
 export type DomainEvent = {
-  id: number | null
+  id: number | string | null
   event: string
   data: {
     aggregate_type: string
     aggregate_id: string
-    payload: Record<string, unknown>
+    payload?: Record<string, unknown>
+    event_type?: string
+    patient_id?: string
+    created_at?: string
   }
 }
 
-export async function streamDomainEvents(
+async function streamEvents(
+  path: string,
   onEvent: (event: DomainEvent) => void,
-  options: { signal: AbortSignal; lastEventId?: number },
+  options: { signal: AbortSignal; lastEventId?: number | string },
 ): Promise<void> {
   const response = await authenticatedFetch(
-    `${import.meta.env.VITE_API_URL ?? ""}/api/v1/events/stream`,
+    `${import.meta.env.VITE_API_URL ?? ""}${path}`,
     {
       credentials: "same-origin",
       headers: {
@@ -858,11 +1061,14 @@ export async function streamDomainEvents(
     buffer = frames.pop() ?? ""
     for (const frame of frames) {
       if (!frame || frame.startsWith(":")) continue
-      let id: number | null = null
+      let id: number | string | null = null
       let event = "message"
       let data = "{}"
       for (const line of frame.split("\n")) {
-        if (line.startsWith("id:")) id = Number(line.slice(3).trim())
+        if (line.startsWith("id:")) {
+          const rawId = line.slice(3).trim()
+          id = /^\d+$/.test(rawId) ? Number(rawId) : rawId
+        }
         if (line.startsWith("event:")) event = line.slice(6).trim()
         if (line.startsWith("data:")) data = line.slice(5).trim()
       }
@@ -876,6 +1082,25 @@ export async function streamDomainEvents(
   }
 }
 
+export function streamDomainEvents(
+  onEvent: (event: DomainEvent) => void,
+  options: { signal: AbortSignal; lastEventId?: number },
+): Promise<void> {
+  return streamEvents("/api/v1/events/stream", onEvent, options)
+}
+
+export function streamPatientEvents(
+  patientId: string,
+  onEvent: (event: DomainEvent) => void,
+  options: { signal: AbortSignal; lastEventId?: number | string },
+): Promise<void> {
+  return streamEvents(
+    `/api/v1/patients/${patientId}/portal-events/stream`,
+    onEvent,
+    options,
+  )
+}
+
 export const authApi = {
   demoLogin,
   passwordLogin,
@@ -886,6 +1111,12 @@ export const authApi = {
 export const patientInvitationApi = {
   preview: previewPatientInvitation,
   accept: acceptPatientInvitation,
+  requestEnrollmentOtp: requestPatientEnrollmentOtp,
+  acceptPhone: acceptPatientPhoneInvitation,
+}
+export const patientAccessApi = {
+  requestLoginOtp: requestPatientLoginOtp,
+  verifyOtp: verifyPatientLoginOtp,
 }
 export const adminApi = {
   memberships,
@@ -901,6 +1132,9 @@ export const patientSafeApi = {
   timeline: patientTimeline,
   glance: patientSafeGlance,
   publicationReceipts: patientPublicationReceipts,
+  acknowledgePublication: acknowledgePatientPublication,
+  portalEvents: patientPortalEvents,
+  streamEvents: streamPatientEvents,
   resolveProvenance,
   createInsight: createPatientInsight,
 }
@@ -909,6 +1143,8 @@ export const clinicalApi = {
   patients,
   patientDirectory,
   timeline: clinicalTimeline,
+  readEntry: readClinicalEntry,
+  heartbeatEditorPresence,
   glance,
   createEntry,
   patchEntry,
@@ -927,12 +1163,22 @@ export const clinicalApi = {
   dismissHighlight,
   decisionExplanation,
   requestHighlightReview,
+  reaffirmHighlightSupport: (highlightId: string) =>
+    resolveHighlightSupportReview(highlightId, "reaffirm"),
+  supersedeHighlightSupport: (highlightId: string) =>
+    resolveHighlightSupportReview(highlightId, "supersede"),
   recordImportanceImpression,
   resolveProvenance,
   duplicateCheck,
   createPatientRecord,
   patientDetail,
   invitePatient,
+  revokePatientAccess,
+  recoverPatientAccess,
+  notificationDeliveries,
+  createAppointmentNotification,
+  resendNotification,
+  revokeNotification,
   patientClinicalFacts,
   patientConflicts,
   resolveConflict,
@@ -941,4 +1187,10 @@ export const clinicalApi = {
   patientPublications,
   approvePatientSharing,
   withdrawPatientPublication,
+  correctPatientPublication,
+  liveSafetyAlerts,
+  confirmLiveSafetyAlert: (alertId: string) =>
+    updateLiveSafetyAlert(alertId, "confirm"),
+  dismissLiveSafetyAlert: (alertId: string) =>
+    updateLiveSafetyAlert(alertId, "dismiss"),
 }

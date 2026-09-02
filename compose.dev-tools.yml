@@ -6,15 +6,26 @@ services:
     command:
       - --providers.docker
       - --providers.docker.exposedbydefault=false
+      - '--providers.docker.constraints=Label(`com.docker.compose.project`,`${COMPOSE_PROJECT_NAME}`)'
       - --entrypoints.http.address=:80
       - --entrypoints.http.http.redirections.entrypoint.to=https
       - --entrypoints.http.http.redirections.entrypoint.scheme=https
       - --entrypoints.https.address=:443
       - --entrypoints.traefik.address=:8080
       - --api.insecure=true
+      # The opt-in dashboard must not weaken the production-safe access sink.
+      # Keep only bounded operational fields; never raw URL/query/header data.
       - --accesslog
+      - --accesslog.format=json
+      - --accesslog.fields.defaultmode=drop
+      - --accesslog.fields.names.StartUTC=keep
+      - --accesslog.fields.names.Duration=keep
+      - --accesslog.fields.names.RequestMethod=keep
+      - --accesslog.fields.names.RouterName=keep
+      - --accesslog.fields.names.ServiceName=keep
+      - --accesslog.fields.names.DownstreamStatus=keep
       - --log
-      - --log.level=DEBUG
+      - --log.level=INFO
 
   db:
     ports:

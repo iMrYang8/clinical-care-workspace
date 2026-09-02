@@ -20,7 +20,7 @@ import { getInitials } from "@/utils"
 
 interface UserInfoProps {
   fullName?: string | null
-  email?: string
+  email?: string | null
 }
 
 const roleLabels: Record<MePublic["role"], string> = {
@@ -32,16 +32,20 @@ const roleLabels: Record<MePublic["role"], string> = {
 }
 
 function UserInfo({ fullName, email }: UserInfoProps) {
+  const primaryLabel = fullName || "Portal user"
+  const secondaryLabel = email || "Portal ID and one-time code"
   return (
     <div className="flex items-center gap-2.5 w-full min-w-0">
       <Avatar className="size-8">
         <AvatarFallback className="bg-primary text-primary-foreground">
-          {getInitials(fullName || "User")}
+          {getInitials(primaryLabel)}
         </AvatarFallback>
       </Avatar>
       <div className="flex flex-col items-start min-w-0">
-        <p className="text-sm font-medium truncate w-full">{fullName}</p>
-        <p className="text-xs text-muted-foreground truncate w-full">{email}</p>
+        <p className="text-sm font-medium truncate w-full">{primaryLabel}</p>
+        <p className="text-xs text-muted-foreground truncate w-full">
+          {secondaryLabel}
+        </p>
       </div>
     </div>
   )

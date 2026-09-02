@@ -127,6 +127,15 @@ def transcribe_local_sync(model_dir: Path, audio_path: Path) -> TranscriptResult
         local_files_only=True,
     )
     generated, info = model.transcribe(str(audio_path), vad_filter=True)
+    source_language = getattr(info, "language", None)
+    raw_language_confidence = getattr(info, "language_probability", None)
+    language_confidence = (
+        float(raw_language_confidence)
+        if isinstance(raw_language_confidence, (float, int))
+        and not isinstance(raw_language_confidence, bool)
+        and 0 <= float(raw_language_confidence) <= 1
+        else None
+    )
     pieces: list[str] = []
     segments: list[TranscriptSegmentResult] = []
     cursor = 0
@@ -143,12 +152,14 @@ def transcribe_local_sync(model_dir: Path, audio_path: Path) -> TranscriptResult
                 start_ms=int(float(raw.start) * 1_000),
                 end_ms=int(float(raw.end) * 1_000),
                 speaker_id=None,
-                detected_language=getattr(info, "language", None),
+                detected_language=source_language,
                 confidence=None,
                 confidence_source="unavailable",
                 overlap_group_id=None,
                 text_start=text_start,
                 text_end=text_start + len(segment_text),
+                source_language=source_language,
+                language_confidence=language_confidence,
             )
         )
     result = TranscriptResult(
@@ -156,7 +167,7 @@ def transcribe_local_sync(model_dir: Path, audio_path: Path) -> TranscriptResult
         segments=segments,
         provider=LocalFasterWhisperProvider.provider_name,
         model=model_dir.name,
-        detected_language=getattr(info, "language", None),
+        detected_language=source_language,
         warnings=("LOCAL_ASR_NO_DIARIZATION",),
     )
     return validate_transcript_result(result)

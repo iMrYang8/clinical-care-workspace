@@ -283,7 +283,12 @@ def test_admin_cannot_edit_clinical_body_and_worker_is_system_only(
         f"/api/v1/patients/{patient_id}/glance", headers=admin_headers
     )
     assert admin_glance.status_code == 200
-    pointer_id = admin_glance.json()["cards"][0]["provenance_pointer_id"]
+    accepted_review_card = next(
+        card
+        for card in admin_glance.json()["review_cards"]
+        if card["highlight_id"] == highlight.json()["id"]
+    )
+    pointer_id = accepted_review_card["provenance_pointer_id"]
     assert (
         client.get(
             f"/api/v1/provenance/{pointer_id}/resolve", headers=admin_headers

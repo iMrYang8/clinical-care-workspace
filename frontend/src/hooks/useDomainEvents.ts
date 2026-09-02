@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 
-import { streamDomainEvents } from "@/features/api"
+import { type DomainEvent, streamDomainEvents } from "@/features/api"
 
 function waitForReconnect(signal: AbortSignal, milliseconds: number) {
   return new Promise<void>((resolve) => {
@@ -15,8 +15,17 @@ function waitForReconnect(signal: AbortSignal, milliseconds: number) {
   })
 }
 
-export function useDomainEvents(enabled: boolean, clinicId: string): void {
+export function useDomainEvents(
+  enabled: boolean,
+  clinicId: string,
+  onEvent?: (event: DomainEvent) => void,
+): void {
   const queryClient = useQueryClient()
+  const onEventRef = useRef(onEvent)
+
+  useEffect(() => {
+    onEventRef.current = onEvent
+  }, [onEvent])
 
   useEffect(() => {
     if (!enabled) return
@@ -46,12 +55,13 @@ export function useDomainEvents(enabled: boolean, clinicId: string): void {
         try {
           await streamDomainEvents(
             (event) => {
-              if (event.id !== null && Number.isFinite(event.id)) {
+              if (typeof event.id === "number" && Number.isFinite(event.id)) {
                 lastEventId = event.id
                 window.sessionStorage.setItem(cursorKey, String(event.id))
               }
               retryDelay = 1_000
-              scheduleInvalidation()
+              onEventRef.current?.(event)
+              if (event.event !== "editor_presence") scheduleInvalidation()
             },
             { signal: controller.signal, lastEventId },
           )

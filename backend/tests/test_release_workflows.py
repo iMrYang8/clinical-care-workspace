@@ -122,6 +122,7 @@ def test_release_verification_live_gate_checks_https_worker_and_image_revision()
     assert '"https://localhost:${live_https_port}/api/v1/utils/health-check/"' in script
     assert "org.opencontainers.image.revision" in script
     assert "app.ai_worker" in script
+    assert "--retries=0" in script
 
 
 def test_runtime_container_excludes_dev_group_from_both_sync_layers() -> None:
@@ -135,6 +136,7 @@ def test_playwright_required_check_always_runs_and_cannot_allow_skip() -> None:
     assert "paths-filter" not in workflow
     assert "allowed-skips" not in workflow
     assert "needs:\n      - test-playwright" in workflow
+    assert "--retries=0" in workflow
     assert "--repeat-each=3 --workers=1" in workflow
     assert "run --rm --no-deps playwright" in workflow
     assert "COMPOSE_PROJECT_NAME: nightingale-playwright-" in workflow

@@ -2,6 +2,7 @@ import json
 import uuid
 from asyncio import sleep
 from collections.abc import AsyncIterator
+from datetime import datetime
 from time import monotonic
 from time import time as wall_time
 
@@ -11,7 +12,7 @@ from sqlmodel import Session, col, select
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import EventContext
-from app.core.db import engine, set_rls_clinic
+from app.core.db import engine, set_rls_actor, set_rls_clinic
 from app.models import ClinicMembership, DomainEvent, User
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -36,6 +37,10 @@ def _load_events(
 
     with Session(engine) as session:
         set_rls_clinic(session, clinic_id)
+        # The signed SSE credential supplies the actor identity.  Membership
+        # self-bootstrap RLS exposes only this actor's row; after validating it
+        # we bind the live role before reading tenant events.
+        set_rls_actor(session, user_id)
         identity = session.exec(
             select(ClinicMembership, User)
             .join(User, col(User.id) == ClinicMembership.user_id)
@@ -55,6 +60,7 @@ def _load_events(
             or membership.role not in {"staff", "clinician"}
         ):
             return None
+        set_rls_actor(session, user_id, role=membership.role)
         return list(
             session.exec(
                 select(DomainEvent)
@@ -81,6 +87,23 @@ def _event_frame(event: DomainEvent) -> str:
             separators=(",", ":"),
         ),
     )
+
+
+def _presence_event_is_live(event: DomainEvent, *, now_epoch: float) -> bool:
+    """Fail closed when a persisted presence heartbeat is stale or malformed."""
+
+    if event.event_type != "editor_presence":
+        return True
+    raw_expiry = event.payload_json.get("expires_at")
+    if not isinstance(raw_expiry, str):
+        return False
+    try:
+        expiry = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+        if expiry.tzinfo is None:
+            return False
+        return expiry.timestamp() > now_epoch
+    except (ValueError, OverflowError, OSError):
+        return False
 
 
 async def _frames(
@@ -116,6 +139,8 @@ async def _frames(
             if event.sequence_no is None:
                 continue
             cursor = event.sequence_no
+            if not _presence_event_is_live(event, now_epoch=wall_time()):
+                continue
             yield _event_frame(event)
         if snapshot:
             if wall_time() >= expires_at_epoch:

@@ -1,7 +1,14 @@
 import { useQuery } from "@tanstack/react-query"
 import { EditorContent, useEditor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
-import { Link2, LoaderCircle, MessageSquarePlus, Save, X } from "lucide-react"
+import {
+  Link2,
+  LoaderCircle,
+  MessageSquarePlus,
+  Save,
+  Users,
+  X,
+} from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
 import type { CommentCreate, CommentPublic } from "@/client"
@@ -22,6 +29,10 @@ import {
   markCommentSelection,
   selectionToCanonicalAnchor,
 } from "@/features/care-note/CommentAnchorAdapter"
+import {
+  currentOtherEditors,
+  type EditorPresenceRecord,
+} from "@/features/editorPresence"
 import { VersionConflictDialog } from "./VersionConflictDialog"
 
 export type EntryDraft = {
@@ -31,12 +42,20 @@ export type EntryDraft = {
 }
 
 type EntryEditorProps = {
+  actorId: string
+  entryId: string
   initialDraft: EntryDraft
   versionId: string
   currentVersionId?: string
+  editorPresence?: EditorPresenceRecord[]
   onSave: (draft: EntryDraft, baseVersionId: string) => Promise<void>
+  onLoadLatest?: () => Promise<{
+    draft: EntryDraft
+    versionId: string
+  }>
   onCancel: () => void
   onCreateComment?: (body: CommentCreate) => Promise<CommentPublic>
+  onPresence?: (presence: EditorPresenceRecord) => void
   onReviewVersions?: () => void
 }
 
@@ -66,26 +85,59 @@ function memberLabel(member: TeamMemberOption): string {
   return `${member.full_name?.trim() || roleLabel[member.role]} — ${roleLabel[member.role]}`
 }
 
+const PRESENCE_HEARTBEAT_MS = 20_000
+const PRESENCE_EXPIRY_REFRESH_MS = 5_000
+
+function presenceDisplayName(editor: EditorPresenceRecord): string {
+  return (
+    editor.actor_display_name ??
+    (editor.actor_role === "clinician"
+      ? "Another clinician"
+      : "Another care staff member")
+  )
+}
+
+function presenceMessage(editors: EditorPresenceRecord[]): string {
+  const names = editors.slice(0, 2).map(presenceDisplayName)
+  if (editors.length === 1)
+    return `${names[0]} is also editing this saved version.`
+  if (editors.length === 2)
+    return `${names[0]} and ${names[1]} are also editing this saved version.`
+  return `${names[0]}, ${names[1]}, and ${editors.length - 2} other care team ${editors.length === 3 ? "member" : "members"} are also editing this saved version.`
+}
+
 export function EntryEditor({
+  actorId,
+  entryId,
   initialDraft,
   versionId,
   currentVersionId = versionId,
+  editorPresence = [],
   onSave,
+  onLoadLatest,
   onCancel,
   onCreateComment,
+  onPresence,
   onReviewVersions,
 }: EntryEditorProps) {
-  const baseVersionId = useRef(versionId).current
+  const [baseVersionId, setBaseVersionId] = useState(versionId)
+  const observedCurrentVersionId = useRef(currentVersionId)
   const [draft, setDraft] = useState(initialDraft)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<VersionConflict | null>(null)
+  const [latestForReconciliation, setLatestForReconciliation] = useState<{
+    draft: EntryDraft
+    versionId: string
+  } | null>(null)
+  const [loadingLatest, setLoadingLatest] = useState(false)
   const [captured, setCaptured] = useState<CapturedSelection | null>(null)
   const [commentBody, setCommentBody] = useState("")
   const [mentionUserId, setMentionUserId] = useState("")
   const [assignmentMembershipId, setAssignmentMembershipId] = useState("")
   const [commentPending, setCommentPending] = useState(false)
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
+  const [presenceNow, setPresenceNow] = useState(() => Date.now())
   const teamQuery = useQuery({
     queryKey: ["team", "members"],
     queryFn: clinicalApi.teamMembers,
@@ -136,6 +188,39 @@ export function EntryEditor({
   useEffect(() => () => editor?.destroy(), [editor])
 
   useEffect(() => {
+    const interval = window.setInterval(
+      () => setPresenceNow(Date.now()),
+      PRESENCE_EXPIRY_REFRESH_MS,
+    )
+    return () => window.clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const heartbeat = async () => {
+      try {
+        const presence = await clinicalApi.heartbeatEditorPresence(
+          entryId,
+          baseVersionId,
+          controller.signal,
+        )
+        if (!controller.signal.aborted) onPresence?.(presence)
+      } catch {
+        // Presence is advisory. ETag enforcement remains the save boundary
+        // when a heartbeat is delayed or the event stream is unavailable.
+      }
+    }
+    void heartbeat()
+    const interval = window.setInterval(heartbeat, PRESENCE_HEARTBEAT_MS)
+    return () => {
+      controller.abort()
+      window.clearInterval(interval)
+    }
+  }, [baseVersionId, entryId, onPresence])
+
+  useEffect(() => {
+    if (currentVersionId === observedCurrentVersionId.current) return
+    observedCurrentVersionId.current = currentVersionId
     if (currentVersionId === baseVersionId) return
     setConflict({
       code: "VERSION_CONFLICT",
@@ -157,6 +242,29 @@ export function EntryEditor({
     } finally {
       setIsSaving(false)
     }
+  }
+
+  const loadLatest = async () => {
+    if (!onLoadLatest) return
+    setLoadingLatest(true)
+    setError(null)
+    try {
+      setLatestForReconciliation(await onLoadLatest())
+    } catch (caught) {
+      setError(apiErrorMessage(caught))
+    } finally {
+      setLoadingLatest(false)
+    }
+  }
+
+  const applyReconciled = (reconciled: EntryDraft) => {
+    if (!latestForReconciliation) return
+    setDraft(reconciled)
+    editor?.commands.setContent(textDocument(reconciled.content))
+    setBaseVersionId(latestForReconciliation.versionId)
+    setLatestForReconciliation(null)
+    setConflict(null)
+    setError(null)
   }
 
   const captureComment = () => {
@@ -208,8 +316,28 @@ export function EntryEditor({
     }
   }
 
+  const otherEditors = currentOtherEditors(
+    editorPresence,
+    baseVersionId,
+    actorId,
+    presenceNow,
+  )
+
   return (
     <div className="space-y-4">
+      {otherEditors.length > 0 && (
+        <Alert
+          aria-live="polite"
+          className="border-warning/40 bg-warning-muted text-warning-muted-foreground"
+          role="status"
+        >
+          <Users className="size-4" />
+          <AlertDescription>
+            {presenceMessage(otherEditors)} Your draft remains local until you
+            save; review any version conflict before publishing changes.
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="grid gap-2">
         <Label htmlFor={`entry-title-${baseVersionId}`}>Entry title</Label>
         <Input
@@ -383,7 +511,12 @@ export function EntryEditor({
       <VersionConflictDialog
         conflict={conflict}
         draftContent={draft.content}
+        draftPatientFacing={draft.patient_facing}
         draftTitle={draft.title}
+        latestDraft={latestForReconciliation?.draft}
+        loadingLatest={loadingLatest}
+        onApplyReconciled={applyReconciled}
+        onLoadLatest={onLoadLatest ? loadLatest : undefined}
         onOpenChange={(open) => !open && setConflict(null)}
         onReviewVersions={onReviewVersions}
         open={conflict !== null}

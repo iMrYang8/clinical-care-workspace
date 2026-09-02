@@ -182,11 +182,13 @@ export async function connectLiveTranscript({
   let committed = false
   let deliberatelyClosed = false
   let completed = false
+  let finalCompleted = false
   let serverTerminalStatus = false
-  let completedResolve: (() => void) | undefined
-  const completedPromise = new Promise<void>((resolve) => {
-    completedResolve = resolve
+  let finalCompletedResolve: (() => void) | undefined
+  const finalCompletedPromise = new Promise<void>((resolve) => {
+    finalCompletedResolve = resolve
   })
+  const completedTurns: string[] = []
 
   const stopPcm = async () => {
     pcmEpoch += 1
@@ -297,8 +299,17 @@ export async function connectLiveTranscript({
       typeof event.text === "string"
     ) {
       completed = true
-      onCompleted(event.text)
-      completedResolve?.()
+      const existing = completedTurns.join(" ")
+      if (existing && event.text.startsWith(existing)) {
+        completedTurns.splice(0, completedTurns.length, event.text)
+      } else if (!completedTurns.includes(event.text)) {
+        completedTurns.push(event.text)
+      }
+      onCompleted(completedTurns.join(" "))
+      if (committed) {
+        finalCompleted = true
+        finalCompletedResolve?.()
+      }
     }
   })
   socket.addEventListener("error", () => {
@@ -310,7 +321,7 @@ export async function connectLiveTranscript({
       serverTerminalStatus = true
       markNeedsReview("LIVE_TRANSCRIPT_DISCONNECTED")
     }
-    completedResolve?.()
+    if (committed) finalCompletedResolve?.()
   })
 
   return {
@@ -334,12 +345,12 @@ export async function connectLiveTranscript({
       if (socket.readyState === 1) {
         socket.send(JSON.stringify({ type: "commit" }))
         await Promise.race([
-          completedPromise,
+          finalCompletedPromise,
           new Promise<void>((resolve) =>
             window.setTimeout(resolve, LIVE_COMMIT_WAIT_MS),
           ),
         ])
-        if (!completed && !serverTerminalStatus) {
+        if (!finalCompleted && !serverTerminalStatus) {
           markNeedsReview("LIVE_TRANSCRIPT_COMPLETION_TIMEOUT")
         }
       } else {

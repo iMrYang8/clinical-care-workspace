@@ -141,6 +141,8 @@ def update_ai_settings(
 
 
 def _public(user: User, membership: ClinicMembership) -> MembershipPublic:
+    if user.email is None:
+        raise HTTPException(status_code=409, detail="Staff email is unavailable")
     return MembershipPublic(
         id=membership.id,
         user_id=user.id,
@@ -369,9 +371,13 @@ def deactivate_membership(
         resource_id=membership.id,
         metadata={"role": membership.role},
     )
+    # Once the membership is inactive, strict User RLS deliberately hides the
+    # target identity even from the clinic directory. Materialize the response
+    # while the locked identity row is still visible, then commit the removal.
+    session.flush()
+    response = _public(user, membership)
     session.commit()
-    session.refresh(membership)
-    return _public(user, membership)
+    return response
 
 
 @router.get("/audit", response_model=AuditEventsPublic)
@@ -406,6 +412,10 @@ def audit_events(
                 resource_id=event.resource_id,
                 version_id=version_id,
                 created_at=event.created_at,
+                reason_code=event.reason_code,
+                clinical_rationale_present=(
+                    event.clinical_rationale_ciphertext is not None
+                ),
             )
         )
     return AuditEventsPublic(data=data, count=len(data))

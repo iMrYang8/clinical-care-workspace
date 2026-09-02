@@ -84,3 +84,34 @@ def test_distributed_notices_bind_the_exact_ffmpeg_evidence_digest() -> None:
         )
         assert match, f"{notice} has no FFmpeg evidence digest declaration"
         assert match.group(1) == expected
+
+
+def test_ffmpeg_inventory_binds_the_exact_release_candidate() -> None:
+    evidence = ROOT / "docs" / "evidence" / "ffmpeg-container-version.txt"
+    release = ROOT / "docs" / "evidence" / "release-candidate.txt"
+    expected_digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    evidence_values = dict(
+        line.split("=", 1) for line in evidence.read_text().splitlines()[:3]
+    )
+    release_values = dict(
+        line.split("=", 1) for line in release.read_text().splitlines() if "=" in line
+    )
+    source_commit = evidence_values["nightingale_source_commit"]
+    image_id = evidence_values["backend_image_id"]
+    verification_date = release_values["verification_date_utc"]
+
+    assert evidence_values["backend_image_revision_label"] == source_commit
+    assert release_values["source_commit"] == source_commit
+    assert release_values["verified_backend_image_id"] == image_id
+
+    for manifest in (
+        ROOT / "THIRD_PARTY_NOTICES.md",
+        ROOT / "THIRD_PARTY_LICENSES" / "THIRD_PARTY_NOTICES.md",
+        ROOT / "MODEL_INVENTORY.md",
+    ):
+        content = manifest.read_text()
+        assert expected_digest in content
+        assert source_commit in content
+        assert image_id in content
+        assert verification_date in content
+        assert "Debian amd64" in content

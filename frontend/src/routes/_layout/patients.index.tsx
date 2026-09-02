@@ -105,7 +105,7 @@ function PatientCard({
                 </p>
               )
             )}
-            {patient.same_name_count > 1 && (
+            {(patient.same_name_count ?? 0) > 1 && (
               <Badge
                 className="mt-2 border-warning/40 bg-warning-muted text-warning-muted-foreground"
                 variant="outline"

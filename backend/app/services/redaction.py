@@ -12,6 +12,7 @@ from functools import lru_cache
 from typing import Protocol
 
 from app.core.field_crypto import field_codec
+from app.services.egress import RemoteClinicalNoteProvider, TextModelEgressGateway
 from app.services.providers.base import (
     ClinicalNoteDraft,
     ClinicalNoteProvider,
@@ -282,7 +283,7 @@ class ClinicalScribePipeline:
         *,
         context: ExtractionContext,
         known_names: list[str] | None = None,
-        remote_provider: ClinicalNoteProvider | None = None,
+        remote_provider: RemoteClinicalNoteProvider | None = None,
     ) -> PipelineResult:
         redaction = self.redaction_service.redact(
             source_text,
@@ -291,14 +292,21 @@ class ClinicalScribePipeline:
             known_names=known_names,
         )
         use_remote = remote_provider is not None and redaction.remote_egress_allowed
-        provider = remote_provider if use_remote else self.fallback_provider
-        assert provider is not None
-        provider_text = (
-            redaction.redacted_text if use_remote else redaction.normalized_text
-        )
-        draft = validate_evidence(
-            await provider.extract(provider_text, context), provider_text
-        )
+        if use_remote:
+            assert remote_provider is not None
+            provider_text = redaction.redacted_text
+            draft = validate_evidence(
+                await TextModelEgressGateway(remote_provider).extract(
+                    redaction, context
+                ),
+                provider_text,
+            )
+        else:
+            provider_text = redaction.normalized_text
+            draft = validate_evidence(
+                await self.fallback_provider.extract(provider_text, context),
+                provider_text,
+            )
         if redaction.needs_review and not draft.needs_review:
             draft = ClinicalNoteDraft(
                 summary=draft.summary,

@@ -31,7 +31,9 @@ def provision_platform_administrator(
         session.add(user)
         session.flush()
     else:
-        matches, _ = verify_password(password, user.hashed_password)
+        matches = False
+        if user.account_kind == "staff" and user.hashed_password is not None:
+            matches, _ = verify_password(password, user.hashed_password)
         if not matches or not user.is_active:
             raise RuntimeError("PLATFORM_ADMIN_IDENTITY_CONFLICT")
     administrator = session.exec(
