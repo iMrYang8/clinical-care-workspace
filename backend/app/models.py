@@ -831,6 +831,11 @@ class NotificationOutbox(TenantRow, table=True):
             "available_at",
         ),
         Index("ix_notification_patient", "clinic_id", "patient_id", "created_at"),
+        Index(
+            "ix_notification_portal_invitation",
+            "clinic_id",
+            "portal_invitation_id",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     patient_id: uuid.UUID | None = None
@@ -1337,6 +1342,11 @@ class Highlight(TenantRow, table=True):
             "NOT (feature_keys_json @> '[\"entity:allergy\"]'::jsonb) "
             "OR learned_score >= 0",
             name="ck_highlight_allergy_learning_floor",
+        ),
+        CheckConstraint(
+            "NOT (feature_keys_json @> '[\"entity:medication\"]'::jsonb) "
+            "OR learned_score >= 0",
+            name="ck_highlight_medication_learning_floor",
         ),
         Index("ix_highlight_patient_status", "patient_id", "status", "pinned"),
         ForeignKeyConstraint(

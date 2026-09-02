@@ -71,6 +71,7 @@ from app.services.clinical_formulary import screen_clinic_medication_regimen
 from app.services.conflicts import recompute_highlight_conflict_state
 from app.services.decay import lock_active_version_for_protection
 from app.services.decisioning import (
+    ai_assessment_coverage,
     assessment_review_state,
     create_assertion,
     decision_payload,
@@ -2042,6 +2043,7 @@ def _publish_for_patient(
             )
             .where(
                 DecisionAssessment.clinic_id == context.clinic_id,
+                Highlight.clinic_id == context.clinic_id,
                 Highlight.source_entry_version_id == source.id,
             )
         ).all()
@@ -2061,8 +2063,25 @@ def _publish_for_patient(
                 status_code=409,
                 detail={"code": "DECISION_ASSESSMENT_NOT_PUBLISHABLE"},
             )
+        # Containment in one direction is not enough: it would let a pointer
+        # whose highlight was never assessed publish alongside assessed ones,
+        # and the publication item below would then record it as human
+        # asserted. Every published claim must be an assessed claim, and every
+        # model-derived highlight on this version must be published.
         pointer_highlight_ids = {pointer.highlight_id for pointer in pointers}
-        if any(item.highlight_id not in pointer_highlight_ids for item in assessments):
+        assessed_highlight_ids = {item.highlight_id for item in assessments}
+        coverage = ai_assessment_coverage(
+            session,
+            clinic_id=context.clinic_id,
+            patient_id=entry.patient_id,
+            source_entry_version_id=source.id,
+        )
+        if (
+            None in pointer_highlight_ids
+            or pointer_highlight_ids != assessed_highlight_ids
+            or not coverage.complete
+            or coverage.expected_highlight_ids != assessed_highlight_ids
+        ):
             raise HTTPException(
                 status_code=409,
                 detail={"code": "CLAIM_LEVEL_PROVENANCE_REQUIRED"},
@@ -2128,6 +2147,14 @@ def _publish_for_patient(
                 ClinicalFactAssertion.provenance_pointer_id == pointer.id,
             )
         ).first()
+        if assessment is None and entry.origin in {"ai", "system"}:
+            # The equality gate above makes this unreachable. Recording a
+            # model-derived claim as human asserted would be a false provenance
+            # statement in the patient-visible record, so fail instead.
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "CLAIM_LEVEL_PROVENANCE_REQUIRED"},
+            )
         session.add(
             PatientPublicationItem(
                 clinic_id=context.clinic_id,

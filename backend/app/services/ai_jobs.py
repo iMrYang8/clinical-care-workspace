@@ -47,6 +47,7 @@ from app.models import (
 from app.services.clinic_ai_settings import clinic_ai_runtime
 from app.services.conflicts import NormalizedFact, extract_normalized_facts
 from app.services.decisioning import (
+    ai_assessment_coverage,
     create_assertion,
     deterministic_risk,
     evaluation_manifest_sha256,
@@ -323,6 +324,21 @@ def _job_confidence(
         return (
             "review_required",
             ["JOB_CONFIDENCE_ASSESSMENT_UNAVAILABLE"],
+            True,
+        )
+    # Enumerating assessments cannot see a model-derived highlight that never
+    # received one, so the expected population is queried independently. A
+    # partially assessed job is not a qualified job.
+    coverage = ai_assessment_coverage(
+        session,
+        clinic_id=job.clinic_id,
+        patient_id=job.patient_id,
+        source_entry_version_id=run.source_entry_version_id,
+    )
+    if not coverage.complete:
+        return (
+            "review_required",
+            ["JOB_CONFIDENCE_ASSESSMENT_INCOMPLETE"],
             True,
         )
 
@@ -1182,6 +1198,17 @@ def _reuse_ai_candidate(
     ).first()
     if pointer is None or assertion is None:
         raise _InternalJobError("AI_CANDIDATE_PROVENANCE_INCOMPLETE")
+    # A reused candidate never re-enters the assessment branch, and the
+    # (clinic, highlight) uniqueness means it can never acquire one later, so a
+    # missing assessment here would be permanent.
+    reused_assessment = session.exec(
+        select(DecisionAssessment).where(
+            DecisionAssessment.clinic_id == context.clinic_id,
+            DecisionAssessment.highlight_id == highlight.id,
+        )
+    ).first()
+    if reused_assessment is None:
+        raise _InternalJobError("AI_CANDIDATE_ASSESSMENT_MISSING")
 
     from app.services.conflicts import detect_conflicts_for_assertion
 

@@ -31,6 +31,7 @@ from app.models import (
     PatientAccessCredential,
     PatientPortalInvitation,
     PatientUserLink,
+    PlatformAdministrator,
     ProvenancePointer,
     User,
     get_datetime_utc,
@@ -1245,3 +1246,66 @@ def test_legacy_patient_invitation_bootstrap_requires_exact_secret_and_email(
     assert user.account_kind == "patient"
     assert membership.role == "patient"
     assert link.patient_id == patient_id
+
+
+def test_platform_oversight_tables_are_isolated_from_clinic_sessions() -> None:
+    """Cross-clinic oversight rows are unreadable outside a platform session.
+
+    These two tables are the only runtime-writable tables with no clinic_id, so
+    the clinic-scoped installer skips them. They need their own actor fence, or
+    any authenticated clinic session could enumerate platform operators.
+    """
+
+    platform_tables = ("platform_administrators", "platform_audit_events")
+
+    with engine.connect() as connection:
+        security = {
+            row.relname: (row.relrowsecurity, row.relforcerowsecurity)
+            for row in connection.execute(
+                text(
+                    """
+                    SELECT class_info.relname,
+                           class_info.relrowsecurity,
+                           class_info.relforcerowsecurity
+                    FROM pg_class AS class_info
+                    JOIN pg_namespace AS namespace_info
+                      ON namespace_info.oid = class_info.relnamespace
+                    WHERE class_info.relkind = 'r'
+                      AND namespace_info.nspname = current_schema()
+                      AND class_info.relname = ANY(:tables)
+                    """
+                ),
+                {"tables": list(platform_tables)},
+            ).all()
+        }
+        policies = {
+            (row.tablename, row.policyname)
+            for row in connection.execute(
+                text(
+                    "SELECT tablename, policyname FROM pg_policies "
+                    "WHERE tablename = ANY(:tables)"
+                ),
+                {"tables": list(platform_tables)},
+            ).all()
+        }
+
+    assert security == {table: (True, True) for table in platform_tables}
+    assert policies == {(table, "platform_actor_scope") for table in platform_tables}
+
+    # The clinician GUC bound by the test fixture must see nothing.
+    with Session(engine) as clinic_session:
+        assert (
+            clinic_session.exec(select(PlatformAdministrator)).all() == []
+        )
+
+    # A platform actor context sees the seeded operator through the same role.
+    with Session(engine) as platform_session:
+        set_rls_actor(
+            platform_session,
+            demo_id("user-platform-administrator"),
+            role="platform_admin",
+        )
+        administrators = platform_session.exec(select(PlatformAdministrator)).all()
+        assert [item.id for item in administrators] == [
+            demo_id("platform-administrator")
+        ]

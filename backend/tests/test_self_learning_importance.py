@@ -108,6 +108,17 @@ def test_protected_highlight_ignores_negative_learned_score() -> None:
     assert allergy.learned == 0
     assert allergy.final == allergy.base
 
+    medication = calculate_score(
+        critical=False,
+        unresolved=False,
+        clinician_confirmed=False,
+        feature_keys=["entity:medication"],
+        feature_weights={"entity:medication": -0.2},
+        age_days=0,
+    )
+    assert medication.learned == 0
+    assert medication.final == medication.base
+
 
 def _create_allergy_highlight(
     client: TestClient,
@@ -427,7 +438,45 @@ def test_allergy_feedback_is_telemetry_only_and_cannot_hide_the_priority(
     # evidence; it is not a fatigue action and therefore is not counted above.
     manual_events = [event for event in events if event.signal == "manual"]
     assert len(manual_events) == 1
-    assert manual_events[0].applied_delta == 0
+
+
+def test_medication_feedback_is_telemetry_only_and_cannot_learn_a_negative_weight(
+    client: TestClient,
+    auth_headers,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_session: Session,
+) -> None:
+    monkeypatch.setattr(settings, "IMPORTANCE_LEARNING_MODE", "active")
+    _persist_active_qualification(owner_session)
+    headers = auth_headers("clinician")
+    highlight = _create_allergy_highlight(
+        client, headers, section="clinician", feature_key="entity:medication"
+    )
+
+    for index in range(8):
+        fatigue = client.post(
+            f"/api/v1/highlights/{highlight['id']}/feedback",
+            headers=headers | {"Idempotency-Key": f"medication-fatigue-{index}"},
+            json={"signal": "dismiss", "reason": "too_busy_to_review"},
+        )
+        assert fatigue.status_code == 200, fatigue.text
+        assert fatigue.json()["learned_score"] == 0
+
+    with Session(engine) as session:
+        stat = session.exec(
+            select(ImportanceFeatureStat).where(
+                ImportanceFeatureStat.feature_key == "entity:medication"
+            )
+        ).first()
+        events = session.exec(
+            select(ImportanceFeedbackEvent).where(
+                ImportanceFeedbackEvent.highlight_id == uuid.UUID(highlight["id"]),
+                ImportanceFeedbackEvent.reason == "too_busy_to_review",
+            )
+        ).all()
+    assert stat is None
+    assert len(events) == 8
+    assert all(event.applied_delta == 0 for event in events)
 
 
 def test_dismiss_feedback_is_negative_idempotent_and_resource_bound(
