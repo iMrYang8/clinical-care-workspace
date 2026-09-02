@@ -8,7 +8,14 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 SNAPSHOT = BACKEND / "app" / "services" / "voice" / "_sandbox" / "trilingual_consult"
 SIBLING = BACKEND.parents[1] / "trilingual-consult" / "src" / "trilingual_consult"
-_SKIP_NAMES = {"cli.py", "eval.py", "report.py", "__main__.py"}
+_SKIP_NAMES = {
+    "cli.py",
+    "eval.py",
+    "eval_audio.py",
+    "report.py",
+    "polywer.py",
+    "__main__.py",
+}
 
 
 def _py_files(root: Path) -> dict[str, str]:
