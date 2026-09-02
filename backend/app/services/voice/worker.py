@@ -73,6 +73,13 @@ from app.services.voice.language import (
     language_span_payload,
     validate_addressable_language_spans,
 )
+from app.services.voice.multi_agent import (
+    consult_agent_payload,
+    consult_fact_candidates,
+    consult_summary,
+    consult_warning_codes,
+    run_consult_on_segments,
+)
 from app.services.voice.provenance import validate_fact_evidence
 from app.services.voice.providers.base import (
     TranscriptionProvider,
@@ -811,7 +818,17 @@ def _create_revision(
         code_commit=settings.NIGHTINGALE_SOURCE_COMMIT,
     )
     segments = _apply_calibration(segments, calibration)
-    fact_candidates = _fact_candidates(segments)
+    agent_state = None
+    agent_warnings: list[str] = []
+    if settings.VOICE_MULTI_AGENT_PIPELINE:
+        agent_state = run_consult_on_segments(
+            segments, consult_id=str(voice_session.id)
+        )
+        fact_candidates, agent_warnings = consult_fact_candidates(
+            agent_state, segments
+        )
+    else:
+        fact_candidates = _fact_candidates(segments)
     fact_validity = [
         validate_fact_evidence(
             transcript=result.text,
@@ -840,7 +857,15 @@ def _create_revision(
         for signal, warning in preprocessing_warning_map.items()
         if asset.preprocessing_json.get(signal) is True
     }
-    warnings = sorted({*result.warnings, *span_warnings, *preprocessing_warnings})
+    warnings = sorted(
+        {
+            *result.warnings,
+            *span_warnings,
+            *preprocessing_warnings,
+            *agent_warnings,
+            *(consult_warning_codes(agent_state) if agent_state is not None else ()),
+        }
+    )
     low_confidence = calibration is not None and calibration.confidence_band == "low"
     confidence_unavailable = calibration is None
     overlap = any(item.overlap_group_id for item in segments)
@@ -867,11 +892,14 @@ def _create_revision(
         or not fact_valid
         or bool(warnings)
     )
-    summary = (
-        "Recorded clinical information is ready for clinician review."
-        if fact_candidates
-        else "Clinical recording processed; structured facts require clinician review."
-    )
+    if agent_state is not None:
+        summary = consult_summary(agent_state)
+    else:
+        summary = (
+            "Recorded clinical information is ready for clinician review."
+            if fact_candidates
+            else "Clinical recording processed; structured facts require clinician review."
+        )
     revision_id = uuid.uuid4()
     prior_no = previous_revision.revision_no if previous_revision else 0
     revision = TranscriptRevision(
@@ -900,6 +928,9 @@ def _create_revision(
             else None
         ),
         warning_codes_json=warnings,
+        consult_agent_json=(
+            consult_agent_payload(agent_state) if agent_state is not None else {}
+        ),
     )
     db.add(revision)
     db.flush()

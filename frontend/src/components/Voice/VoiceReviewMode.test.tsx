@@ -337,4 +337,74 @@ describe("VoiceReviewMode", () => {
       voiceMedicationAssertions([{ ...fact, dose_unit: undefined }]),
     ).toEqual([])
   })
+
+  it("shows consult roles and an unresolved family-vs-patient conflict", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const consultTranscript = {
+      ...transcript,
+      warning_codes: [
+        "UNRESOLVED_ALLERGY_CONFLICT",
+        "PUBLISH_BLOCKED",
+        "MULTI_AGENT_CONSULT_PROPOSAL",
+      ],
+      consult_agent: {
+        enabled: true,
+        speaker_roles: {
+          SPEAKER_00: "clinician",
+          SPEAKER_01: "patient",
+          SPEAKER_02: "family",
+        },
+        conflicts: [
+          {
+            fact_type: "allergy",
+            key: "penicillin",
+            reason: "polarity",
+            severity: "critical",
+            auto_resolved: false,
+            left_speaker_role: "patient",
+            right_speaker_role: "family",
+            left_polarity: "absent",
+            right_polarity: "present",
+          },
+        ],
+        summaries: {},
+      },
+      segments: [
+        {
+          ...transcript.segments[0],
+          speaker_id: "SPEAKER_02",
+          source_language: "ms",
+        },
+      ],
+      facts: [
+        {
+          ...transcript.facts[0],
+          value: "penicillin allergy:present",
+          speaker_role: "family",
+          source_language: "ms",
+        },
+      ],
+    }
+    const voiceApi = await import("@/features/voice/voiceApi")
+    vi.mocked(voiceApi.voiceTranscript).mockResolvedValue(consultTranscript)
+
+    render(
+      <QueryClientProvider client={client}>
+        <VoiceReviewMode sessionId="session-1" membershipRole="clinician" />
+      </QueryClientProvider>,
+    )
+
+    expect(await screen.findByTestId("consult-conflicts")).toBeInTheDocument()
+    expect(
+      screen.getByText(/Patient \(absent\) vs Family \(present\)/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/Patient and family allergy statements disagree/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Agents blocked publication/i)).toBeInTheDocument()
+    expect(screen.getAllByText("Family").length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Malay/).length).toBeGreaterThan(0)
+  })
 })

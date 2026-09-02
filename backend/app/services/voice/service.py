@@ -24,6 +24,8 @@ from app.models import (
     ClinicalFact,
     ClinicalFactAssertion,
     ClinicalFactPublic,
+    ConsultAgentConflictPublic,
+    ConsultAgentPublic,
     Entry,
     EntryRelation,
     EntryVersion,
@@ -1107,11 +1109,53 @@ def finalize_voice_session(
     )
 
 
+def _consult_agent_public(payload: object) -> ConsultAgentPublic | None:
+    if not isinstance(payload, dict) or payload.get("enabled") is not True:
+        return None
+    raw_roles = payload.get("speaker_roles") or {}
+    speaker_roles = (
+        {str(key): str(value) for key, value in raw_roles.items()}
+        if isinstance(raw_roles, dict)
+        else {}
+    )
+    conflicts: list[ConsultAgentConflictPublic] = []
+    for item in payload.get("conflicts") or []:
+        if not isinstance(item, dict):
+            continue
+        conflicts.append(
+            ConsultAgentConflictPublic(
+                fact_type=str(item.get("fact_type") or "clinical"),
+                key=str(item.get("key") or ""),
+                reason=str(item.get("reason") or "polarity"),
+                severity=str(item.get("severity") or "high"),
+                auto_resolved=bool(item.get("auto_resolved")),
+                left_speaker_role=str(item.get("left_speaker_role") or "unknown"),
+                right_speaker_role=str(item.get("right_speaker_role") or "unknown"),
+                left_polarity=str(item.get("left_polarity") or ""),
+                right_polarity=str(item.get("right_polarity") or ""),
+            )
+        )
+    raw_summaries = payload.get("summaries") or {}
+    summaries = (
+        {str(key): str(value) for key, value in raw_summaries.items()}
+        if isinstance(raw_summaries, dict)
+        else {}
+    )
+    return ConsultAgentPublic(
+        enabled=True,
+        speaker_roles=speaker_roles,
+        conflicts=conflicts,
+        summaries=summaries,
+    )
+
+
 def _clinical_fact_public(
     fact: ClinicalFact,
     *,
     stale: bool,
     medication_regimens: dict[str, dict[str, object]],
+    segment: TranscriptSegment | None = None,
+    speaker_roles: Mapping[str, str] | None = None,
 ) -> ClinicalFactPublic:
     medication: str | None = None
     dose_value: float | None = None
@@ -1134,6 +1178,12 @@ def _clinical_fact_public(
             if regimen["frequency"] is not None:
                 frequency = str(regimen["frequency"])
             break
+    speaker_role = None
+    source_language = None
+    if segment is not None:
+        source_language = segment.source_language
+        if speaker_roles and segment.speaker_id:
+            speaker_role = speaker_roles.get(segment.speaker_id)
     return ClinicalFactPublic(
         id=fact.id,
         ordinal=fact.ordinal,
@@ -1159,6 +1209,8 @@ def _clinical_fact_public(
         dose_unit=dose_unit,
         route=route,
         frequency=frequency,
+        speaker_role=speaker_role,
+        source_language=source_language,
     )
 
 
@@ -1250,6 +1302,9 @@ def transcript_public(
         )
     ).first()
     quality, quality_unavailable_reason = audio_quality_public(asset)
+    consult_agent = _consult_agent_public(revision.consult_agent_json)
+    speaker_roles = consult_agent.speaker_roles if consult_agent is not None else {}
+    segments_by_id = {item.id: item for item in segments}
     return TranscriptRevisionPublic(
         id=revision.id,
         session_id=revision.session_id,
@@ -1274,9 +1329,12 @@ def transcript_public(
                 item,
                 stale=stale,
                 medication_regimens=medication_regimens,
+                segment=segments_by_id.get(item.segment_id),
+                speaker_roles=speaker_roles,
             )
             for item in facts
         ],
+        consult_agent=consult_agent,
         created_at=revision.created_at,
     )
 

@@ -3248,6 +3248,9 @@ class TranscriptRevision(TenantRow, table=True):
     warning_codes_json: list[str] = Field(
         default_factory=list, sa_column=Column(JSONB, nullable=False)
     )
+    consult_agent_json: dict[str, object] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
+    )
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -4958,6 +4961,25 @@ class TranscriptSegmentPublic(SQLModel):
     model: str
 
 
+class ConsultAgentConflictPublic(SQLModel):
+    fact_type: str
+    key: str
+    reason: str
+    severity: str
+    auto_resolved: bool = False
+    left_speaker_role: str
+    right_speaker_role: str
+    left_polarity: str
+    right_polarity: str
+
+
+class ConsultAgentPublic(SQLModel):
+    enabled: bool = False
+    speaker_roles: dict[str, str] = Field(default_factory=dict)
+    conflicts: list[ConsultAgentConflictPublic] = Field(default_factory=list)
+    summaries: dict[str, str] = Field(default_factory=dict)
+
+
 class ClinicalFactPublic(SQLModel):
     id: uuid.UUID
     ordinal: int
@@ -4976,6 +4998,8 @@ class ClinicalFactPublic(SQLModel):
     dose_unit: str | None = None
     route: str | None = None
     frequency: str | None = None
+    speaker_role: str | None = None
+    source_language: str | None = None
 
 
 class TranscriptRevisionPublic(SQLModel):
@@ -4998,6 +5022,7 @@ class TranscriptRevisionPublic(SQLModel):
     audio_quality_unavailable_reason: AudioQualityUnavailableReason | None
     segments: list[TranscriptSegmentPublic]
     facts: list[ClinicalFactPublic]
+    consult_agent: ConsultAgentPublic | None = None
     created_at: datetime
 
 

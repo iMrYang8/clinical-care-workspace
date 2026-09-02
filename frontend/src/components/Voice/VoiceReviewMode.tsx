@@ -75,10 +75,21 @@ function clinicalLabel(value: string): string {
     .replace(/\b\w/g, (character) => character.toUpperCase())
 }
 
-function speakerLabel(speakerId: string | null): string {
-  if (!speakerId) return "Speaker not identified"
-  const match = speakerId.match(/(?:SPEAKER[_ -]?)?(\d+)$/i)
-  return match ? `Speaker ${Number(match[1]) + 1}` : "Speaker"
+function consultRoleLabel(role: string | null | undefined): string | null {
+  if (role === "clinician") return "Clinician"
+  if (role === "patient") return "Patient"
+  if (role === "family") return "Family"
+  return null
+}
+
+function speakerLabel(speakerId: string | null, role?: string | null): string {
+  const base = (() => {
+    if (!speakerId) return "Speaker not identified"
+    const match = speakerId.match(/(?:SPEAKER[_ -]?)?(\d+)$/i)
+    return match ? `Speaker ${Number(match[1]) + 1}` : "Speaker"
+  })()
+  const roleLabel = consultRoleLabel(role)
+  return roleLabel ? `${roleLabel} (${base})` : base
 }
 
 export function voiceJobPollInterval(job: JobPublic | undefined): 2000 | false {
@@ -92,13 +103,23 @@ export function voiceJobPollInterval(job: JobPublic | undefined): 2000 | false {
   return false
 }
 
-function segmentSpeakerLabel(segment: TranscriptSegmentPublic): string {
+function segmentSpeakerLabel(
+  segment: TranscriptSegmentPublic,
+  transcript: TranscriptRevisionPublic,
+): string {
+  const roles = transcript.consult_agent?.speaker_roles ?? {}
   const speakerIds = (
     segment as TranscriptSegmentPublic & { speaker_ids?: string[] }
   ).speaker_ids
-  if (!speakerIds || speakerIds.length < 2)
-    return speakerLabel(segment.speaker_id)
-  return speakerIds.map((speakerId) => speakerLabel(speakerId)).join(" + ")
+  if (!speakerIds || speakerIds.length < 2) {
+    return speakerLabel(
+      segment.speaker_id,
+      segment.speaker_id ? roles[segment.speaker_id] : null,
+    )
+  }
+  return speakerIds
+    .map((speakerId) => speakerLabel(speakerId, roles[speakerId]))
+    .join(" + ")
 }
 
 const supportedLanguageLabel: Record<string, string> = {
@@ -229,7 +250,9 @@ function TranscriptPanel({
           className="scroll-mt-24 rounded-lg border bg-card p-3 focus-within:ring-2 focus-within:ring-primary"
         >
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-            <Badge variant="outline">{segmentSpeakerLabel(segment)}</Badge>
+            <Badge variant="outline">
+              {segmentSpeakerLabel(segment, transcript)}
+            </Badge>
             <button
               type="button"
               className="min-h-11 rounded px-2 font-mono text-primary"
@@ -324,6 +347,14 @@ function SummaryPanel({
     OVERLAP_REVIEW: "Overlapping speakers need manual attribution.",
     SILENCE_REVIEW: "The recording contains substantial silence.",
     TRANSCRIPT_PENDING: "The transcript is still pending.",
+    UNRESOLVED_ALLERGY_CONFLICT:
+      "Patient and family allergy statements disagree. Do not auto-resolve.",
+    UNRESOLVED_DOSE_CONFLICT:
+      "The same medication was proposed with two different doses.",
+    PUBLISH_BLOCKED:
+      "Agents blocked publication. A clinician must review the consult.",
+    MULTI_AGENT_CONSULT_PROPOSAL:
+      "Structured findings came from proposal-only consult agents, not a published note.",
   }
   return (
     <div className="space-y-3" data-testid="summary-panel">
@@ -374,6 +405,18 @@ function FactsPanel({
               {factStatusLabels[fact.status] ?? "For review"}
             </Badge>
           </span>
+          <span className="mt-1 flex flex-wrap gap-2 text-xs">
+            {consultRoleLabel(fact.speaker_role) && (
+              <Badge variant="outline">
+                {consultRoleLabel(fact.speaker_role)}
+              </Badge>
+            )}
+            {fact.source_language && (
+              <Badge variant="outline">
+                {sourceLanguageLabel(fact.source_language)}
+              </Badge>
+            )}
+          </span>
           <span className="mt-1 block text-sm text-foreground/90">
             {fact.value}
           </span>
@@ -388,6 +431,38 @@ function FactsPanel({
           before publishing.
         </p>
       )}
+    </div>
+  )
+}
+
+function ConflictsPanel({
+  transcript,
+}: {
+  transcript: TranscriptRevisionPublic
+}) {
+  const conflicts = transcript.consult_agent?.conflicts ?? []
+  if (conflicts.length === 0) return null
+  return (
+    <div className="space-y-3" data-testid="consult-conflicts">
+      {conflicts.map((conflict) => (
+        <div
+          className="rounded-lg border border-review-required-muted bg-review-required-muted p-3 text-sm"
+          key={`${conflict.key}-${conflict.left_speaker_role}-${conflict.right_speaker_role}`}
+        >
+          <strong className="block text-review-required-muted-foreground">
+            Unresolved {conflict.fact_type} conflict
+          </strong>
+          <span className="mt-1 block">
+            {consultRoleLabel(conflict.left_speaker_role) ??
+              conflict.left_speaker_role}{" "}
+            ({conflict.left_polarity}) vs{" "}
+            {consultRoleLabel(conflict.right_speaker_role) ??
+              conflict.right_speaker_role}{" "}
+            ({conflict.right_polarity}) on {conflict.key}. Agents did not
+            auto-resolve this.
+          </span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -482,7 +557,7 @@ export function VoiceReviewMode({
     const cues = transcript.segments
       .map(
         (segment, index) =>
-          `${index + 1}\n${vttTime(segment.start_ms)} --> ${vttTime(segment.end_ms)}\n${speakerLabel(segment.speaker_id)}: ${segment.text}\n`,
+          `${index + 1}\n${vttTime(segment.start_ms)} --> ${vttTime(segment.end_ms)}\n${segmentSpeakerLabel(segment, transcript)}: ${segment.text}\n`,
       )
       .join("\n")
     return `data:text/vtt;charset=utf-8,${encodeURIComponent(`WEBVTT\n\n${cues}`)}`
@@ -803,6 +878,9 @@ export function VoiceReviewMode({
               </CardHeader>
               <CardContent>
                 <SummaryPanel transcript={transcript} />
+                <div className="mt-3">
+                  <ConflictsPanel transcript={transcript} />
+                </div>
               </CardContent>
             </Card>
             <Card className="min-w-0">
@@ -837,6 +915,9 @@ export function VoiceReviewMode({
             </TabsContent>
             <TabsContent value="summary">
               <SummaryPanel transcript={transcript} />
+              <div className="mt-3">
+                <ConflictsPanel transcript={transcript} />
+              </div>
             </TabsContent>
             <TabsContent value="facts">
               <FactsPanel transcript={transcript} onJump={jumpToFact} />
