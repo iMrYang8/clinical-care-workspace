@@ -1,7 +1,14 @@
+x-bounded-container-logging: &bounded-container-logging
+  driver: local
+  options:
+    max-size: "${CONTAINER_LOG_MAX_SIZE:-20m}"
+    max-file: "${CONTAINER_LOG_MAX_FILES:-5}"
+
 services:
 
   proxy:
     image: traefik:3.6
+    logging: *bounded-container-logging
     volumes:
       # Add Docker as a mounted volume, so that Traefik can read the labels of other services
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -37,6 +44,7 @@ services:
 
   db:
     image: postgres:16
+    logging: *bounded-container-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
       interval: 10s
@@ -53,6 +61,7 @@ services:
     # Local development keeps the conventional tag. Production overrides this
     # with a SHA tag for build and then the inspected immutable image ID.
     image: ${NIGHTINGALE_BACKEND_IMAGE:-backend:latest}
+    logging: *bounded-container-logging
     depends_on:
       db:
         condition: service_healthy
@@ -99,6 +108,7 @@ services:
     restart: "no"
 
   backend:
+    logging: *bounded-container-logging
     image: ${NIGHTINGALE_BACKEND_IMAGE:-backend:latest}
     depends_on:
       db:
@@ -205,6 +215,7 @@ services:
       - traefik.http.routers.backend-https.tls=true
 
   ai-worker:
+    logging: *bounded-container-logging
     image: ${NIGHTINGALE_BACKEND_IMAGE:-backend:latest}
     depends_on:
       db:
