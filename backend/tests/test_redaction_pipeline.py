@@ -65,9 +65,7 @@ def _direct_text_egress_violations(path: Path, source: str) -> list[str]:
             ):
                 # Record the full dotted call target so an aliased receiver and
                 # the specific guarded method are both addressable in the report.
-                violations.append(
-                    f"{path.name}:{node.lineno}:{ast.unparse(node.func)}"
-                )
+                violations.append(f"{path.name}:{node.lineno}:{ast.unparse(node.func)}")
         elif (
             isinstance(node.func, ast.Call)
             and isinstance(node.func.func, ast.Name)

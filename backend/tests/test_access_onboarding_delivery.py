@@ -462,9 +462,7 @@ def test_second_clinic_preflight_onboarding_is_data_only_audited_and_idempotent(
             "whatsapp",
         ]
         blocked_channel = next(
-            item
-            for item in messaging_evidence["channels"]
-            if item["channel"] == "sms"
+            item for item in messaging_evidence["channels"] if item["channel"] == "sms"
         )
         assert blocked_channel["provider"] == "disabled"
         assert blocked_channel["configured"] is False

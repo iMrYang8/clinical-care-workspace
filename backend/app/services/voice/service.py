@@ -1119,7 +1119,10 @@ def _consult_agent_public(payload: object) -> ConsultAgentPublic | None:
         else {}
     )
     conflicts: list[ConsultAgentConflictPublic] = []
-    for item in payload.get("conflicts") or []:
+    raw_conflicts = payload.get("conflicts")
+    if not isinstance(raw_conflicts, list):
+        raw_conflicts = []
+    for item in raw_conflicts:
         if not isinstance(item, dict):
             continue
         conflicts.append(

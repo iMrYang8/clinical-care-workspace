@@ -1289,14 +1289,12 @@ def test_platform_oversight_tables_are_isolated_from_clinic_sessions() -> None:
             ).all()
         }
 
-    assert security == {table: (True, True) for table in platform_tables}
+    assert security == dict.fromkeys(platform_tables, (True, True))
     assert policies == {(table, "platform_actor_scope") for table in platform_tables}
 
     # The clinician GUC bound by the test fixture must see nothing.
     with Session(engine) as clinic_session:
-        assert (
-            clinic_session.exec(select(PlatformAdministrator)).all() == []
-        )
+        assert clinic_session.exec(select(PlatformAdministrator)).all() == []
 
     # A platform actor context sees the seeded operator through the same role.
     with Session(engine) as platform_session:
