@@ -1,8 +1,10 @@
 # Nightingale — current technical brief
 
-**Current working tree · 28 August 2026 · synthetic/Mock patient data only**
+**Current working tree · 2 September 2026 · `release-2026-09-02` · synthetic/mock patient data only**
 
 Nightingale is a clinic-scoped patient-care workspace. It is designed to let a care team answer two questions quickly: **what matters for this patient now, and what exact saved source supports it?** The product combines a five-item Current priorities view, a longitudinal record, role-separated clinical collaboration, reviewable AI-assisted notes, and recoverable voice capture. It does not treat a score, risk badge, or model output as self-validating evidence.
+
+This freeze does **not** claim: live Twilio delivery, offline pyannote quality, real trilingual/noisy clinic ASR, Hokkien recognition, a persisted `MedicationReviewCandidate` table, voice elapsed/retry UI, or `LocalNormalizedText` typing. Missing `DecisionAssessment` rows on model-derived highlights fail closed (`AI_HIGHLIGHT_ASSESSMENT_MISSING`). Backend pytest on this branch: 504 passed, 1 skipped. Frontend vitest: 129 passed.
 
 ## 1. Architecture and clinical workflow
 
