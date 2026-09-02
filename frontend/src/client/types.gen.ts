@@ -131,6 +131,74 @@ export type AudioChunkAck = {
 };
 
 /**
+ * AudioQualityPublic
+ *
+ * Allowlisted, typed source-audio quality evidence.
+ *
+ * Measurements describe the decoded source before normalization.  The
+ * denoised working copy never replaces the encrypted source evidence, and a
+ * review signal remains visible even when denoising was applied.
+ */
+export type AudioQualityPublic = {
+    /**
+     * Measurement Stage
+     */
+    measurement_stage: 'decoded-pre-normalization';
+    /**
+     * Processing Chain Version
+     */
+    processing_chain_version: string;
+    /**
+     * Rms
+     */
+    rms: number;
+    /**
+     * Noise Floor Dbfs
+     */
+    noise_floor_dbfs: number;
+    /**
+     * Estimated Snr Db
+     */
+    estimated_snr_db: number;
+    /**
+     * Clipping Ratio
+     */
+    clipping_ratio: number;
+    /**
+     * Silence Ratio
+     */
+    silence_ratio: number;
+    /**
+     * Silence Review
+     */
+    silence_review: boolean;
+    /**
+     * Clipping Review
+     */
+    clipping_review: boolean;
+    /**
+     * Low Signal Review
+     */
+    low_signal_review: boolean;
+    /**
+     * Noise Review
+     */
+    noise_review: boolean;
+    /**
+     * Multi Device Overlap Review
+     */
+    multi_device_overlap_review: boolean;
+    /**
+     * Denoise Applied
+     */
+    denoise_applied: boolean;
+    /**
+     * Review Required
+     */
+    review_required: boolean;
+};
+
+/**
  * AuditEventPublic
  */
 export type AuditEventPublic = {
@@ -278,6 +346,32 @@ export type ClinicAISettingUpdate = {
      * Transcribe Model
      */
     transcribe_model: string;
+};
+
+/**
+ * ClinicChannelCapabilityEvidencePublic
+ */
+export type ClinicChannelCapabilityEvidencePublic = {
+    /**
+     * Channel
+     */
+    channel: 'email' | 'sms' | 'whatsapp' | 'portal';
+    /**
+     * Provider
+     */
+    provider: string;
+    /**
+     * Configured
+     */
+    configured: boolean;
+    /**
+     * Production Safe
+     */
+    production_safe: boolean;
+    /**
+     * Reason Code
+     */
+    reason_code?: string | null;
 };
 
 /**
@@ -652,6 +746,139 @@ export type ClinicPreflightCheckPublic = {
      * Reason Code
      */
     reason_code?: string | null;
+    evidence: ClinicPreflightEvidencePublic;
+};
+
+/**
+ * ClinicPreflightEvidencePublic
+ *
+ * Typed, PHI-free evidence supporting one onboarding preflight check.
+ */
+export type ClinicPreflightEvidencePublic = {
+    /**
+     * Evidence Id
+     */
+    evidence_id: string;
+    /**
+     * Observed At
+     */
+    observed_at: string;
+    /**
+     * Source
+     */
+    source: 'request' | 'runtime' | 'deployment' | 'stored_policy';
+    /**
+     * Requested Code
+     */
+    requested_code?: string | null;
+    /**
+     * Requested Slug
+     */
+    requested_slug?: string | null;
+    /**
+     * Timezone
+     */
+    timezone?: string | null;
+    /**
+     * Initial Staff Count
+     */
+    initial_staff_count?: number | null;
+    /**
+     * Initial Admin Count
+     */
+    initial_admin_count?: number | null;
+    /**
+     * Worker Enabled
+     */
+    worker_enabled?: boolean | null;
+    /**
+     * Worker Kind
+     */
+    worker_kind?: string | null;
+    /**
+     * Worker Version
+     */
+    worker_version?: string | null;
+    /**
+     * Worker Source Commit
+     */
+    worker_source_commit?: string | null;
+    /**
+     * Worker Heartbeat At
+     */
+    worker_heartbeat_at?: string | null;
+    /**
+     * Worker Heartbeat Age Seconds
+     */
+    worker_heartbeat_age_seconds?: number | null;
+    /**
+     * Worker Heartbeat Max Age Seconds
+     */
+    worker_heartbeat_max_age_seconds?: number | null;
+    /**
+     * Requested Languages
+     */
+    requested_languages?: Array<string>;
+    /**
+     * Available Languages
+     */
+    available_languages?: Array<string>;
+    /**
+     * Missing Languages
+     */
+    missing_languages?: Array<string>;
+    /**
+     * Channels
+     */
+    channels?: Array<ClinicChannelCapabilityEvidencePublic>;
+    /**
+     * Remote Text Requested
+     */
+    remote_text_requested?: boolean | null;
+    /**
+     * Remote Text Deployment Ready
+     */
+    remote_text_deployment_ready?: boolean | null;
+    /**
+     * Remote Audio Requested
+     */
+    remote_audio_requested?: boolean | null;
+    /**
+     * Remote Audio Deployment Ready
+     */
+    remote_audio_deployment_ready?: boolean | null;
+    /**
+     * Local Asr Default
+     */
+    local_asr_default?: boolean | null;
+    /**
+     * Proxy Retention Days
+     */
+    proxy_retention_days?: number | null;
+    /**
+     * Container Retention Days
+     */
+    container_retention_days?: number | null;
+    /**
+     * Apm Retention Days
+     */
+    apm_retention_days?: number | null;
+    /**
+     * Retention Evidence
+     */
+    retention_evidence?: string | null;
+    /**
+     * Retention Evidence Id
+     */
+    retention_evidence_id?: string | null;
+    /**
+     * Formulary Template
+     */
+    formulary_template?: string | null;
+    /**
+     * Calibration Required
+     */
+    calibration_required?: boolean | null;
 };
 
 /**
@@ -709,6 +936,14 @@ export type ClinicalFactAssertionPublic = {
      * Source Language
      */
     source_language?: string;
+    /**
+     * Source Role
+     */
+    source_role?: string | null;
+    /**
+     * Source Section
+     */
+    source_section?: string | null;
     /**
      * Assertion State
      */
@@ -1178,6 +1413,14 @@ export type ConflictPublic = {
      * Right Source Role
      */
     right_source_role?: string | null;
+    /**
+     * Left Source Section
+     */
+    left_source_section?: string | null;
+    /**
+     * Right Source Section
+     */
+    right_source_section?: string | null;
     /**
      * Left Source Language
      */
@@ -2209,12 +2452,15 @@ export type JobPublic = {
      * Provider Outage
      */
     provider_outage?: boolean;
+    provider_circuit?: ProviderCircuitPublic | null;
     /**
      * Retry History
      */
-    retry_history?: Array<{
-        [key: string]: unknown;
-    }>;
+    retry_history?: Array<JobRetryAttemptPublic>;
+    /**
+     * Retry History Invalid Count
+     */
+    retry_history_invalid_count?: number;
     /**
      * Delayed At
      */
@@ -2243,6 +2489,64 @@ export type JobPublic = {
      * Visible State
      */
     visible_state?: 'queued' | 'running' | 'delayed' | 'timed_out' | 'failed' | null;
+    /**
+     * Current Confidence State
+     */
+    current_confidence_state?: 'qualified' | 'unavailable' | 'review_required';
+    /**
+     * Current Confidence Reasons
+     */
+    current_confidence_reasons?: Array<string>;
+    /**
+     * Safety Review Required
+     */
+    safety_review_required?: boolean;
+};
+
+/**
+ * JobRetryAttemptPublic
+ */
+export type JobRetryAttemptPublic = {
+    /**
+     * Attempt
+     */
+    attempt: number;
+    /**
+     * Error Code
+     */
+    error_code: string;
+    /**
+     * Error Class
+     */
+    error_class: string;
+    /**
+     * Attempted At
+     */
+    attempted_at: string;
+    /**
+     * Next Retry At
+     */
+    next_retry_at?: string | null;
+    /**
+     * Source Job Id
+     */
+    source_job_id?: string | null;
+    /**
+     * Recovery Job Id
+     */
+    recovery_job_id?: string | null;
+    /**
+     * Provider
+     */
+    provider?: string | null;
+    /**
+     * Capability
+     */
+    capability?: string | null;
+    /**
+     * Circuit State
+     */
+    circuit_state?: 'closed' | 'open' | 'half_open' | null;
 };
 
 /**
@@ -2545,6 +2849,10 @@ export type NotificationPublic = {
      * Publication Id
      */
     publication_id: string | null;
+    /**
+     * Portal Invitation Id
+     */
+    portal_invitation_id?: string | null;
     /**
      * Purpose
      */
@@ -3884,6 +4192,48 @@ export type ProviderCallbackCreate = {
 };
 
 /**
+ * ProviderCircuitPublic
+ */
+export type ProviderCircuitPublic = {
+    /**
+     * Provider
+     */
+    provider: string;
+    /**
+     * Capability
+     */
+    capability: string;
+    /**
+     * State
+     */
+    state: 'closed' | 'open' | 'half_open';
+    /**
+     * Consecutive Failures
+     */
+    consecutive_failures: number;
+    /**
+     * Last Error Class
+     */
+    last_error_class: string | null;
+    /**
+     * Opened At
+     */
+    opened_at: string | null;
+    /**
+     * Next Probe At
+     */
+    next_probe_at: string | null;
+    /**
+     * Last Success At
+     */
+    last_success_at: string | null;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
  * ProvisionalSafetyAlertPublic
  */
 export type ProvisionalSafetyAlertPublic = {
@@ -4202,6 +4552,11 @@ export type TranscriptRevisionPublic = {
      * Warning Codes
      */
     warning_codes: Array<string>;
+    audio_quality: AudioQualityPublic | null;
+    /**
+     * Audio Quality Unavailable Reason
+     */
+    audio_quality_unavailable_reason: 'AUDIO_ASSET_NOT_AVAILABLE' | 'AUDIO_QUALITY_METADATA_INVALID' | null;
     /**
      * Segments
      */
@@ -4638,6 +4993,11 @@ export type VoiceSessionPublic = {
      * Published Entry Id
      */
     published_entry_id?: string | null;
+    audio_quality: AudioQualityPublic | null;
+    /**
+     * Audio Quality Unavailable Reason
+     */
+    audio_quality_unavailable_reason: 'AUDIO_ASSET_NOT_AVAILABLE' | 'AUDIO_QUALITY_METADATA_INVALID' | null;
     /**
      * Remote Audio Consent Recorded
      */
@@ -6419,16 +6779,24 @@ export type collaborationResolveData = {
 
 export type collaborationResolveErrors = {
     /**
+     * The supplied comment revision is stale.
+     */
+    409: unknown;
+    /**
      * Validation Error
      */
     422: HTTPValidationError;
+    /**
+     * If-Match is required.
+     */
+    428: unknown;
 };
 
 export type collaborationResolveError = collaborationResolveErrors[keyof collaborationResolveErrors];
 
 export type collaborationResolveResponses = {
     /**
-     * Successful Response
+     * Comment mutation applied or already in the requested state.
      */
     200: CommentPublic;
 };
@@ -6455,16 +6823,24 @@ export type collaborationUnresolveData = {
 
 export type collaborationUnresolveErrors = {
     /**
+     * The supplied comment revision is stale.
+     */
+    409: unknown;
+    /**
      * Validation Error
      */
     422: HTTPValidationError;
+    /**
+     * If-Match is required.
+     */
+    428: unknown;
 };
 
 export type collaborationUnresolveError = collaborationUnresolveErrors[keyof collaborationUnresolveErrors];
 
 export type collaborationUnresolveResponses = {
     /**
-     * Successful Response
+     * Comment mutation applied or already in the requested state.
      */
     200: CommentPublic;
 };
@@ -6491,16 +6867,24 @@ export type collaborationAssignData = {
 
 export type collaborationAssignErrors = {
     /**
+     * The supplied comment revision is stale.
+     */
+    409: unknown;
+    /**
      * Validation Error
      */
     422: HTTPValidationError;
+    /**
+     * If-Match is required.
+     */
+    428: unknown;
 };
 
 export type collaborationAssignError = collaborationAssignErrors[keyof collaborationAssignErrors];
 
 export type collaborationAssignResponses = {
     /**
-     * Successful Response
+     * Comment mutation applied or already in the requested state.
      */
     200: CommentPublic;
 };

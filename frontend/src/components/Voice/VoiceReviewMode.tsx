@@ -732,7 +732,7 @@ export function VoiceReviewMode({
                   <li
                     key={`${String(attempt.attempted_at ?? attempt.attempt ?? index)}`}
                   >
-                    {String(attempt.error_class ?? attempt.status ?? "attempt")}
+                    {String(attempt.error_class ?? "attempt")}
                     {attempt.next_retry_at
                       ? ` · retry ${new Date(String(attempt.next_retry_at)).toLocaleString()}`
                       : ""}

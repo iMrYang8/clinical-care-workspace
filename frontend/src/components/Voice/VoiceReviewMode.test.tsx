@@ -24,6 +24,8 @@ const session: VoiceSessionPublic = {
   error_code: null,
   current_transcript_revision_id: "revision-1",
   published_entry_id: null,
+  audio_quality: null,
+  audio_quality_unavailable_reason: null,
   created_at: "2026-08-26T00:00:00Z",
   updated_at: "2026-08-26T00:00:00Z",
 }
@@ -44,6 +46,8 @@ const transcript: TranscriptRevisionPublic = {
   stale: true,
   fallback: false,
   warning_codes: ["DOWNSTREAM_RESULTS_STALE"],
+  audio_quality: null,
+  audio_quality_unavailable_reason: null,
   segments: [
     {
       id: "segment-1",
@@ -188,6 +192,8 @@ describe("VoiceReviewMode", () => {
         retry_history: [
           {
             attempt: 1,
+            error_code: "PROVIDER_TIMEOUT",
+            error_class: "timeout",
             attempted_at: "2026-08-26T00:00:00Z",
             next_retry_at: "2026-08-26T00:00:30Z",
           },
