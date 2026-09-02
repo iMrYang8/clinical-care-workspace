@@ -149,7 +149,7 @@ const videoFilter = [
 	"fps=30",
 	"scale=1920:960:flags=lanczos",
 	"pad=1920:1080:0:0:color=0x071c1f",
-	`subtitles=filename='${subtitleFile}':force_style='FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,BackColour=&H9A071C1F,Outline=0,Shadow=0,Alignment=2,MarginL=150,MarginR=150,MarginV=20'`,
+	`subtitles=filename='${subtitleFile}':force_style='FontName=Arial,FontSize=9,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,BackColour=&H00000000,Outline=1,Shadow=0,Alignment=2,MarginL=40,MarginR=40,MarginV=4'`,
 ].join(",");
 
 await run("ffmpeg", [

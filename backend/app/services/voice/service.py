@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from typing import cast
 
 from fastapi import HTTPException
@@ -17,14 +19,19 @@ from app.models import (
     AudioAsset,
     AudioChunk,
     AudioChunkAck,
+    AudioQualityPublic,
+    AudioQualityUnavailableReason,
     ClinicalFact,
+    ClinicalFactAssertion,
     ClinicalFactPublic,
     Entry,
     EntryRelation,
     EntryVersion,
     LiveTranscriptStatus,
+    MedicationReviewAttestation,
     ProvenancePointer,
     TranscriptCorrection,
+    TranscriptLanguageSpanPublic,
     TranscriptRevision,
     TranscriptRevisionPublic,
     TranscriptSegment,
@@ -47,16 +54,248 @@ from app.models import (
     get_datetime_utc,
 )
 from app.services.ai_jobs import create_or_replay_job
+from app.services.clinical_formulary import screen_clinic_medication_regimen
 from app.services.conflicts import (
     detect_conflicts_for_assertion,
+    detect_language_spans,
     extract_normalized_facts,
 )
 from app.services.decisioning import create_assertion
 from app.services.nightingale import emit_change, get_patient
+from app.services.voice.language import (
+    AddressableLanguageSpan,
+    apply_clinic_language_policy,
+    clinic_supported_language_codes,
+    language_span_from_payload,
+    language_span_payload,
+    validate_addressable_language_spans,
+)
 from app.services.voice.provenance import validate_fact_evidence
 
 _CAPTURE_STATES = {"created", "recording"}
 _CLINICAL_ROLES = {"staff", "clinician"}
+
+_VOICE_ROUTE_ALIASES = {
+    "po": "oral",
+    "oral": "oral",
+    "iv": "intravenous",
+    "intravenous": "intravenous",
+    "im": "intramuscular",
+    "intramuscular": "intramuscular",
+    "sc": "subcutaneous",
+    "subcutaneous": "subcutaneous",
+}
+_VOICE_FREQUENCY_ALIASES = {
+    "qd": "once_daily",
+    "daily": "once_daily",
+    "once daily": "once_daily",
+    "once_daily": "once_daily",
+    "bid": "twice_daily",
+    "twice daily": "twice_daily",
+    "twice_daily": "twice_daily",
+    "tid": "three_times_daily",
+    "three times daily": "three_times_daily",
+    "three_times_daily": "three_times_daily",
+    "qid": "four_times_daily",
+    "four times daily": "four_times_daily",
+    "four_times_daily": "four_times_daily",
+}
+
+
+def _voice_regimen_value(value: str | None, *, kind: str) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.strip().casefold().replace("-", " ").split())
+    if kind == "unit":
+        return normalized
+    if kind == "route":
+        return _VOICE_ROUTE_ALIASES.get(normalized, normalized)
+    if kind == "frequency":
+        return _VOICE_FREQUENCY_ALIASES.get(normalized, normalized.replace(" ", "_"))
+    return normalized
+
+
+def _validated_voice_medication_reviews(
+    db: Session,
+    revision: TranscriptRevision,
+    facts: list[ClinicalFact],
+    reviews: list[MedicationReviewAttestation],
+) -> list[uuid.UUID]:
+    """Validate complete exact-revision regimens before accepting voice facts."""
+
+    regimens = _voice_medication_regimens(db, revision, facts)
+    if not regimens:
+        if reviews:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VOICE_MEDICATION_REVIEW_SOURCE_MISMATCH"},
+            )
+        return []
+    if len(reviews) != len(regimens):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "VOICE_MEDICATION_REVIEW_REQUIRED"},
+        )
+    reviewed_ids: list[uuid.UUID] = []
+    voice_session = db.exec(
+        select(VoiceSession).where(
+            VoiceSession.clinic_id == revision.clinic_id,
+            VoiceSession.id == revision.session_id,
+        )
+    ).one()
+    allergy_assertions = db.exec(
+        select(ClinicalFactAssertion).where(
+            ClinicalFactAssertion.clinic_id == revision.clinic_id,
+            ClinicalFactAssertion.patient_id == voice_session.patient_id,
+            ClinicalFactAssertion.fact_type == "allergy",
+            ClinicalFactAssertion.polarity == "present",
+            ClinicalFactAssertion.assertion_state == "active",
+        )
+    ).all()
+    active_allergies = [
+        field_codec.decrypt_text(
+            assertion.clinic_id,
+            "fact_assertion.subject",
+            assertion.id,
+            assertion.subject_ciphertext,
+        )
+        for assertion in allergy_assertions
+    ]
+    seen: set[str] = set()
+    for review in reviews:
+        key = review.medication.strip().casefold()
+        expected = regimens.get(key)
+        if expected is None or key in seen or not review.confirmed:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VOICE_MEDICATION_REVIEW_MISMATCH"},
+            )
+        seen.add(key)
+        if any(
+            expected[field] is None
+            for field in ("dose_value", "dose_unit", "route", "frequency")
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "VOICE_MEDICATION_REGIMEN_INCOMPLETE",
+                    "medication": expected["medication"],
+                },
+            )
+        fact_ids = expected["fact_ids"]
+        assert isinstance(fact_ids, set)
+        matches = (
+            review.assertion_id in fact_ids
+            and review.dose_value is not None
+            and abs(review.dose_value - float(str(expected["dose_value"]))) < 1e-9
+            and _voice_regimen_value(review.dose_unit, kind="unit")
+            == _voice_regimen_value(str(expected["dose_unit"]), kind="unit")
+            and _voice_regimen_value(review.route, kind="route") == expected["route"]
+            and _voice_regimen_value(review.frequency, kind="frequency")
+            == expected["frequency"]
+        )
+        if not matches:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VOICE_MEDICATION_REVIEW_MISMATCH"},
+            )
+        screening = screen_clinic_medication_regimen(
+            db,
+            clinic_id=revision.clinic_id,
+            medication=review.medication,
+            dose_value=review.dose_value,
+            dose_unit=review.dose_unit,
+            route=review.route,
+            frequency=review.frequency,
+            active_allergy_concepts=active_allergies,
+        )
+        if not screening.eligible:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "VOICE_MEDICATION_FORMULARY_REVIEW_REQUIRED",
+                    "formulary_version": screening.formulary_version,
+                    "qualification_source": screening.qualification_source,
+                    "reason_codes": list(screening.reason_codes),
+                },
+            )
+        reviewed_ids.append(review.assertion_id)
+    return reviewed_ids
+
+
+def _voice_medication_regimens(
+    db: Session,
+    revision: TranscriptRevision,
+    facts: Sequence[ClinicalFact],
+) -> dict[str, dict[str, object]]:
+    """Reconstruct complete medication rows from exact revision facts."""
+
+    regimens: dict[str, dict[str, object]] = {}
+    for fact in facts:
+        if fact.fact_type not in {"medication", "dose", "route", "frequency"}:
+            continue
+        segment = db.exec(
+            select(TranscriptSegment).where(
+                TranscriptSegment.clinic_id == revision.clinic_id,
+                TranscriptSegment.revision_id == revision.id,
+                TranscriptSegment.id == fact.segment_id,
+            )
+        ).first()
+        quote = field_codec.decrypt_text(
+            fact.clinic_id,
+            "clinical_fact.exact_quote",
+            fact.id,
+            fact.exact_quote_ciphertext,
+        )
+        normalized_facts = extract_normalized_facts(
+            quote,
+            source_language=segment.source_language if segment is not None else None,
+        )
+        for normalized in normalized_facts:
+            if normalized.fact_type != fact.fact_type:
+                continue
+            medication_key = normalized.key.strip().casefold()
+            regimen = regimens.setdefault(
+                medication_key,
+                {
+                    "medication": normalized.key,
+                    "fact_ids": set(),
+                    "dose_value": None,
+                    "dose_unit": None,
+                    "route": None,
+                    "frequency": None,
+                },
+            )
+            fact_ids = cast(set[uuid.UUID], regimen["fact_ids"])
+            fact_ids.add(fact.id)
+            field_name: str | None = None
+            field_value: object | None = None
+            if normalized.fact_type == "dose":
+                dose_match = re.fullmatch(
+                    r"(\d+(?:\.\d+)?)(mg|mcg|g|ml)", normalized.value.casefold()
+                )
+                if dose_match is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "VOICE_MEDICATION_REGIMEN_UNPARSABLE"},
+                    )
+                regimen["dose_value"] = float(dose_match.group(1))
+                regimen["dose_unit"] = dose_match.group(2)
+            elif normalized.fact_type == "route":
+                field_name = "route"
+                field_value = _voice_regimen_value(normalized.value, kind="route")
+            elif normalized.fact_type == "frequency":
+                field_name = "frequency"
+                field_value = _voice_regimen_value(normalized.value, kind="frequency")
+            if field_name is not None:
+                existing = regimen[field_name]
+                if existing is not None and existing != field_value:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": "VOICE_MEDICATION_REGIMEN_CONFLICT"},
+                    )
+                regimen[field_name] = field_value
+    return regimens
 
 
 def _chunk_replay_matches(
@@ -88,9 +327,107 @@ def _patient_summary(session_row: VoiceSession) -> str | None:
     )
 
 
+def _quality_float(
+    signals: Mapping[str, object],
+    key: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    value = signals.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{key} is not numeric")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"{key} is not finite")
+    if minimum is not None and result < minimum:
+        raise ValueError(f"{key} is below its minimum")
+    if maximum is not None and result > maximum:
+        raise ValueError(f"{key} is above its maximum")
+    return result
+
+
+def _quality_bool(signals: Mapping[str, object], key: str) -> bool:
+    value = signals.get(key)
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} is not boolean")
+    return value
+
+
+def audio_quality_public(
+    asset: AudioAsset | None,
+) -> tuple[AudioQualityPublic | None, AudioQualityUnavailableReason | None]:
+    """Project only validated, PHI-free audio-quality evidence.
+
+    ``preprocessing_json`` also contains nested per-device diagnostics and the
+    exact FFmpeg filter expression.  Those implementation records stay inside
+    the worker boundary; API responses expose this exhaustive allowlist only.
+    Legacy or malformed metadata fails closed instead of being coerced.
+    """
+
+    if asset is None:
+        return None, "AUDIO_ASSET_NOT_AVAILABLE"
+    signals = asset.preprocessing_json
+    try:
+        measurement_stage = signals.get("measurement_stage")
+        if measurement_stage != "decoded-pre-normalization":
+            raise ValueError("measurement stage is missing or unknown")
+        processing_chain_version = signals.get("processing_chain_version")
+        if (
+            not isinstance(processing_chain_version, str)
+            or not processing_chain_version
+            or len(processing_chain_version) > 100
+        ):
+            raise ValueError("processing chain version is missing or invalid")
+        silence_review = _quality_bool(signals, "silence_review")
+        clipping_review = _quality_bool(signals, "clipping_review")
+        low_signal_review = _quality_bool(signals, "low_signal_review")
+        noise_review = _quality_bool(signals, "noise_review")
+        overlap_review = _quality_bool(signals, "overlap_review")
+        denoise_applied = _quality_bool(signals, "denoise_applied")
+        quality = AudioQualityPublic(
+            measurement_stage="decoded-pre-normalization",
+            processing_chain_version=processing_chain_version,
+            rms=_quality_float(signals, "rms", minimum=0),
+            noise_floor_dbfs=_quality_float(signals, "noise_floor_dbfs", maximum=0),
+            estimated_snr_db=_quality_float(signals, "estimated_snr_db"),
+            clipping_ratio=_quality_float(
+                signals, "clipping_ratio", minimum=0, maximum=1
+            ),
+            silence_ratio=_quality_float(
+                signals, "silence_ratio", minimum=0, maximum=1
+            ),
+            silence_review=silence_review,
+            clipping_review=clipping_review,
+            low_signal_review=low_signal_review,
+            noise_review=noise_review,
+            multi_device_overlap_review=overlap_review,
+            denoise_applied=denoise_applied,
+            review_required=any(
+                (
+                    silence_review,
+                    clipping_review,
+                    low_signal_review,
+                    noise_review,
+                    overlap_review,
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        return None, "AUDIO_QUALITY_METADATA_INVALID"
+    return quality, None
+
+
 def voice_session_public(
-    session_row: VoiceSession, *, patient_safe: bool
+    db: Session, session_row: VoiceSession, *, patient_safe: bool
 ) -> VoiceSessionPublic:
+    asset = db.exec(
+        select(AudioAsset).where(
+            AudioAsset.clinic_id == session_row.clinic_id,
+            AudioAsset.session_id == session_row.id,
+        )
+    ).first()
+    quality, quality_unavailable_reason = audio_quality_public(asset)
     return VoiceSessionPublic(
         id=session_row.id,
         patient_id=session_row.patient_id,
@@ -107,6 +444,10 @@ def voice_session_public(
             None if patient_safe else session_row.current_transcript_revision_id
         ),
         published_entry_id=session_row.published_entry_id,
+        audio_quality=quality,
+        audio_quality_unavailable_reason=quality_unavailable_reason,
+        remote_audio_consent_recorded=(session_row.remote_audio_consent_at is not None),
+        remote_audio_consent_at=session_row.remote_audio_consent_at,
         created_at=session_row.created_at,
         updated_at=session_row.updated_at,
     )
@@ -202,6 +543,12 @@ def create_voice_session(
         synthetic_fixture=body.synthetic_fixture,
         fixture_id=body.fixture_id,
         created_by_id=context.user_id,
+        remote_audio_consent_at=(
+            get_datetime_utc() if body.remote_audio_consent else None
+        ),
+        remote_audio_consent_by_id=(
+            context.user_id if body.remote_audio_consent else None
+        ),
     )
     db.add(voice_session)
     db.flush()
@@ -212,6 +559,59 @@ def create_voice_session(
         resource_type="voice_session",
         resource_id=voice_session.id,
         metadata={"capture_kind": body.capture_kind, "state": "created"},
+    )
+    if body.remote_audio_consent:
+        emit_change(
+            db,
+            context,
+            action="voice.remote_audio_consent_recorded",
+            resource_type="voice_session",
+            resource_id=voice_session.id,
+            metadata={"state": "recorded"},
+            reason_code="remote_audio_egress_consent",
+        )
+    return voice_session
+
+
+def update_remote_audio_consent(
+    db: Session,
+    context: RequestContext,
+    voice_session: VoiceSession,
+    *,
+    consent: bool,
+) -> VoiceSession:
+    """Record or revoke the explicit PHI-bearing audio egress decision."""
+
+    _authorize_session_write(context, voice_session)
+    if consent and voice_session.state == "published":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "VOICE_SESSION_ALREADY_PUBLISHED"},
+        )
+    currently_consented = voice_session.remote_audio_consent_at is not None
+    if currently_consented == consent:
+        return voice_session
+    now = get_datetime_utc()
+    voice_session.remote_audio_consent_at = now if consent else None
+    voice_session.remote_audio_consent_by_id = context.user_id if consent else None
+    voice_session.updated_at = now
+    db.add(voice_session)
+    emit_change(
+        db,
+        context,
+        action=(
+            "voice.remote_audio_consent_recorded"
+            if consent
+            else "voice.remote_audio_consent_revoked"
+        ),
+        resource_type="voice_session",
+        resource_id=voice_session.id,
+        metadata={"state": "recorded" if consent else "revoked"},
+        reason_code=(
+            "remote_audio_egress_consent"
+            if consent
+            else "remote_audio_egress_consent_revoked"
+        ),
     )
     return voice_session
 
@@ -683,6 +1083,11 @@ def finalize_voice_session(
         idempotency_key=idempotency_key,
         payload={"session_id": str(voice_session.id), "devices": trusted_devices},
     )
+    # One initial call plus five bounded retries exposes the complete
+    # 30s/2m/10m/30m/60m recovery policy. Local ASR remains separately bounded
+    # by its killable process timeout.
+    job.max_attempts = max(job.max_attempts, 6)
+    db.add(job)
     if voice_session.processing_job_id not in {None, job.id}:
         raise HTTPException(status_code=409, detail={"code": "VOICE_JOB_ALREADY_BOUND"})
     voice_session.processing_job_id = job.id
@@ -702,7 +1107,33 @@ def finalize_voice_session(
     )
 
 
-def _clinical_fact_public(fact: ClinicalFact, *, stale: bool) -> ClinicalFactPublic:
+def _clinical_fact_public(
+    fact: ClinicalFact,
+    *,
+    stale: bool,
+    medication_regimens: dict[str, dict[str, object]],
+) -> ClinicalFactPublic:
+    medication: str | None = None
+    dose_value: float | None = None
+    dose_unit: str | None = None
+    route: str | None = None
+    frequency: str | None = None
+    if fact.fact_type == "medication":
+        for regimen in medication_regimens.values():
+            fact_ids = regimen["fact_ids"]
+            assert isinstance(fact_ids, set)
+            if fact.id not in fact_ids:
+                continue
+            medication = str(regimen["medication"])
+            if isinstance(regimen["dose_value"], (int, float)):
+                dose_value = float(regimen["dose_value"])
+            if regimen["dose_unit"] is not None:
+                dose_unit = str(regimen["dose_unit"])
+            if regimen["route"] is not None:
+                route = str(regimen["route"])
+            if regimen["frequency"] is not None:
+                frequency = str(regimen["frequency"])
+            break
     return ClinicalFactPublic(
         id=fact.id,
         ordinal=fact.ordinal,
@@ -723,6 +1154,53 @@ def _clinical_fact_public(fact: ClinicalFact, *, stale: bool) -> ClinicalFactPub
         audio_end_ms=fact.audio_end_ms,
         status=fact.status,
         stale=stale or fact.stale,
+        medication=medication,
+        dose_value=dose_value,
+        dose_unit=dose_unit,
+        route=route,
+        frequency=frequency,
+    )
+
+
+def _transcript_segment_public(item: TranscriptSegment) -> TranscriptSegmentPublic:
+    segment_text = field_codec.decrypt_text(
+        item.clinic_id,
+        "transcript_segment.text",
+        item.id,
+        item.text_ciphertext,
+    )
+    try:
+        addressable_spans = tuple(
+            language_span_from_payload(payload) for payload in item.language_spans_json
+        )
+        validate_addressable_language_spans(segment_text, addressable_spans)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "INVALID_LANGUAGE_SPAN_METADATA"},
+        ) from exc
+    return TranscriptSegmentPublic(
+        id=item.id,
+        ordinal=item.ordinal,
+        text=segment_text,
+        text_start=item.text_start,
+        text_end=item.text_end,
+        start_ms=item.start_ms,
+        end_ms=item.end_ms,
+        speaker_id=item.speaker_id,
+        speaker_ids=item.speaker_ids_json,
+        detected_language=item.detected_language,
+        source_language=item.source_language,
+        language_confidence=item.language_confidence,
+        language_spans=[
+            TranscriptLanguageSpanPublic.model_validate(language_span_payload(span))
+            for span in addressable_spans
+        ],
+        confidence=item.confidence,
+        confidence_source=item.confidence_source,
+        overlap_group_id=item.overlap_group_id,
+        provider=item.provider,
+        model=item.model,
     )
 
 
@@ -764,6 +1242,14 @@ def transcript_public(
     stale = (
         revision.id != voice_session.current_transcript_revision_id or revision.stale
     )
+    medication_regimens = _voice_medication_regimens(db, revision, facts)
+    asset = db.exec(
+        select(AudioAsset).where(
+            AudioAsset.clinic_id == revision.clinic_id,
+            AudioAsset.session_id == revision.session_id,
+        )
+    ).first()
+    quality, quality_unavailable_reason = audio_quality_public(asset)
     return TranscriptRevisionPublic(
         id=revision.id,
         session_id=revision.session_id,
@@ -780,31 +1266,17 @@ def transcript_public(
         stale=stale,
         fallback=revision.fallback,
         warning_codes=revision.warning_codes_json,
-        segments=[
-            TranscriptSegmentPublic(
-                id=item.id,
-                ordinal=item.ordinal,
-                text=field_codec.decrypt_text(
-                    item.clinic_id,
-                    "transcript_segment.text",
-                    item.id,
-                    item.text_ciphertext,
-                ),
-                text_start=item.text_start,
-                text_end=item.text_end,
-                start_ms=item.start_ms,
-                end_ms=item.end_ms,
-                speaker_id=item.speaker_id,
-                detected_language=item.detected_language,
-                confidence=item.confidence,
-                confidence_source=item.confidence_source,
-                overlap_group_id=item.overlap_group_id,
-                provider=item.provider,
-                model=item.model,
+        audio_quality=quality,
+        audio_quality_unavailable_reason=quality_unavailable_reason,
+        segments=[_transcript_segment_public(item) for item in segments],
+        facts=[
+            _clinical_fact_public(
+                item,
+                stale=stale,
+                medication_regimens=medication_regimens,
             )
-            for item in segments
+            for item in facts
         ],
-        facts=[_clinical_fact_public(item, stale=stale) for item in facts],
         created_at=revision.created_at,
     )
 
@@ -864,6 +1336,37 @@ def correct_transcript(
         raise HTTPException(
             status_code=422, detail={"code": "TRANSCRIPT_CORRECTION_EMPTY"}
         )
+    detected_language_spans = detect_language_spans(normalized)
+    correction_language_spans = tuple(
+        AddressableLanguageSpan(
+            start_offset=span.start,
+            end_offset=span.end,
+            language_code=span.source_language,
+            confidence=span.confidence,
+            detection_source=span.detection_source,
+            review_required=span.review_required,
+        )
+        for span in detected_language_spans
+    )
+    validate_addressable_language_spans(normalized, correction_language_spans)
+    correction_language_spans = apply_clinic_language_policy(
+        correction_language_spans,
+        clinic_supported_language_codes(db, context.clinic_id),
+    )
+    policy_review_required = any(
+        span.review_required for span in correction_language_spans
+    )
+    correction_languages = {
+        span.language_code
+        for span in correction_language_spans
+        if span.language_code != "und"
+    }
+    correction_source_language = (
+        next(iter(correction_languages))
+        if len(correction_languages) == 1
+        and not any(span.review_required for span in correction_language_spans)
+        else "und"
+    )
     revision_id = uuid.uuid4()
     revision = TranscriptRevision(
         id=revision_id,
@@ -882,7 +1385,14 @@ def correct_transcript(
         needs_review=True,
         stale=True,
         corrected_by_id=context.user_id,
-        warning_codes_json=["DOWNSTREAM_RESULTS_STALE"],
+        warning_codes_json=(
+            [
+                "CLINIC_LANGUAGE_POLICY_REVIEW_REQUIRED",
+                "DOWNSTREAM_RESULTS_STALE",
+            ]
+            if policy_review_required
+            else ["DOWNSTREAM_RESULTS_STALE"]
+        ),
     )
     segment_id = uuid.uuid4()
     segment = TranscriptSegment(
@@ -901,6 +1411,10 @@ def correct_transcript(
         end_ms=max(1, asset.duration_ms),
         speaker_id=None,
         detected_language="reviewed",
+        source_language=correction_source_language,
+        language_spans_json=[
+            language_span_payload(span) for span in correction_language_spans
+        ],
         confidence=None,
         confidence_source="human_correction",
         overlap_group_id=None,
@@ -913,7 +1427,7 @@ def correct_transcript(
     voice_session.current_transcript_revision_id = revision.id
     voice_session.patient_summary_ciphertext = None
     voice_session.state = "needs_review"
-    voice_session.warning_codes_json = ["DOWNSTREAM_RESULTS_STALE"]
+    voice_session.warning_codes_json = revision.warning_codes_json
     voice_session.updated_at = get_datetime_utc()
     db.add(voice_session)
     emit_change(
@@ -1021,12 +1535,48 @@ def _fact_evidence_is_current(
     )
 
 
+def _fact_language_context(
+    segment: TranscriptSegment | None,
+    fact: ClinicalFact,
+) -> tuple[str, bool]:
+    """Resolve one fact to its exact persisted language-policy span."""
+
+    if segment is None:
+        return "und", True
+    try:
+        segment_text = field_codec.decrypt_text(
+            segment.clinic_id,
+            "transcript_segment.text",
+            segment.id,
+            segment.text_ciphertext,
+        )
+        spans = tuple(
+            language_span_from_payload(payload)
+            for payload in segment.language_spans_json
+        )
+        validate_addressable_language_spans(segment_text, spans)
+    except ValueError:
+        return "und", True
+    relative_start = fact.transcript_start - segment.text_start
+    relative_end = fact.transcript_end - segment.text_start
+    matches = [
+        span
+        for span in spans
+        if span.start_offset <= relative_start and relative_end <= span.end_offset
+    ]
+    if len(matches) != 1:
+        return "und", True
+    match = matches[0]
+    return match.language_code, match.review_required
+
+
 def publish_voice_result(
     db: Session,
     context: RequestContext,
     voice_session: VoiceSession,
     *,
     expected_revision_id: uuid.UUID,
+    medication_reviews: list[MedicationReviewAttestation] | None = None,
 ) -> VoicePublishPublic:
     if context.role != "clinician":
         raise HTTPException(status_code=403, detail="Clinician publication required")
@@ -1077,6 +1627,12 @@ def publish_voice_result(
     ]
     if not valid_facts:
         raise HTTPException(status_code=409, detail={"code": "FACT_EVIDENCE_REQUIRED"})
+    reviewed_medication_ids = _validated_voice_medication_reviews(
+        db,
+        revision,
+        valid_facts,
+        medication_reviews or [],
+    )
     summary = (
         field_codec.decrypt_text(
             revision.clinic_id,
@@ -1097,6 +1653,7 @@ def publish_voice_result(
         for fact in valid_facts
     ]
     reviewed_at = get_datetime_utc()
+    current_language_policy = clinic_supported_language_codes(db, context.clinic_id)
     for fact in valid_facts:
         fact.status = "accepted"
         fact.reviewed_by_id = context.user_id
@@ -1216,10 +1773,28 @@ def publish_voice_result(
         )
         db.add(pointer)
         db.flush()
+        source_segment = db.exec(
+            select(TranscriptSegment).where(
+                TranscriptSegment.id == fact.segment_id,
+                TranscriptSegment.clinic_id == context.clinic_id,
+                TranscriptSegment.revision_id == revision.id,
+            )
+        ).first()
+        source_language, language_review_required = _fact_language_context(
+            source_segment, fact
+        )
+        language_review_required = (
+            language_review_required
+            or source_language == "und"
+            or source_language not in current_language_policy
+        )
         normalized = next(
             (
                 item
-                for item in extract_normalized_facts(quote)
+                for item in extract_normalized_facts(
+                    quote,
+                    source_language=source_language,
+                )
                 if item.fact_type == fact.fact_type.lower()
             ),
             None,
@@ -1241,6 +1816,18 @@ def publish_voice_result(
             subject=normalized.key if normalized else value,
             normalized_value=normalized.value if normalized else value,
             origin="voice",
+            polarity=normalized.polarity if normalized else "unknown",
+            assertion_scope=(
+                normalized.assertion_scope if normalized else "specific_substance"
+            ),
+            source_language=(normalized.source_language if normalized else "und"),
+            clinical_status=(
+                "review_required"
+                if language_review_required
+                or normalized is None
+                or normalized.review_required
+                else "active"
+            ),
         )
         detect_conflicts_for_assertion(db, context, assertion)
     voice_session.published_entry_id = entry.id
@@ -1263,6 +1850,9 @@ def publish_voice_result(
             "entry_id": str(entry.id),
             "revision_id": str(revision.id),
             "accepted_fact_ids": [str(fact.id) for fact in valid_facts],
+            "medication_review_assertion_ids": [
+                str(item) for item in reviewed_medication_ids
+            ],
         },
     )
     return VoicePublishPublic(

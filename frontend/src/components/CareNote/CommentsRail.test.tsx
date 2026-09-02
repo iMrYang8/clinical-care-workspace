@@ -2,11 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
-import type { CommentPublic, MePublic } from "@/client"
+import type { MePublic } from "@/client"
+import type { ClinicalComment } from "@/features/api"
 import { clinicalApi } from "@/features/api"
 import { CommentsRail } from "./CommentsRail"
 
-const resolvedComment: CommentPublic = {
+const resolvedComment: ClinicalComment = {
   id: "11111111-1111-4111-8111-111111111111",
   entry_id: "22222222-2222-4222-8222-222222222222",
   entry_version_id: "33333333-3333-4333-8333-333333333333",
@@ -16,6 +17,7 @@ const resolvedComment: CommentPublic = {
   anchor_state: "resolved",
   review_required: false,
   assigned_membership_id: null,
+  revision: 1,
   mentioned_user_ids: [],
   resolved_at: "2026-08-28T00:00:00Z",
   created_at: "2026-08-27T00:00:00Z",
@@ -55,5 +57,6 @@ describe("CommentsRail resolution workflow", () => {
 
     await waitFor(() => expect(unresolve).toHaveBeenCalledOnce())
     expect(unresolve.mock.calls[0]?.[0]).toBe(resolvedComment.id)
+    expect(unresolve.mock.calls[0]?.[1]).toBe(resolvedComment.revision)
   })
 })

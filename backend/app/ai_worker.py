@@ -12,30 +12,45 @@ import logging
 import uuid
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlmodel import Session, col, select
 
 from app.core.config import settings
 from app.core.db import (
     assert_restricted_runtime_database,
     engine,
+    set_rls_actor,
     set_rls_clinic,
 )
 from app.models import (
     AuditEvent,
     Clinic,
     ClinicMembership,
+    ClinicOperationalSetting,
     DomainEvent,
     Job,
     JobAttempt,
+    User,
     VoiceSession,
     get_datetime_utc,
 )
 from app.services.ai_jobs import process_job, worker_context_for_job
+from app.services.messaging import (
+    dispatch_due_notifications,
+    recover_stale_notifications,
+)
 from app.services.redaction import assert_presidio_runtime
 from app.services.voice.worker import process_voice_job
+from app.services.worker_heartbeat import record_ai_worker_heartbeat
 
 logger = logging.getLogger(__name__)
-_AI_JOB_KINDS = ("ai_ingest", "ai_reanalyze", "voice_process", "voice_reanalyze")
+_AI_JOB_KINDS = (
+    "ai_ingest",
+    "ai_reanalyze",
+    "ai_recovery",
+    "voice_process",
+    "voice_reanalyze",
+)
 _SAFE_CONTROL_CODES = {
     "JOB_ATTEMPTS_EXHAUSTED",
     "JOB_CLAIM_LOST",
@@ -53,13 +68,73 @@ _VOICE_PROCESSING_STATES = {
 _VOICE_EXHAUSTED_CODE = "VOICE_WORKER_ATTEMPTS_EXHAUSTED"
 
 
+def _bind_worker_context(session: Session, clinic_id: uuid.UUID) -> bool:
+    """Bind one live service identity before any tenant-table read.
+
+    PostgreSQL uses a narrow SECURITY DEFINER lookup that returns identifiers
+    only after validating the active worker user and membership.  SQLite is
+    retained solely for deterministic unit tests, where row-level security is
+    not available.
+    """
+
+    if session.get_bind().dialect.name == "postgresql":
+        pg_row = (
+            session.connection()
+            .execute(
+                text("SELECT * FROM app_lookup_clinic_worker(:clinic_id)"),
+                {"clinic_id": clinic_id},
+            )
+            .one_or_none()
+        )
+        if pg_row is None:
+            return False
+        user_id = uuid.UUID(str(pg_row.user_id))
+    else:
+        sqlite_row = session.exec(
+            select(ClinicMembership, User)
+            .join(User)
+            .where(
+                ClinicMembership.clinic_id == clinic_id,
+                ClinicMembership.role == "worker",
+                col(ClinicMembership.is_active).is_(True),
+                col(User.is_active).is_(True),
+                User.account_kind == "service",
+            )
+            .order_by(col(ClinicMembership.created_at), col(ClinicMembership.id))
+        ).first()
+        if sqlite_row is None:
+            return False
+        membership, user = sqlite_row
+        del membership
+        user_id = user.id
+    set_rls_clinic(session, clinic_id)
+    set_rls_actor(session, user_id, role="worker")
+    operational = session.exec(
+        select(ClinicOperationalSetting).where(
+            ClinicOperationalSetting.clinic_id == clinic_id
+        )
+    ).first()
+    return operational is None or operational.worker_enabled
+
+
 def _next_job(session: Session, clinic_id: uuid.UUID) -> Job | None:
     set_rls_clinic(session, clinic_id)
     now = get_datetime_utc()
-    due = col(Job.next_run_at).is_(None) | (col(Job.next_run_at) <= now)
     unlocked = col(Job.locked_until).is_(None) | (col(Job.locked_until) < now)
-    claimable = (col(Job.state).in_(["pending", "failed"]) & unlocked) | (
-        (col(Job.state) == "running") & (col(Job.locked_until) < now)
+    # Pending rows represent an initial submission or explicit manual retry.
+    # Failed rows are automatic work only when the failure path persisted a
+    # due retry time (for example the bounded provider retry ladder). Keeping
+    # this selector identical to ``claim_job`` prevents permanent failures
+    # with next_run_at=NULL from spinning in the worker loop.
+    claimable = (
+        ((col(Job.state) == "pending") & unlocked)
+        | (
+            (col(Job.state) == "failed")
+            & unlocked
+            & col(Job.next_run_at).is_not(None)
+            & (col(Job.next_run_at) <= now)
+        )
+        | ((col(Job.state) == "running") & (col(Job.locked_until) < now))
     )
     return session.exec(
         select(Job)
@@ -67,7 +142,6 @@ def _next_job(session: Session, clinic_id: uuid.UUID) -> Job | None:
             Job.clinic_id == clinic_id,
             col(Job.kind).in_(_AI_JOB_KINDS),
             Job.attempt_count < Job.max_attempts,
-            due,
             claimable,
         )
         .order_by(col(Job.created_at), col(Job.id))
@@ -157,6 +231,7 @@ def _finalize_exhausted_expired_leases(session: Session, clinic_id: uuid.UUID) -
                 action="job.exhausted",
                 resource_type="job",
                 resource_id=job.id,
+                reason_code="job_attempts_exhausted",
                 metadata_json=metadata,
             )
         )
@@ -192,29 +267,50 @@ async def run_once() -> int:
         if settings.AI_PROVIDER == "openai" and settings.REMOTE_TEXT_EGRESS_ENABLED:
             assert_presidio_runtime(settings.PRESIDIO_NLP_MODEL)
     with Session(engine) as catalog:
+        record_ai_worker_heartbeat(catalog)
         clinic_ids = catalog.exec(select(Clinic.id).order_by(col(Clinic.id))).all()
+        catalog.commit()
 
     processed = 0
     for clinic_id in clinic_ids:
         with Session(engine) as session:
+            if not _bind_worker_context(session, clinic_id):
+                logger.warning("ai_worker_skip code=WORKER_UNAVAILABLE")
+                continue
             recovered = _finalize_exhausted_expired_leases(session, clinic_id)
             if recovered:
                 session.commit()
                 logger.info(
-                    "ai_worker_recovered clinic_id=%s count=%s code=JOB_ATTEMPTS_EXHAUSTED",
-                    clinic_id,
+                    "ai_worker_recovered count=%s code=JOB_ATTEMPTS_EXHAUSTED",
                     recovered,
                 )
+                if not _bind_worker_context(session, clinic_id):
+                    continue
+            stale_deliveries = recover_stale_notifications(
+                session, clinic_id=clinic_id, limit=100
+            )
+            if stale_deliveries:
+                session.commit()
+                logger.info(
+                    "notification_recovered count=%s code=CALLBACK_SILENT",
+                    stale_deliveries,
+                )
+                if not _bind_worker_context(session, clinic_id):
+                    continue
+            dispatched = dispatch_due_notifications(
+                session, clinic_id=clinic_id, limit=25
+            )
+            if dispatched:
+                session.commit()
+                logger.info("notification_dispatch count=%s", dispatched)
+                if not _bind_worker_context(session, clinic_id):
+                    continue
             job = _next_job(session, clinic_id)
             if job is None:
                 continue
             context = worker_context_for_job(session, job)
             if context is None:
-                logger.warning(
-                    "ai_worker_skip clinic_id=%s job_id=%s code=WORKER_UNAVAILABLE",
-                    clinic_id,
-                    job.id,
-                )
+                logger.warning("ai_worker_skip code=WORKER_UNAVAILABLE")
                 continue
             try:
                 if job.kind in {"voice_process", "voice_reanalyze"}:
@@ -225,18 +321,12 @@ async def run_once() -> int:
             except HTTPException as exc:
                 session.rollback()
                 logger.info(
-                    "ai_worker_skip clinic_id=%s job_id=%s code=%s",
-                    clinic_id,
-                    job.id,
+                    "ai_worker_skip code=%s",
                     _safe_http_code(exc),
                 )
             except Exception:
                 session.rollback()
-                logger.error(
-                    "ai_worker_error clinic_id=%s job_id=%s code=WORKER_LOOP_ERROR",
-                    clinic_id,
-                    job.id,
-                )
+                logger.error("ai_worker_error code=WORKER_LOOP_ERROR")
     return processed
 
 

@@ -1,8 +1,12 @@
+import hashlib
 import uuid
+from collections.abc import Callable
+from datetime import timedelta
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect, text
+from sqlalchemy import Connection, Engine, inspect, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlmodel import Session, select
 
@@ -10,9 +14,27 @@ from app.configure_db_roles import configure_runtime_role
 from app.core.db import (
     assert_restricted_runtime_connection,
     engine,
+    set_rls_actor,
     set_rls_clinic,
 )
-from app.models import Comment, EntryVersion, Highlight, ProvenancePointer
+from app.core.field_crypto import field_codec
+from app.models import (
+    CalibrationReport,
+    ClinicInvitation,
+    ClinicMembership,
+    Comment,
+    EntryVersion,
+    EvaluationRun,
+    Highlight,
+    ImportanceFeatureStat,
+    Patient,
+    PatientAccessCredential,
+    PatientPortalInvitation,
+    PatientUserLink,
+    ProvenancePointer,
+    User,
+    get_datetime_utc,
+)
 from app.seed import demo_id
 
 TENANT_TABLES = {
@@ -48,19 +70,136 @@ TENANT_TABLES = {
     "transcript_revisions",
     "transcript_segments",
     "clinical_facts",
+    "patient_access_credentials",
+    "patient_otp_challenges",
+    "clinic_operational_settings",
+    "notification_outbox",
+    "notification_attempts",
+    "notification_receipts",
+    "patient_publication_acknowledgements",
+    "publication_correction_outreaches",
+    "patient_portal_events",
+    "provider_circuit_states",
+    "importance_candidate_exposures",
+    "highlight_support_reviews",
+    "provisional_safety_alerts",
 }
 
 
-def _set_local_clinic(connection, clinic_id: uuid.UUID) -> None:
-    connection.execute(
-        text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
-        {"clinic_id": str(clinic_id)},
+def _scope_predicate_alternatives(
+    table: str, columns: set[str]
+) -> tuple[tuple[str, ...], ...]:
+    """Derive the approved patient/non-patient fence from schema topology."""
+
+    if "patient_id" in columns:
+        alternatives: list[tuple[str, ...]] = [
+            ("app_patient_context_allows(clinic_id, patient_id)",)
+        ]
+        if "user_id" in columns:
+            # Patient identity links use an intentionally stricter actor +
+            # linked-patient expression instead of the generic row helper.
+            alternatives.append(("app.current_actor_id", "app.current_patient_id"))
+        return tuple(alternatives)
+    if table == "patients":
+        return (("app_patient_context_allows(clinic_id, id)",),)
+    if table == "provenance_pointers":
+        return (("app_pointer_context_allows(clinic_id, id)",),)
+
+    contextual_children = (
+        ("notification_id", "app_notification_context_allows"),
+        ("credential_id", "app_credential_context_allows"),
+        ("publication_id", "app_publication_context_allows"),
+        ("highlight_id", "app_highlight_context_allows"),
+        ("comment_id", "app_comment_context_allows"),
+        ("job_id", "app_job_context_allows"),
+        ("session_id", "app_voice_session_context_allows"),
+        ("source_entry_version_id", "app_version_context_allows"),
+        ("entry_version_id", "app_version_context_allows"),
+        ("source_entry_id", "app_entry_context_allows"),
+        ("entry_id", "app_entry_context_allows"),
     )
+    alternatives = tuple(
+        (f"{helper}(clinic_id, {column})",)
+        for column, helper in contextual_children
+        if column in columns
+    )
+    if alternatives:
+        # A child can carry more than one valid immutable parent pointer.  For
+        # example, comments have both entry_id and entry_version_id.  Either
+        # parent helper is a complete fail-closed patient fence, so do not make
+        # the invariant depend on an arbitrary column-priority order.
+        return alternatives
+    return (("app_nonpatient_context_allows(clinic_id)",),)
+
+
+def _scope_predicate_matches(table: str, columns: set[str], expression: str) -> bool:
+    return any(
+        all(marker in expression for marker in alternative)
+        for alternative in _scope_predicate_alternatives(table, columns)
+    )
+
+
+@pytest.mark.unit
+def test_scope_topology_rejects_clinic_only_policy_for_direct_patient_rows() -> None:
+    assert not _scope_predicate_matches(
+        "future_patient_rows",
+        {"id", "clinic_id", "patient_id"},
+        "app_context_allows(clinic_id)",
+    )
+
+
+@pytest.mark.unit
+def test_scope_topology_rejects_split_using_bypass_for_direct_patient_rows() -> None:
+    columns = {"id", "clinic_id", "patient_id"}
+    using = "app_context_allows(clinic_id)"
+    with_check = "app_patient_context_allows(clinic_id, patient_id)"
+    # This combined expression demonstrates the exact mutation the old
+    # invariant missed: a strong INSERT/UPDATE check could mask a leaking
+    # SELECT/DELETE USING expression.
+    assert _scope_predicate_matches(
+        "future_patient_rows",
+        columns,
+        f"{using} {with_check}",
+    )
+    assert not _scope_predicate_matches(
+        "future_patient_rows",
+        columns,
+        using,
+    )
+    assert _scope_predicate_matches(
+        "future_patient_rows",
+        columns,
+        with_check,
+    )
+
+
+def _set_local_context(
+    connection: Connection,
+    *,
+    clinic_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    role: str,
+    patient_id: uuid.UUID | None = None,
+) -> None:
+    """Bind the same transaction-local identity context as an API request."""
+
+    values = {
+        "app.current_clinic_id": str(clinic_id),
+        "app.current_actor_id": str(actor_id),
+        "app.current_actor_role": role,
+        "app.current_patient_id": str(patient_id) if patient_id is not None else "",
+        "app.current_invitation_token_hash": "",
+    }
+    for setting, value in values.items():
+        connection.execute(
+            text("SELECT set_config(:setting, :value, true)"),
+            {"setting": setting, "value": value},
+        )
 
 
 def _make_anchored_comment(
     client: TestClient, headers: dict[str, str]
-) -> tuple[dict, dict]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
     entry_response = client.post(
         "/api/v1/entries",
@@ -76,7 +215,7 @@ def _make_anchored_comment(
     entry = entry_response.json()
     comment_response = client.post(
         f"/api/v1/entries/{entry['id']}/comments",
-        headers=headers,
+        headers=headers | {"If-Match": entry["version_id"]},
         json={
             "entry_version_id": entry["version_id"],
             "start_offset": 0,
@@ -184,6 +323,368 @@ def test_migration_installs_rls_composite_constraints_and_immutability() -> None
     assert "uq_job_clinic_id_patient" in job_uniques
 
 
+def test_every_tenant_table_has_forced_rls_required_policies_and_grants() -> None:
+    """Schema additions cannot silently escape the tenant-security invariant.
+
+    This intentionally discovers tables from the live schema rather than from
+    a maintained allowlist.  Every clinic-scoped table needs the permissive
+    clinic fence, a restrictive actor/patient fence for every DML command, and
+    a least-privilege runtime grant that those policies actually govern.
+    """
+
+    with engine.connect() as connection:
+        rows = (
+            connection.execute(
+                text(
+                    """
+                SELECT column_info.table_name
+                FROM information_schema.columns AS column_info
+                JOIN information_schema.tables AS table_info
+                  ON table_info.table_schema = column_info.table_schema
+                 AND table_info.table_name = column_info.table_name
+                 AND table_info.table_type = 'BASE TABLE'
+                WHERE column_info.table_schema = current_schema()
+                  AND column_info.column_name = 'clinic_id'
+                ORDER BY column_info.table_name
+                """
+                )
+            )
+            .scalars()
+            .all()
+        )
+        columns_by_table: dict[str, set[str]] = {}
+        for row in connection.execute(
+            text(
+                """
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                ORDER BY table_name, ordinal_position
+                """
+            )
+        ):
+            if row.table_name in rows:
+                columns_by_table.setdefault(row.table_name, set()).add(row.column_name)
+        security = {
+            row.relname: (row.relrowsecurity, row.relforcerowsecurity)
+            for row in connection.execute(
+                text(
+                    """
+                    SELECT cls.relname,
+                           cls.relrowsecurity,
+                           cls.relforcerowsecurity
+                    FROM pg_class AS cls
+                    JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+                    WHERE ns.nspname = current_schema()
+                      AND cls.relkind = 'r'
+                    """
+                )
+            )
+        }
+        policies: dict[str, list[Any]] = {}
+        for row in connection.execute(
+            text(
+                """
+                SELECT tablename, policyname, permissive, roles, cmd, qual, with_check
+                FROM pg_policies
+                WHERE schemaname = current_schema()
+                ORDER BY tablename, policyname
+                """
+            )
+        ):
+            policies.setdefault(row.tablename, []).append(row)
+        grants: dict[str, set[str]] = {}
+        for row in connection.execute(
+            text(
+                """
+                SELECT table_name, privilege_type
+                FROM information_schema.role_table_grants
+                WHERE table_schema = current_schema()
+                  AND grantee = 'nightingale_app'
+                ORDER BY table_name, privilege_type
+                """
+            )
+        ):
+            grants.setdefault(row.table_name, set()).add(row.privilege_type)
+        unexpected_grants = connection.execute(
+            text(
+                """
+                SELECT privilege.table_name,
+                       privilege.grantee,
+                       privilege.privilege_type
+                FROM information_schema.table_privileges AS privilege
+                JOIN pg_tables AS owned_table
+                  ON owned_table.schemaname = privilege.table_schema
+                 AND owned_table.tablename = privilege.table_name
+                WHERE privilege.table_schema = current_schema()
+                  AND privilege.grantee NOT IN (
+                    owned_table.tableowner,
+                    'nightingale_app'
+                  )
+                  AND EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns AS tenant_column
+                    WHERE tenant_column.table_schema = privilege.table_schema
+                      AND tenant_column.table_name = privilege.table_name
+                      AND tenant_column.column_name = 'clinic_id'
+                  )
+                ORDER BY privilege.table_name,
+                         privilege.grantee,
+                         privilege.privilege_type
+                """
+            )
+        ).all()
+
+    missing_security = {
+        table: security.get(table)
+        for table in rows
+        if security.get(table) != (True, True)
+    }
+    assert missing_security == {}
+    assert unexpected_grants == []
+
+    policy_errors: dict[str, list[str]] = {}
+    allowed_scope_markers = (
+        "app_context_allows(",
+        "app_patient_context_allows(",
+        "app_patient_actor_context_allows(",
+        "app_nonpatient_context_allows(",
+        "app_clinic_invitation_context_allows(",
+        "app_patient_membership_bootstrap_allows(",
+        "app_invitation_membership_bootstrap_allows(",
+        "app_entry_context_allows(",
+        "app_version_context_allows(",
+        "app_pointer_context_allows(",
+        "app_highlight_context_allows(",
+        "app_comment_context_allows(",
+        "app_job_context_allows(",
+        "app_notification_context_allows(",
+        "app_credential_context_allows(",
+        "app_publication_context_allows(",
+        "app_voice_session_context_allows(",
+        "app.current_actor_id",
+        "app.current_actor_role",
+        "app.current_patient_id",
+        "app.current_invitation_token_hash",
+    )
+    explicit_policy_topologies = (
+        {
+            "patient_actor_event_read": "SELECT",
+            "patient_actor_event_insert": "INSERT",
+            "patient_actor_event_update": "UPDATE",
+            "patient_actor_event_delete": "DELETE",
+        },
+        {
+            "operational_settings_read": "SELECT",
+            "operational_settings_insert": "INSERT",
+            "operational_settings_update": "UPDATE",
+            "operational_settings_delete": "DELETE",
+        },
+    )
+    for table in rows:
+        table_policies = policies.get(table, [])
+        clinic_policy = next(
+            (
+                policy
+                for policy in table_policies
+                if policy.policyname == "clinic_isolation"
+            ),
+            None,
+        )
+        errors: list[str] = []
+        if clinic_policy is None:
+            errors.append("clinic_isolation missing")
+        else:
+            if (
+                clinic_policy.permissive != "PERMISSIVE"
+                or clinic_policy.roles != ["public"]
+                or clinic_policy.cmd != "ALL"
+            ):
+                errors.append("clinic_isolation topology invalid")
+            if "app.current_clinic_id" not in (clinic_policy.qual or ""):
+                errors.append("clinic_isolation USING is not bound to clinic context")
+            if "app.current_clinic_id" not in (clinic_policy.with_check or ""):
+                errors.append(
+                    "clinic_isolation WITH CHECK is not bound to clinic context"
+                )
+
+        restrictive = [
+            policy for policy in table_policies if policy.permissive == "RESTRICTIVE"
+        ]
+        if any(policy.roles != ["public"] for policy in restrictive):
+            errors.append("restrictive policy role topology invalid")
+
+        all_scope = next(
+            (
+                policy
+                for policy in restrictive
+                if policy.policyname == "patient_scope" and policy.cmd == "ALL"
+            ),
+            None,
+        )
+        if all_scope is not None:
+            if len(restrictive) != 1:
+                errors.append("patient_scope must be the only restrictive policy")
+            if not _scope_predicate_matches(
+                table,
+                columns_by_table.get(table, set()),
+                all_scope.qual or "",
+            ):
+                errors.append("patient_scope USING does not match table FK topology")
+            if not _scope_predicate_matches(
+                table,
+                columns_by_table.get(table, set()),
+                all_scope.with_check or "",
+            ):
+                errors.append(
+                    "patient_scope WITH CHECK does not match table FK topology"
+                )
+        else:
+            command_topology = {policy.cmd for policy in restrictive}
+            if command_topology != {"SELECT", "INSERT", "UPDATE", "DELETE"}:
+                errors.append("required restrictive command topology missing")
+            policy_names = {policy.policyname for policy in restrictive}
+            recognized_topology = next(
+                (
+                    topology
+                    for topology in explicit_policy_topologies
+                    if set(topology) == policy_names
+                ),
+                None,
+            )
+            if recognized_topology is None:
+                errors.append("unrecognized restrictive policy-name topology")
+            elif any(
+                policy.cmd != recognized_topology[policy.policyname]
+                for policy in restrictive
+            ):
+                errors.append("restrictive policy name/command topology mismatch")
+
+        for command in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+            command_policies = [
+                policy for policy in restrictive if policy.cmd in {"ALL", command}
+            ]
+            if not command_policies:
+                errors.append(f"restrictive {command} policy missing")
+                continue
+            required_fields = {
+                "SELECT": ("qual",),
+                "INSERT": ("with_check",),
+                "UPDATE": ("qual", "with_check"),
+                "DELETE": ("qual",),
+            }[command]
+            for field in required_fields:
+                expressions = " ".join(
+                    getattr(policy, field) or "" for policy in command_policies
+                )
+                lowered_expressions = expressions.lower()
+                if not any(marker in expressions for marker in allowed_scope_markers):
+                    errors.append(f"restrictive {command} {field} is not context-bound")
+                if " or true" in lowered_expressions or "1 = 1" in lowered_expressions:
+                    errors.append(f"restrictive {command} {field} is tautological")
+        if errors:
+            policy_errors[table] = errors
+    assert policy_errors == {}
+
+    allowed_privileges = {"SELECT", "INSERT", "UPDATE", "DELETE"}
+    grant_errors: dict[str, object] = {}
+    for table in rows:
+        table_grants = grants.get(table, set())
+        if not {"SELECT", "INSERT"} <= table_grants:
+            grant_errors[table] = sorted(table_grants)
+        elif not table_grants <= allowed_privileges:
+            grant_errors[table] = sorted(table_grants - allowed_privileges)
+        else:
+            table_policies = policies.get(table, [])
+            for privilege in table_grants:
+                if not any(
+                    policy.cmd in {"ALL", privilege} for policy in table_policies
+                ):
+                    grant_errors[table] = f"{privilege} grant has no policy"
+                    break
+    assert grant_errors == {}
+
+
+def _valid_evaluation_run() -> EvaluationRun:
+    return EvaluationRun(
+        clinic_id=demo_id("clinic-primary"),
+        provider="constraint-fixture",
+        exact_model_id="constraint-model",
+        task="clinical_fact_extraction",
+        request_parameters_json={"schema": "constraint-v1"},
+        dataset_manifest_sha256="a" * 64,
+        code_commit="b" * 40,
+        calibration_split="constraint-calibration",
+        holdout_split="constraint-holdout",
+        total_sample_count=160,
+        calibration_sample_count=40,
+        holdout_sample_count=120,
+        sample_count=120,
+        status="completed",
+    )
+
+
+def test_evaluation_run_sample_accounting_is_database_enforced(
+    owner_session: Session,
+) -> None:
+    run = _valid_evaluation_run()
+    run.total_sample_count = 159
+    owner_session.add(run)
+
+    with pytest.raises(IntegrityError, match="ck_evaluation_run_sample_accounting"):
+        owner_session.commit()
+    owner_session.rollback()
+
+
+def test_calibration_report_sample_accounting_is_database_enforced(
+    owner_session: Session,
+) -> None:
+    run = _valid_evaluation_run()
+    owner_session.add(run)
+    owner_session.flush()
+    report = CalibrationReport(
+        clinic_id=run.clinic_id,
+        evaluation_run_id=run.id,
+        provider=run.provider,
+        exact_model_id=run.exact_model_id,
+        task=run.task,
+        request_parameters_sha256="c" * 64,
+        dataset_manifest_sha256=run.dataset_manifest_sha256,
+        code_commit=run.code_commit,
+        total_sample_count=159,
+        calibration_sample_count=40,
+        holdout_sample_count=120,
+        sample_count=120,
+        consultation_count=20,
+        confidence_band="high",
+        accuracy_lower_bound=0.91,
+        expires_at=get_datetime_utc() + timedelta(days=1),
+    )
+    owner_session.add(report)
+
+    with pytest.raises(IntegrityError, match="ck_calibration_report_sample_accounting"):
+        owner_session.commit()
+    owner_session.rollback()
+
+
+@pytest.mark.parametrize("weight", [-0.200001, 0.200001])
+def test_importance_feature_weight_bound_is_database_enforced(
+    owner_session: Session,
+    weight: float,
+) -> None:
+    owner_session.add(
+        ImportanceFeatureStat(
+            clinic_id=demo_id("clinic-primary"),
+            feature_key=f"entry_type:weight_{str(weight).replace('.', '_')}",
+            weight=weight,
+        )
+    )
+
+    with pytest.raises(IntegrityError, match="ck_importance_feature_weight_bound"):
+        owner_session.commit()
+    owner_session.rollback()
+
+
 def test_runtime_login_is_restricted_non_owner_and_rls_is_enforced() -> None:
     primary_clinic = demo_id("clinic-primary")
     other_clinic = demo_id("clinic-other")
@@ -253,6 +754,11 @@ def test_runtime_login_is_restricted_non_owner_and_rls_is_enforced() -> None:
     # trusted value when application code commits and then refreshes/queries.
     with Session(engine) as session:
         set_rls_clinic(session, other_clinic)
+        set_rls_actor(
+            session,
+            demo_id("user-other_staff"),
+            role="staff",
+        )
         other_visible = (
             session.execute(text("SELECT id FROM patients ORDER BY id")).scalars().all()
         )
@@ -265,7 +771,12 @@ def test_runtime_login_is_restricted_non_owner_and_rls_is_enforced() -> None:
 
     with engine.connect() as connection:
         transaction = connection.begin()
-        _set_local_clinic(connection, primary_clinic)
+        _set_local_context(
+            connection,
+            clinic_id=primary_clinic,
+            actor_id=demo_id("user-staff"),
+            role="staff",
+        )
         visible_ids = set(
             connection.execute(text("SELECT id FROM patients")).scalars().all()
         )
@@ -299,7 +810,12 @@ def test_runtime_login_is_restricted_non_owner_and_rls_is_enforced() -> None:
 
     with pytest.raises(DBAPIError, match="row-level security policy"):
         with engine.begin() as connection:
-            _set_local_clinic(connection, primary_clinic)
+            _set_local_context(
+                connection,
+                clinic_id=primary_clinic,
+                actor_id=demo_id("user-staff"),
+                role="staff",
+            )
             connection.execute(
                 text(
                     """
@@ -349,7 +865,7 @@ def test_runtime_role_bootstrap_revokes_settable_memberships(
         with engine.connect() as runtime_connection:
             assert_restricted_runtime_connection(runtime_connection)
     finally:
-        with owner_session.get_bind().begin() as cleanup:
+        with cast(Engine, owner_session.get_bind()).begin() as cleanup:
             drop_role = cleanup.scalar(
                 text("SELECT format('DROP ROLE IF EXISTS %I', CAST(:role AS text))"),
                 {"role": role_name},
@@ -359,11 +875,13 @@ def test_runtime_role_bootstrap_revokes_settable_memberships(
 
 
 def test_cross_clinic_composite_fk_and_append_only_triggers(
-    client: TestClient, auth_headers
+    client: TestClient, auth_headers: Callable[[str], dict[str, str]]
 ) -> None:
     entry, comment = _make_anchored_comment(client, auth_headers("staff"))
 
     with Session(engine) as session:
+        set_rls_clinic(session, demo_id("clinic-primary"))
+        set_rls_actor(session, demo_id("user-staff"), role="staff")
         stored_comment = session.get(Comment, uuid.UUID(comment["id"]))
         assert stored_comment is not None
         stored_comment.assigned_membership_id = demo_id("membership-other_staff")
@@ -372,6 +890,8 @@ def test_cross_clinic_composite_fk_and_append_only_triggers(
             session.commit()
 
     with Session(engine) as session:
+        set_rls_clinic(session, demo_id("clinic-primary"))
+        set_rls_actor(session, demo_id("user-staff"), role="staff")
         version = session.get(EntryVersion, uuid.UUID(entry["version_id"]))
         assert version is not None
         version.content_ciphertext = b"tampered-in-place"
@@ -380,6 +900,8 @@ def test_cross_clinic_composite_fk_and_append_only_triggers(
             session.commit()
 
     with Session(engine) as session:
+        set_rls_clinic(session, demo_id("clinic-primary"))
+        set_rls_actor(session, demo_id("user-staff"), role="staff")
         version = session.get(EntryVersion, uuid.UUID(entry["version_id"]))
         assert version is not None
         version.title_ciphertext = b"tampered-title-in-place"
@@ -388,6 +910,8 @@ def test_cross_clinic_composite_fk_and_append_only_triggers(
             session.commit()
 
     with Session(engine) as session:
+        set_rls_clinic(session, demo_id("clinic-primary"))
+        set_rls_actor(session, demo_id("user-staff"), role="staff")
         pointer = session.exec(
             select(ProvenancePointer).where(
                 ProvenancePointer.comment_id == uuid.UUID(comment["id"])
@@ -400,7 +924,7 @@ def test_cross_clinic_composite_fk_and_append_only_triggers(
 
 
 def test_highlight_anchor_fields_are_database_immutable(
-    client: TestClient, auth_headers
+    client: TestClient, auth_headers: Callable[[str], dict[str, str]]
 ) -> None:
     headers = auth_headers("clinician")
     patient_id = client.get("/api/v1/patients", headers=headers).json()["data"][0]["id"]
@@ -428,9 +952,296 @@ def test_highlight_anchor_fields_are_database_immutable(
     assert highlight.status_code == 201, highlight.text
 
     with Session(engine) as session:
+        set_rls_clinic(session, demo_id("clinic-primary"))
+        set_rls_actor(session, demo_id("user-clinician"), role="clinician")
         stored = session.get(Highlight, uuid.UUID(highlight.json()["id"]))
         assert stored is not None
         stored.entry_id = uuid.uuid4()
         session.add(stored)
         with pytest.raises(DBAPIError, match="immutable highlight anchor"):
             session.commit()
+
+
+def test_actor_and_patient_rls_fail_closed_without_route_filters(
+    owner_session: Session,
+) -> None:
+    """An omitted WHERE clause still cannot cross the actor/patient boundary."""
+
+    primary_clinic = demo_id("clinic-primary")
+    primary_patient = demo_id("patient-primary")
+    other_patient = demo_id("patient-other")
+    unlinked_patient = uuid.uuid4()
+    owner_session.add(
+        Patient(
+            id=unlinked_patient,
+            clinic_id=primary_clinic,
+            display_name_ciphertext=field_codec.encrypt_text(
+                primary_clinic,
+                "patient.display_name",
+                unlinked_patient,
+                "Unlinked RLS Fixture",
+            ),
+            external_ref_hash=hashlib.sha256(b"unlinked-rls-fixture").hexdigest(),
+        )
+    )
+    owner_session.commit()
+
+    with engine.begin() as connection:
+        _set_local_context(
+            connection,
+            clinic_id=primary_clinic,
+            actor_id=demo_id("user-staff"),
+            role="staff",
+        )
+        visible = set(
+            connection.execute(text("SELECT id FROM patients")).scalars().all()
+        )
+        assert {primary_patient, unlinked_patient} <= visible
+        assert other_patient not in visible
+
+    with engine.begin() as connection:
+        _set_local_context(
+            connection,
+            clinic_id=primary_clinic,
+            actor_id=demo_id("user-patient"),
+            role="patient",
+            patient_id=primary_patient,
+        )
+        assert set(
+            connection.execute(text("SELECT id FROM patients")).scalars().all()
+        ) == {primary_patient}
+        # Identity tables expose only the patient's own bootstrap rows, never
+        # a clinic/global directory that could be enumerated.
+        assert set(
+            connection.execute(text("SELECT id FROM users")).scalars().all()
+        ) == {demo_id("user-patient")}
+        assert set(
+            connection.execute(text("SELECT id FROM clinic_memberships"))
+            .scalars()
+            .all()
+        ) == {demo_id("membership-patient")}
+
+    with engine.begin() as connection:
+        _set_local_context(
+            connection,
+            clinic_id=primary_clinic,
+            actor_id=uuid.uuid4(),
+            role="staff",
+        )
+        assert connection.execute(text("SELECT id FROM patients")).all() == []
+        assert connection.execute(text("SELECT id FROM users")).all() == []
+        assert connection.execute(text("SELECT id FROM clinic_memberships")).all() == []
+
+
+def test_patient_access_credentials_allow_shared_phone_hmac(
+    owner_session: Session,
+) -> None:
+    """A household phone is a delivery address, not a unique patient identity."""
+
+    clinic_id = demo_id("clinic-primary")
+    second_patient_id = uuid.uuid4()
+    owner_session.add(
+        Patient(
+            id=second_patient_id,
+            clinic_id=clinic_id,
+            display_name_ciphertext=field_codec.encrypt_text(
+                clinic_id,
+                "patient.display_name",
+                second_patient_id,
+                "Shared Phone Fixture",
+            ),
+            external_ref_hash=hashlib.sha256(b"shared-phone-fixture").hexdigest(),
+        )
+    )
+    owner_session.flush()
+    now = get_datetime_utc()
+    invitations = [
+        PatientPortalInvitation(
+            clinic_id=clinic_id,
+            patient_id=patient_id,
+            email=None,
+            token_hash=hashlib.sha256(f"shared-invite-{index}".encode()).hexdigest(),
+            created_by_membership_id=demo_id("membership-staff"),
+            expires_at=now + timedelta(days=7),
+        )
+        for index, patient_id in enumerate(
+            (demo_id("patient-primary"), second_patient_id), start=1
+        )
+    ]
+    owner_session.add_all(invitations)
+    owner_session.flush()
+    shared_phone_hmac = field_codec.blind_index(
+        clinic_id, "patient_access.phone", "+6591234567"
+    )
+    credentials = [
+        PatientAccessCredential(
+            clinic_id=clinic_id,
+            patient_id=invitation.patient_id,
+            invitation_id=invitation.id,
+            portal_id=f"NIGHTINGALE-SHARED{index}",
+            phone_ciphertext=field_codec.encrypt_text(
+                clinic_id,
+                "patient_access.phone",
+                credential_id,
+                "+6591234567",
+            ),
+            phone_hmac=shared_phone_hmac,
+            masked_phone="***4567",
+            claim_code_hash=hashlib.sha256(
+                f"shared-claim-{index}".encode()
+            ).hexdigest(),
+            claim_code_expires_at=now + timedelta(days=7),
+            created_by_membership_id=demo_id("membership-staff"),
+            id=credential_id,
+        )
+        for index, (invitation, credential_id) in enumerate(
+            zip(invitations, (uuid.uuid4(), uuid.uuid4()), strict=True), start=1
+        )
+    ]
+    owner_session.add_all(credentials)
+    owner_session.commit()
+
+    stored = owner_session.exec(
+        select(PatientAccessCredential).where(
+            PatientAccessCredential.clinic_id == clinic_id,
+            PatientAccessCredential.phone_hmac == shared_phone_hmac,
+        )
+    ).all()
+    assert {item.patient_id for item in stored} == {
+        demo_id("patient-primary"),
+        second_patient_id,
+    }
+
+
+def test_staff_invitation_bootstrap_requires_exact_secret_and_email(
+    client: TestClient,
+    owner_session: Session,
+) -> None:
+    clinic_id = demo_id("clinic-primary")
+    email = "rls.invited.clinician@nightingale.example"
+    token = f"{clinic_id}.{'staff-exact-secret-' * 2}"
+    invitation = ClinicInvitation(
+        clinic_id=clinic_id,
+        email=email,
+        invited_full_name="RLS Invited Clinician",
+        role="clinician",
+        token_hash=hashlib.sha256(token.encode()).hexdigest(),
+        created_by_membership_id=demo_id("membership-admin"),
+        expires_at=get_datetime_utc() + timedelta(days=1),
+    )
+    owner_session.add(invitation)
+    owner_session.commit()
+
+    base_body = {
+        "email": email,
+        "password": "exact-secret-passphrase",
+        "full_name": "RLS Invited Clinician",
+    }
+    wrong_email = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json=base_body | {"email": "wrong.rls@example.com", "token": token},
+    )
+    assert wrong_email.status_code == 400
+    wrong_secret = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json=base_body | {"token": f"{clinic_id}.{'wrong-secret-' * 3}"},
+    )
+    assert wrong_secret.status_code == 400
+
+    accepted = client.post(
+        "/api/v1/auth/invitations/accept",
+        headers={"Origin": "https://localhost"},
+        json=base_body | {"token": token},
+    )
+    assert accepted.status_code == 200, accepted.text
+    owner_session.expire_all()
+    user = owner_session.exec(select(User).where(User.email == email)).one()
+    membership = owner_session.exec(
+        select(ClinicMembership).where(
+            ClinicMembership.clinic_id == clinic_id,
+            ClinicMembership.user_id == user.id,
+        )
+    ).one()
+    assert user.account_kind == "staff"
+    assert membership.role == "clinician"
+
+
+def test_legacy_patient_invitation_bootstrap_requires_exact_secret_and_email(
+    client: TestClient,
+    owner_session: Session,
+) -> None:
+    clinic_id = demo_id("clinic-primary")
+    patient_id = uuid.uuid4()
+    email = "legacy.rls.patient@nightingale.example"
+    token = f"{clinic_id}.{'patient-exact-secret-' * 2}"
+    patient = Patient(
+        id=patient_id,
+        clinic_id=clinic_id,
+        display_name_ciphertext=field_codec.encrypt_text(
+            clinic_id,
+            "patient.display_name",
+            patient_id,
+            "Legacy Patient Fixture",
+        ),
+        external_ref_hash=hashlib.sha256(b"legacy-patient-fixture").hexdigest(),
+    )
+    invitation = PatientPortalInvitation(
+        clinic_id=clinic_id,
+        patient_id=patient_id,
+        email=email,
+        token_hash=hashlib.sha256(token.encode()).hexdigest(),
+        created_by_membership_id=demo_id("membership-staff"),
+        expires_at=get_datetime_utc() + timedelta(days=1),
+    )
+    owner_session.add(patient)
+    owner_session.flush()
+    owner_session.add(invitation)
+    owner_session.commit()
+
+    wrong_email = client.post(
+        "/api/v1/auth/patient-invitations/preview",
+        json={"token": token, "email": "wrong.patient@example.com"},
+    )
+    assert wrong_email.status_code == 400
+    wrong_secret = client.post(
+        "/api/v1/auth/patient-invitations/preview",
+        json={"token": f"{clinic_id}.{'wrong-secret-' * 3}", "email": email},
+    )
+    assert wrong_secret.status_code == 400
+
+    preview = client.post(
+        "/api/v1/auth/patient-invitations/preview",
+        json={"token": token, "email": email},
+    )
+    assert preview.status_code == 200, preview.text
+    accepted = client.post(
+        "/api/v1/auth/patient-invitations/accept",
+        json={
+            "token": token,
+            "email": email,
+            "password": "legacy-patient-passphrase",
+            "full_name": "Legacy Patient Fixture",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    owner_session.expire_all()
+    user = owner_session.exec(select(User).where(User.email == email)).one()
+    membership = owner_session.exec(
+        select(ClinicMembership).where(
+            ClinicMembership.clinic_id == clinic_id,
+            ClinicMembership.user_id == user.id,
+        )
+    ).one()
+    link = owner_session.exec(
+        select(PatientUserLink).where(
+            PatientUserLink.clinic_id == clinic_id,
+            PatientUserLink.patient_id == patient_id,
+            PatientUserLink.user_id == user.id,
+        )
+    ).one()
+    assert user.account_kind == "patient"
+    assert membership.role == "patient"
+    assert link.patient_id == patient_id

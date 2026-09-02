@@ -12,6 +12,13 @@ def authenticate(*, session: Session, email: str, password: str) -> User | None:
     if user is None:
         verify_password(password, DUMMY_HASH)
         return None
+    if (
+        user.email is None
+        or not user.hashed_password
+        or user.account_kind not in {"staff", "patient"}
+    ):
+        verify_password(password, DUMMY_HASH)
+        return None
     verified, updated_hash = verify_password(password, user.hashed_password)
     if not verified:
         return None

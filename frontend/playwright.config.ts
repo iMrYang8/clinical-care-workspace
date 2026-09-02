@@ -9,7 +9,9 @@ export default defineConfig({
   // Serial execution makes stale-version and decay assertions reproducible.
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 2 : 0,
+  // Safety acceptance failures must remain visible; retries can hide a race
+  // that only fails on the first browser attempt.
+  retries: 0,
   workers: 1,
   reporter: process.env.CI ? "blob" : "list",
   use: {

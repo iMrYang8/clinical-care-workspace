@@ -9,7 +9,7 @@ import {
 } from "lucide-react"
 import { useMemo, useState } from "react"
 
-import type { CommentPublic, MePublic } from "@/client"
+import type { MePublic } from "@/client"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,7 @@ import {
 import { Label } from "@/components/ui/label"
 import {
   apiErrorMessage,
+  type ClinicalComment,
   clinicalApi,
   type TeamMemberOption,
 } from "@/features/api"
@@ -87,7 +88,7 @@ export function CommentsRail({
   const comments = commentsQuery.data ?? []
   const roots = comments.filter((comment) => comment.parent_id === null)
   const replies = useMemo(() => {
-    const grouped = new Map<string, CommentPublic[]>()
+    const grouped = new Map<string, ClinicalComment[]>()
     for (const comment of comments) {
       if (!comment.parent_id) continue
       grouped.set(comment.parent_id, [
@@ -104,16 +105,18 @@ export function CommentsRail({
     })
 
   const resolveMutation = useMutation({
-    mutationFn: clinicalApi.resolveComment,
+    mutationFn: (comment: ClinicalComment) =>
+      clinicalApi.resolveComment(comment.id, comment.revision),
     onSuccess: invalidate,
   })
   const unresolveMutation = useMutation({
-    mutationFn: clinicalApi.unresolveComment,
+    mutationFn: (comment: ClinicalComment) =>
+      clinicalApi.unresolveComment(comment.id, comment.revision),
     onSuccess: invalidate,
   })
   const assignMutation = useMutation({
-    mutationFn: (commentId: string) =>
-      clinicalApi.assignComment(commentId, {
+    mutationFn: (comment: ClinicalComment) =>
+      clinicalApi.assignComment(comment.id, comment.revision, {
         assigned_membership_id: currentUser.membership_id,
       }),
     onSuccess: invalidate,
@@ -230,7 +233,7 @@ export function CommentsRail({
                 {!comment.resolved_at && (
                   <Button
                     disabled={resolveMutation.isPending}
-                    onClick={() => resolveMutation.mutate(comment.id)}
+                    onClick={() => resolveMutation.mutate(comment)}
                     size="sm"
                     variant="ghost"
                   >
@@ -240,7 +243,7 @@ export function CommentsRail({
                 {comment.resolved_at && (
                   <Button
                     disabled={unresolveMutation.isPending}
-                    onClick={() => unresolveMutation.mutate(comment.id)}
+                    onClick={() => unresolveMutation.mutate(comment)}
                     size="sm"
                     variant="ghost"
                   >
@@ -251,7 +254,7 @@ export function CommentsRail({
                   currentUser.membership_id && (
                   <Button
                     disabled={assignMutation.isPending}
-                    onClick={() => assignMutation.mutate(comment.id)}
+                    onClick={() => assignMutation.mutate(comment)}
                     size="sm"
                     variant="ghost"
                   >

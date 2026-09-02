@@ -18,9 +18,10 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Paragraph, Table, TableStyle
+from reportlab.platypus import Paragraph
 
 from validate_release_evidence import (
+    technical_brief_bound_artifacts,
     validate_release_evidence,
     write_pdf_binding,
 )
@@ -41,14 +42,30 @@ EVALUATION_ROOT = Path(
     os.environ.get("NIGHTINGALE_EVALUATION_DIR", ROOT / "artifacts" / "evaluation")
 )
 EVALUATION_MANIFEST = ROOT / "datasets" / "manifests" / "evaluation-pack-v1.json"
-EVALUATION_REPORTS = {
-    f"artifacts/evaluation/{filename}": EVALUATION_ROOT / filename
-    for filename in (
-        "fact-calibration.json",
-        "voice-calibration.json",
-        "redaction-v2.json",
+DEMO_VIDEO = Path(
+    os.environ.get(
+        "NIGHTINGALE_DEMO_VIDEO",
+        ROOT / "output" / "demo" / "Nightingale_Final_Demo_EN_Samantha.mp4",
     )
-}
+)
+DEMO_METADATA_PATH = Path(
+    os.environ.get(
+        "NIGHTINGALE_DEMO_METADATA",
+        ROOT / "output" / "demo" / "Nightingale_Final_Demo_EN_Samantha_metadata.json",
+    )
+)
+DEMO_SHA256_PATH = Path(
+    os.environ.get(
+        "NIGHTINGALE_DEMO_SHA256",
+        ROOT / "output" / "demo" / "Nightingale_Final_Demo_EN_Samantha_SHA256.txt",
+    )
+)
+DEMO_SRT_PATH = Path(
+    os.environ.get(
+        "NIGHTINGALE_DEMO_SRT",
+        ROOT / "output" / "demo" / "Nightingale_Final_Demo_EN.srt",
+    )
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -59,6 +76,95 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def load_json_object(path: Path, label: str) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid {label}: {path}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} must be an object: {path}")
+    return payload
+
+
+def load_sha256_manifest(path: Path) -> dict[str, str]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ValueError(f"invalid demo SHA-256 manifest: {path}") from exc
+    manifest: dict[str, str] = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2 or not re.fullmatch(r"[0-9a-f]{64}", parts[0]):
+            raise ValueError(f"invalid demo SHA-256 manifest line: {line!r}")
+        filename = parts[1].lstrip("* ")
+        if filename in manifest:
+            raise ValueError(f"duplicate demo SHA-256 manifest entry: {filename}")
+        manifest[filename] = parts[0]
+    return manifest
+
+
+def load_demo_metadata() -> dict[str, object]:
+    metadata = load_json_object(DEMO_METADATA_PATH, "demo metadata")
+    if not DEMO_VIDEO.is_file() or DEMO_VIDEO.stat().st_size == 0:
+        raise ValueError(f"final narrated demo is missing: {DEMO_VIDEO}")
+    if not DEMO_SRT_PATH.is_file() or DEMO_SRT_PATH.stat().st_size == 0:
+        raise ValueError(f"final demo SRT is missing: {DEMO_SRT_PATH}")
+
+    video_sha256 = sha256_file(DEMO_VIDEO)
+    srt_sha256 = sha256_file(DEMO_SRT_PATH)
+    metadata_sha256 = sha256_file(DEMO_METADATA_PATH)
+    if metadata.get("output_sha256") != video_sha256:
+        raise ValueError("demo video SHA-256 does not match its metadata")
+    if metadata.get("srt_sha256") != srt_sha256:
+        raise ValueError("demo SRT SHA-256 does not match its metadata")
+
+    sha_manifest = load_sha256_manifest(DEMO_SHA256_PATH)
+    expected_manifest = {
+        DEMO_VIDEO.name: video_sha256,
+        DEMO_SRT_PATH.name: srt_sha256,
+        DEMO_METADATA_PATH.name: metadata_sha256,
+    }
+    for filename, expected_sha256 in expected_manifest.items():
+        if sha_manifest.get(filename) != expected_sha256:
+            raise ValueError(
+                f"demo SHA-256 manifest does not match {filename}: "
+                f"{sha_manifest.get(filename)!r}"
+            )
+
+    expected = {
+        "language": "en",
+        "narration": True,
+        "narration_voice": "Samantha",
+        "narration_engine": "macOS say",
+        "duration_seconds": 720.0,
+        "video_codec": "h264",
+        "audio_codec": "aac",
+        "audio_sample_rate": 48_000,
+        "audio_channels": 2,
+        "output": DEMO_VIDEO.name,
+        "srt": DEMO_SRT_PATH.name,
+    }
+    require_report_fields("demo metadata", metadata, expected)
+    qa = metadata.get("qa")
+    if not isinstance(qa, dict):
+        raise ValueError("demo metadata does not contain a QA record")
+    require_report_fields(
+        "demo metadata QA",
+        qa,
+        {
+            "cue_alignment": "passed",
+            "duration": "passed",
+            "one_h264_video_stream": "passed",
+            "one_aac_audio_stream": "passed",
+            "subtitle_track": "burned in source video",
+        },
+    )
+
+    return metadata
 
 
 def load_evaluation_report(
@@ -124,6 +230,7 @@ VOICE_EVALUATION = load_evaluation_report(
     expected_task="voice_transcription",
 )
 REDACTION_EVALUATION = load_evaluation_report("redaction-v2.json")
+DEMO_METADATA = load_demo_metadata()
 if not EVALUATION_MANIFEST.is_file():
     raise ValueError(f"evaluation manifest is missing: {EVALUATION_MANIFEST}")
 EVALUATION_MANIFEST_SHA256 = sha256_file(EVALUATION_MANIFEST)
@@ -214,48 +321,64 @@ BROWSER_PASSED = RELEASE["playwright_scenarios_a_to_f_repeat_3"].split("_", 1)[0
 BROWSER_PER_RUN = int(BROWSER_PASSED) // 3
 GLANCE_LATENCY = BENCHMARK["latency_ms"]
 GLANCE_TARGET = BENCHMARK["target"]
+GLANCE_CONFIG = BENCHMARK["config"]
+DEMO_DURATION_SECONDS = int(DEMO_METADATA["duration_seconds"])
+DEMO_DURATION_LABEL = f"{DEMO_DURATION_SECONDS // 60}:{DEMO_DURATION_SECONDS % 60:02d}"
+DEMO_VOICE = str(DEMO_METADATA["narration_voice"])
+DEMO_FILE_SHA256 = str(DEMO_METADATA["output_sha256"])
+DEMO_FILE_SHA256_SHORT = DEMO_FILE_SHA256[:12]
 
 PAGE_W, PAGE_H = A4
 MARGIN = 34
 
-PAPER = colors.HexColor("#F8F5EE")
 WHITE = colors.HexColor("#FFFFFF")
-INK = colors.HexColor("#183247")
-MUTED = colors.HexColor("#5C7180")
-LINE = colors.HexColor("#D7E0DE")
-TEAL = colors.HexColor("#0F7A70")
-TEAL_SOFT = colors.HexColor("#E6F3F0")
-BLUE = colors.HexColor("#3369E8")
-BLUE_SOFT = colors.HexColor("#EAF0FD")
-VIOLET = colors.HexColor("#7652E8")
-VIOLET_SOFT = colors.HexColor("#F0ECFD")
-AMBER = colors.HexColor("#B96D08")
-AMBER_SOFT = colors.HexColor("#FBF0DC")
-RED = colors.HexColor("#C94A5A")
-RED_SOFT = colors.HexColor("#FBEAEC")
+PAPER = WHITE
+INK = colors.HexColor("#1A1A1A")
+MUTED = colors.HexColor("#4D4D4D")
+LINE = colors.HexColor("#B8B8B8")
+TEAL = colors.HexColor("#0B6F66")
+TEAL_SOFT = WHITE
+BLUE = colors.HexColor("#2459C4")
+BLUE_SOFT = WHITE
+VIOLET = colors.HexColor("#6542C7")
+VIOLET_SOFT = WHITE
+AMBER = colors.HexColor("#9A5A00")
+AMBER_SOFT = WHITE
+RED = colors.HexColor("#B33F4E")
+RED_SOFT = WHITE
 
 
 def register_fonts() -> None:
     font_dir = Path("/System/Library/Fonts/Supplemental")
     choices = {
-        "Body": font_dir / "Arial.ttf",
-        "BodyBold": font_dir / "Arial Bold.ttf",
-        "BodyItalic": font_dir / "Arial Italic.ttf",
-        "Display": font_dir / "Georgia.ttf",
-        "DisplayBold": font_dir / "Georgia Bold.ttf",
+        "Body": font_dir / "Times New Roman.ttf",
+        "BodyBold": font_dir / "Times New Roman Bold.ttf",
+        "BodyItalic": font_dir / "Times New Roman Italic.ttf",
+        "BodyBoldItalic": font_dir / "Times New Roman Bold Italic.ttf",
+        "Display": font_dir / "Times New Roman.ttf",
+        "DisplayBold": font_dir / "Times New Roman Bold.ttf",
     }
+    missing = [str(path) for path in choices.values() if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Times New Roman font files are required: " + ", ".join(sorted(missing))
+        )
     for name, path in choices.items():
-        if path.exists():
-            pdfmetrics.registerFont(TTFont(name, str(path)))
-        else:
-            fallback = {
-                "Body": "Helvetica",
-                "BodyBold": "Helvetica-Bold",
-                "BodyItalic": "Helvetica-Oblique",
-                "Display": "Times-Roman",
-                "DisplayBold": "Times-Bold",
-            }[name]
-            pdfmetrics.registerFontAlias(name, fallback)
+        pdfmetrics.registerFont(TTFont(name, str(path)))
+    pdfmetrics.registerFontFamily(
+        "Body",
+        normal="Body",
+        bold="BodyBold",
+        italic="BodyItalic",
+        boldItalic="BodyBoldItalic",
+    )
+    pdfmetrics.registerFontFamily(
+        "Display",
+        normal="Display",
+        bold="DisplayBold",
+        italic="BodyItalic",
+        boldItalic="BodyBoldItalic",
+    )
 
 
 def style(
@@ -282,11 +405,9 @@ def style(
 BODY_8 = style(8.1, 10.5, MUTED)
 BODY_9 = style(9.0, 12.2, MUTED)
 BODY_10 = style(10.0, 13.4, INK)
-SMALL = style(7.2, 9.0, MUTED)
-TINY = style(6.4, 8.0, MUTED)
+SMALL = style(8.0, 9.7, MUTED)
+TINY = style(8.0, 9.2, MUTED)
 CARD_TITLE = style(9.5, 11.2, INK, "BodyBold")
-TABLE_HEAD = style(7.2, 8.4, WHITE, "BodyBold")
-TABLE_BODY = style(7.1, 8.6, INK)
 
 
 def draw_paragraph(
@@ -317,16 +438,13 @@ def rounded_card(
     c.setFillColor(fill)
     c.setStrokeColor(stroke)
     c.setLineWidth(0.8)
-    c.roundRect(x, y, width, height, radius, fill=1, stroke=1)
+    c.rect(x, y, width, height, fill=1, stroke=1)
 
 
 def label(c: canvas.Canvas, text: str, x: float, y: float, color: colors.Color) -> None:
-    width = c.stringWidth(text, "BodyBold", 7.0) + 16
     c.setFillColor(color)
-    c.roundRect(x, y, width, 17, 8.5, fill=1, stroke=0)
-    c.setFillColor(WHITE)
-    c.setFont("BodyBold", 7.0)
-    c.drawString(x + 8, y + 5, text)
+    c.setFont("BodyBold", 8.0)
+    c.drawString(x, y + 5, text)
 
 
 def page_frame(c: canvas.Canvas, section: str, page_number: int) -> None:
@@ -334,14 +452,14 @@ def page_frame(c: canvas.Canvas, section: str, page_number: int) -> None:
     c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
     c.setFillColor(INK)
     c.setFont("BodyBold", 8.5)
-    c.drawString(MARGIN, PAGE_H - 30, "NIGHTINGALE")
+    c.drawString(MARGIN, PAGE_H - 30, "NIGHTINGALE TECHNICAL BRIEF")
     c.setFillColor(MUTED)
-    c.setFont("Body", 7.6)
+    c.setFont("Body", 8.0)
     c.drawRightString(PAGE_W - MARGIN, PAGE_H - 30, section.upper())
     c.setStrokeColor(LINE)
     c.setLineWidth(0.6)
     c.line(MARGIN, PAGE_H - 39, PAGE_W - MARGIN, PAGE_H - 39)
-    c.setFont("Body", 7.0)
+    c.setFont("Body", 8.0)
     c.setFillColor(MUTED)
     c.drawString(
         MARGIN,
@@ -353,10 +471,10 @@ def page_frame(c: canvas.Canvas, section: str, page_number: int) -> None:
 
 def page_title(c: canvas.Canvas, eyebrow: str, title: str, subtitle: str) -> None:
     c.setFillColor(TEAL)
-    c.setFont("BodyBold", 7.5)
+    c.setFont("BodyBold", 8.2)
     c.drawString(MARGIN, PAGE_H - 65, eyebrow.upper())
     c.setFillColor(INK)
-    c.setFont("DisplayBold", 24)
+    c.setFont("DisplayBold", 23)
     c.drawString(MARGIN, PAGE_H - 94, title)
     draw_paragraph(c, subtitle, MARGIN, PAGE_H - 108, PAGE_W - 2 * MARGIN, BODY_9)
 
@@ -405,29 +523,11 @@ def draw_image_contain(
     )
 
 
-def metric_card(
-    c: canvas.Canvas,
-    x: float,
-    y: float,
-    width: float,
-    value: str,
-    caption: str,
-    accent: colors.Color,
-) -> None:
-    rounded_card(c, x, y, width, 72, WHITE, LINE, 9)
-    c.setFillColor(accent)
-    c.roundRect(x + 9, y + 54, 26, 4, 2, fill=1, stroke=0)
-    c.setFillColor(INK)
-    c.setFont("DisplayBold", 15)
-    c.drawString(x + 9, y + 34, value)
-    draw_paragraph(c, caption, x + 9, y + 28, width - 18, SMALL, 30)
-
-
 def draw_page_one(c: canvas.Canvas, architecture_png: Path) -> None:
     page_frame(c, "Product and architecture", 1)
     page_title(
         c,
-        "Clinic-scoped release candidate",
+        "1. Product and architecture",
         "Evidence before summary",
         "A clinic-scoped care-note workspace where every high-value card can resolve to an immutable source.",
     )
@@ -435,7 +535,7 @@ def draw_page_one(c: canvas.Canvas, architecture_png: Path) -> None:
     gap = 10
     card_w = (PAGE_W - 2 * MARGIN - gap) / 2
     rounded_card(c, MARGIN, 586, card_w, 102, TEAL_SOFT, colors.HexColor("#BADBD5"))
-    label(c, "THE PROBLEM", MARGIN + 12, 659, TEAL)
+    label(c, "1.1  PROBLEM", MARGIN + 12, 659, TEAL)
     draw_paragraph(
         c,
         "Long records become risky when summaries hide their source, AI overwrites human notes, or a tenant and role exist only as UI labels.",
@@ -453,7 +553,7 @@ def draw_page_one(c: canvas.Canvas, architecture_png: Path) -> None:
         VIOLET_SOFT,
         colors.HexColor("#D2C8F6"),
     )
-    label(c, "THE RESPONSE", MARGIN + card_w + gap + 12, 659, VIOLET)
+    label(c, "1.2  DESIGN RESPONSE", MARGIN + card_w + gap + 12, 659, VIOLET)
     draw_paragraph(
         c,
         "Precomputed Glance, immutable versions, exact-span provenance, calibrated abstention, auditable importance feedback, and clinician-approved patient publication.",
@@ -464,46 +564,67 @@ def draw_page_one(c: canvas.Canvas, architecture_png: Path) -> None:
     )
 
     draw_image_contain(c, architecture_png, MARGIN, 222, PAGE_W - 2 * MARGIN, 344, 4)
+    draw_paragraph(
+        c,
+        "<b>Figure 1.</b> Nightingale system architecture and trust boundaries.",
+        MARGIN,
+        216,
+        PAGE_W - 2 * MARGIN,
+        style(8.0, 9.4, INK, "Body", TA_CENTER),
+    )
 
-    values = [
+    c.setStrokeColor(LINE)
+    c.setLineWidth(0.6)
+    c.line(MARGIN, 193, PAGE_W - MARGIN, 193)
+    label(c, "1.3  ASSUMPTIONS AND TRADE-OFFS", MARGIN, 179, TEAL)
+    draw_paragraph(
+        c,
+        "The architecture deliberately exchanges write cost, storage, and review time for predictable reading, auditability, and safer patient delivery.",
+        MARGIN + 184,
+        184,
+        PAGE_W - 2 * MARGIN - 184,
+        BODY_8,
+        18,
+    )
+
+    tradeoff_gap = 8
+    tradeoff_w = (PAGE_W - 2 * MARGIN - tradeoff_gap) / 2
+    tradeoffs = [
         (
-            BACKEND_PASSED,
-            f"backend tests passed; {BACKEND_SKIPPED} skipped, {BACKEND_COVERAGE}% coverage",
+            "Precomputed Glance",
+            "More transactional rebuild work in exchange for stable, fast reads during care review.",
             TEAL,
         ),
         (
-            f"{BROWSER_PASSED} / {BROWSER_PASSED}",
-            "Scenario A-F browser checks across three runs",
+            "Immutable versions",
+            "More retained storage in exchange for exact provenance, diff, audit, and recovery.",
             BLUE,
         ),
         (
-            f"{GLANCE_LATENCY['p95']:.3f} ms",
-            f"Glance p95; {GLANCE_TARGET['card_count']}/{GLANCE_TARGET['expected_card_count']} expected cards",
+            "Fail-closed decisions",
+            "More clinician review when evidence is weak in exchange for blocking unsafe patient output.",
+            RED,
+        ),
+        (
+            "Clinic-level learning",
+            "Less individual personalization in exchange for bounded feedback without a hidden staff profile.",
             VIOLET,
         ),
-        ("1 image", "same OCI artifact through production smoke", AMBER),
     ]
-    metric_gap = 8
-    metric_w = (PAGE_W - 2 * MARGIN - 3 * metric_gap) / 4
-    for index, (value, caption, accent) in enumerate(values):
-        metric_card(
+    for index, (title, body, accent) in enumerate(tradeoffs):
+        col = index % 2
+        row = index // 2
+        trust_card(
             c,
-            MARGIN + index * (metric_w + metric_gap),
-            111,
-            metric_w,
-            value,
-            caption,
+            MARGIN + col * (tradeoff_w + tradeoff_gap),
+            108 - row * 57,
+            tradeoff_w,
+            49,
+            title,
+            body,
             accent,
+            WHITE,
         )
-
-    draw_paragraph(
-        c,
-        "The default checkout is offline and deterministic. External providers are optional boundaries, never prerequisites for the core demo.",
-        MARGIN,
-        98,
-        PAGE_W - 2 * MARGIN,
-        style(7.6, 9.2, MUTED, "BodyItalic", TA_CENTER),
-    )
     c.showPage()
 
 
@@ -519,12 +640,12 @@ def mini_step(
 ) -> None:
     rounded_card(c, x, y, width, 55, WHITE, LINE, 8)
     c.setFillColor(accent)
-    c.circle(x + 14, y + 39, 7, fill=1, stroke=0)
+    c.rect(x + 7, y + 32, 14, 14, fill=1, stroke=0)
     c.setFillColor(WHITE)
-    c.setFont("BodyBold", 6.4)
-    c.drawCentredString(x + 14, y + 37, number)
+    c.setFont("BodyBold", 8.0)
+    c.drawCentredString(x + 14, y + 35.5, number)
     c.setFillColor(INK)
-    c.setFont("BodyBold", 7.7)
+    c.setFont("BodyBold", 8.0)
     c.drawString(x + 25, y + 36, title)
     draw_paragraph(c, detail, x + 9, y + 27, width - 18, TINY, 22)
 
@@ -551,7 +672,7 @@ def draw_page_two(c: canvas.Canvas, schema_png: Path) -> None:
     page_frame(c, "Trust, privacy, and data", 2)
     page_title(
         c,
-        "Defense in depth",
+        "2. Trust, privacy, and data",
         "Trust is stored, not implied",
         "Tenant identity, role, immutable evidence, redaction state, and review status survive beyond the browser session.",
     )
@@ -634,230 +755,314 @@ def draw_page_two(c: canvas.Canvas, schema_png: Path) -> None:
 
     draw_paragraph(
         c,
-        "Evidence chain: Patient > Entry > immutable EntryVersion > exact span/hash > DecisionAssessment. Voice adds an audio/time anchor; patient publication adds a clinician approval receipt and exact approved source item.",
+        "<b>Figure 2.</b> Core clinical evidence schema. Patient &gt; Entry &gt; immutable EntryVersion &gt; exact span/hash &gt; DecisionAssessment; voice adds an audio/time anchor, and publication adds a clinician approval receipt.",
         MARGIN,
         66,
         PAGE_W - 2 * MARGIN,
-        style(7.5, 9.1, MUTED, "BodyItalic", TA_CENTER),
+        style(8.0, 9.4, MUTED, "BodyItalic", TA_CENTER),
     )
     c.showPage()
 
 
-def table_paragraph(text: str, bold: bool = False, white: bool = False) -> Paragraph:
-    return Paragraph(
-        text,
-        TABLE_HEAD
-        if bold and white
-        else style(7.1, 8.6, INK, "BodyBold" if bold else "Body"),
-    )
-
-
-def scenario_card(
+def scenario_item(
     c: canvas.Canvas,
     x: float,
-    y: float,
+    top: float,
     width: float,
-    height: float,
     letter: str,
     title: str,
     detail: str,
     accent: colors.Color,
 ) -> None:
-    rounded_card(c, x, y, width, height, WHITE, LINE, 8)
     c.setFillColor(accent)
-    c.roundRect(x + 8, y + height - 22, 18, 14, 7, fill=1, stroke=0)
+    c.rect(x, top - 15, 18, 15, fill=1, stroke=0)
     c.setFillColor(WHITE)
-    c.setFont("BodyBold", 7.0)
-    c.drawCentredString(x + 17, y + height - 18, letter)
+    c.setFont("BodyBold", 8.0)
+    c.drawCentredString(x + 9, top - 11, letter)
     c.setFillColor(INK)
-    c.setFont("BodyBold", 8.2)
-    c.drawString(x + 32, y + height - 19, title)
-    draw_paragraph(c, detail, x + 9, y + height - 28, width - 18, TINY, height - 31)
+    c.setFont("BodyBold", 8.7)
+    c.drawString(x + 28, top - 11, title)
+    draw_paragraph(
+        c,
+        detail,
+        x,
+        top - 22,
+        width,
+        style(8.0, 9.5, MUTED),
+        18,
+    )
+    c.setStrokeColor(LINE)
+    c.setLineWidth(0.45)
+    c.line(x, top - 38, x + width, top - 38)
+
+
+def capability_row(
+    c: canvas.Canvas,
+    top: float,
+    title: str,
+    body: str,
+    accent: colors.Color,
+) -> None:
+    content_width = PAGE_W - 2 * MARGIN
+    title_width = 145
+    c.setStrokeColor(LINE)
+    c.setLineWidth(0.45)
+    c.line(MARGIN, top, PAGE_W - MARGIN, top)
+    c.setStrokeColor(accent)
+    c.setLineWidth(2.0)
+    c.line(MARGIN, top - 5, MARGIN, top - 35)
+    draw_paragraph(
+        c,
+        title,
+        MARGIN + 10,
+        top - 5,
+        title_width - 16,
+        style(8.6, 10.0, accent, "BodyBold"),
+        30,
+    )
+    draw_paragraph(
+        c,
+        body,
+        MARGIN + title_width,
+        top - 5,
+        content_width - title_width,
+        style(8.0, 9.5, MUTED),
+        32,
+    )
+    c.setStrokeColor(LINE)
+    c.setLineWidth(0.45)
+    c.line(MARGIN, top - 40, PAGE_W - MARGIN, top - 40)
+
+
+def compact_card(
+    c: canvas.Canvas,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    title: str,
+    body: str,
+    accent: colors.Color,
+) -> None:
+    rounded_card(c, x, y, width, height, WHITE, LINE, 7)
+    c.setFillColor(accent)
+    c.rect(x, y, 3, height, fill=1, stroke=0)
+    draw_paragraph(
+        c,
+        title,
+        x + 9,
+        y + height - 7,
+        width - 18,
+        style(8.2, 9.4, accent, "BodyBold"),
+        14,
+    )
+    draw_paragraph(
+        c, body, x + 9, y + height - 20, width - 18, style(8.0, 9.2, MUTED), height - 23
+    )
+
+
+def decision_matrix(c: canvas.Canvas, top: float) -> None:
+    x = MARGIN
+    width = PAGE_W - 2 * MARGIN
+    # Give the signal names enough room to remain whole at the document's
+    # 8 pt readability floor (rather than splitting CONFIDENCE/IMPORTANCE).
+    columns = (76, 131, 151, width - 358)
+    headers = ("SIGNAL", "WHAT IS IT?", "HOW COULD IT BE WRONG?", "WHAT HAPPENS THEN?")
+    rows = (
+        (
+            "RISK",
+            "max(rule floor, model proposal), with rule IDs and version stored.",
+            "Inspect triggered rules and exact-source conflicts; regression-test allergy, status, dose, route, and frequency.",
+            "The model cannot lower the floor. High/Critical stays visible, requires review, and blocks sharing.",
+            RED,
+        ),
+        (
+            "CONFIDENCE",
+            "Holdout lower-bound band bound to provider, exact model, task, parameters, dataset hash, and expiry.",
+            "Missing, mismatched, expired, undersized, or weak evaluation evidence makes it Unavailable.",
+            "Low/Unavailable AI abstains and is not publishable; only supported High/Medium evidence may enter clinician approval.",
+            VIOLET,
+        ),
+        (
+            "IMPORTANCE",
+            "Bounded clinic-level rank from recency, open work, confirmation, risk, and explicit reasoned feedback.",
+            "Audit visible impressions, exposure probability, and feedback reasons; no click is not negative feedback.",
+            "Critical, unresolved, and confirmed items stay protected; top four are deterministic and slot five explores at most 10%.",
+            TEAL,
+        ),
+    )
+    header_h, row_h = 22, 46
+    total_h = header_h + len(rows) * row_h
+    bottom = top - total_h
+    rounded_card(c, x, bottom, width, total_h, WHITE, LINE, 6)
+    cursor = x
+    for index, (header, col_w) in enumerate(zip(headers, columns, strict=True)):
+        if index:
+            c.setStrokeColor(LINE)
+            c.line(cursor, bottom, cursor, top)
+        draw_paragraph(
+            c,
+            header,
+            cursor + 5,
+            top - 6,
+            col_w - 10,
+            style(8.0, 9.0, INK, "BodyBold"),
+            15,
+        )
+        cursor += col_w
+    c.setStrokeColor(LINE)
+    c.line(x, top - header_h, x + width, top - header_h)
+    for row_index, row in enumerate(rows):
+        row_top = top - header_h - row_index * row_h
+        if row_index:
+            c.line(x, row_top, x + width, row_top)
+        cursor = x
+        values = row[:4]
+        for col_index, (value, col_w) in enumerate(zip(values, columns, strict=True)):
+            cell_style = style(
+                8.0,
+                9.1,
+                row[4] if col_index == 0 else MUTED,
+                "BodyBold" if col_index == 0 else "Body",
+            )
+            draw_paragraph(
+                c, value, cursor + 5, row_top - 6, col_w - 10, cell_style, row_h - 10
+            )
+            cursor += col_w
 
 
 def draw_page_three(c: canvas.Canvas) -> None:
     page_frame(c, "Verification and claim boundaries", 3)
     page_title(
         c,
-        "Release confidence",
+        "3. Verification and claim boundaries",
         "A reproducible candidate, with honest limits",
         "The gate tests the same source revision and OCI image across API, browser, worker, media, benchmark, and production topology.",
     )
 
-    evidence_rows = [
-        ["Gate", "Result", "What it establishes"],
-        [
-            "Backend",
-            f"{BACKEND_PASSED} pass / {BACKEND_SKIPPED} skip",
-            f"Ruff, format, mypy, ty, pytest, {BACKEND_COVERAGE}% coverage, Alembic roundtrip",
-        ],
-        [
-            "Frontend",
-            f"{FRONTEND_PASSED} / {FRONTEND_PASSED}",
-            "Typecheck, Biome, Vitest, production build, tracked OpenAPI sync",
-        ],
-        [
-            "Browser",
-            f"{BROWSER_PASSED} / {BROWSER_PASSED}",
-            f"{BROWSER_PER_RUN} Chromium tests x 3 over HTTPS, including Scenarios A-F",
-        ],
-        [
-            "Glance",
-            f"p95 {GLANCE_LATENCY['p95']:.3f} ms",
-            f"{GLANCE_TARGET['patient_display_name']}, {GLANCE_TARGET['card_count']}/{GLANCE_TARGET['expected_card_count']} cards, 20 warmups + 100 measured reads",
-        ],
-        [
-            "Container",
-            f"FFmpeg {RELEASE['ffmpeg'].split('-')[0]}",
-            "Exact Debian arm64 build/config retained; GPL-enabled build recorded",
-        ],
-        [
-            "Artifact",
-            f"sha256:{IMAGE_SHORT}...",
-            "The verified image is promoted into a separate production topology",
-        ],
-    ]
-    table_data: list[list[Paragraph]] = []
-    for row_index, row in enumerate(evidence_rows):
-        table_data.append(
-            [
-                table_paragraph(
-                    cell, bold=(row_index == 0 or col_index < 2), white=row_index == 0
-                )
-                for col_index, cell in enumerate(row)
-            ]
-        )
-    table = Table(
-        table_data,
-        colWidths=[105, 105, PAGE_W - 2 * MARGIN - 210],
-        rowHeights=[22, 29, 29, 29, 29, 29, 29],
-    )
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), INK),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 7),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ("GRID", (0, 0), (-1, -1), 0.45, LINE),
-                ("BACKGROUND", (0, 1), (-1, -1), WHITE),
-                ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#F3F7F6")),
-                ("BACKGROUND", (0, 4), (-1, 4), colors.HexColor("#F3F7F6")),
-                ("BACKGROUND", (0, 6), (-1, 6), colors.HexColor("#F3F7F6")),
-                ("BOX", (0, 0), (-1, -1), 0.8, INK),
-            ]
-        )
-    )
-    table.wrapOn(c, PAGE_W - 2 * MARGIN, 220)
-    table.drawOn(c, MARGIN, 477)
-
-    c.setFillColor(INK)
-    c.setFont("BodyBold", 9.2)
-    c.drawString(MARGIN, 460, "Six demonstration paths")
-    scenarios = [
-        ("A", "Evidence", "Glance card > exact immutable timeline span", TEAL),
-        (
-            "B",
-            "Collaboration",
-            "modal edit > anchored comment > mention/task > diff/revert/audit",
-            BLUE,
-        ),
-        ("C", "Retention", "preview > archive > checksum-verified rehydrate", AMBER),
-        ("D", "Concurrency", "deterministic 409 plus tenant-boundary checks", RED),
-        (
-            "E",
-            "Patient safety",
-            "network payload excludes raw AI and internal data",
-            VIOLET,
-        ),
-        ("F", "Voice review", "encrypted recovery > fact > audio > publication", TEAL),
-    ]
-    scenario_gap_x = 8
-    scenario_gap_y = 7
-    scenario_w = (PAGE_W - 2 * MARGIN - scenario_gap_x) / 2
-    scenario_h = 46
-    for index, scenario in enumerate(scenarios):
-        col = index % 2
-        row = index // 2
-        scenario_card(
-            c,
-            MARGIN + col * (scenario_w + scenario_gap_x),
-            400 - row * (scenario_h + scenario_gap_y),
-            scenario_w,
-            scenario_h,
-            *scenario,
-        )
-
-    c.setFillColor(INK)
-    c.setFont("BodyBold", 9.2)
-    c.drawString(MARGIN, 284, "Capability truth")
-    truth_gap = 8
-    truth_w = (PAGE_W - 2 * MARGIN - 2 * truth_gap) / 3
-    trust_card(
-        c,
-        MARGIN,
-        165,
-        truth_w,
-        105,
-        "VERIFIED",
-        "Deterministic fixtures, provider contracts, read-only Admin oversight, encryption, versions, exact provenance, abstention, publication gates, browser flows, and release image.",
-        TEAL,
-        TEAL_SOFT,
-    )
-    trust_card(
-        c,
-        MARGIN + truth_w + truth_gap,
-        165,
-        truth_w,
-        105,
-        "MEASURED — ABSTAIN",
-        f"Mock/synthetic OpenAI evaluation: gpt-5.1 fact accuracy {float(FACT_METRICS['accuracy']):.3f}; gpt-4o-transcribe-diarize WER {float(VOICE_METRICS['wer']):.3f}. Both reports are Low, so output abstains.",
-        VIOLET,
-        VIOLET_SOFT,
-    )
-    trust_card(
-        c,
-        MARGIN + 2 * (truth_w + truth_gap),
-        165,
-        truth_w,
-        105,
-        "NOT CLINICALLY VALIDATED",
-        f"The redaction fixture passed {int(REDACTION_EVALUATION['sample_count'])} synthetic cases, but unseen-data safety, local model weights, pyannote diarization, hosted deployment, compliance, and clinical validity remain unproven.",
-        RED,
-        RED_SOFT,
-    )
-
-    rounded_card(
-        c,
-        MARGIN,
-        78,
-        PAGE_W - 2 * MARGIN,
-        69,
-        AMBER_SOFT,
-        colors.HexColor("#E4C78C"),
-        9,
-    )
-    c.setFillColor(AMBER)
-    c.setFont("BodyBold", 8.8)
-    c.drawString(MARGIN + 12, 129, "DELIVERY CONTENTS")
+    c.setStrokeColor(LINE)
+    c.line(MARGIN, 690, PAGE_W - MARGIN, 690)
+    label(c, "3.1  RELEASE-GATE EVIDENCE", MARGIN, 670, TEAL)
     draw_paragraph(
         c,
-        "Runnable source + reviewable Git history + synthetic seed/importer + Scenario A-F runbook + English-captioned silent final demo + editable diagrams + machine-readable release and model evidence + complete notices + this brief.",
-        MARGIN + 12,
-        120,
-        PAGE_W - 2 * MARGIN - 24,
-        BODY_8,
-        42,
+        (
+            f"<b>One bound candidate.</b> Backend: {BACKEND_PASSED} passed, {BACKEND_SKIPPED} skipped, {BACKEND_COVERAGE}% coverage plus static checks and Alembic roundtrip. "
+            f"Frontend gates passed typecheck, Biome, production build, and tracked OpenAPI generation, together with {FRONTEND_PASSED}/{FRONTEND_PASSED} Vitest tests. "
+            f"Playwright: {BROWSER_PASSED}/{BROWSER_PASSED} HTTPS checks ({BROWSER_PER_RUN} per run x 3). Glance: {GLANCE_TARGET['card_count']}/{GLANCE_TARGET['expected_card_count']} cards, local warm-read p95 {GLANCE_LATENCY['p95']:.3f} ms. "
+            f"Revision {CANDIDATE_SHORT} promoted OCI sha256:{IMAGE_SHORT}... unchanged into the production-topology smoke test; this is not a hosted-latency or clinical-performance claim."
+        ),
+        MARGIN,
+        657,
+        PAGE_W - 2 * MARGIN,
+        style(8.2, 9.8, MUTED),
+        64,
     )
 
-    c.setFillColor(MUTED)
-    c.setFont("BodyItalic", 7.2)
-    c.drawCentredString(
-        PAGE_W / 2,
-        61,
-        "This synthetic collaboration release is not a production EHR, medical device, or compliance certification.",
+    label(c, "3.2  DECISION INTEGRITY", MARGIN, 583, TEAL)
+    decision_matrix(c, 572)
+
+    label(c, "3.3  BOUNDED LEARNING AND RETENTION", MARGIN, 395, TEAL)
+    bonus_gap = 9
+    bonus_w = (PAGE_W - 2 * MARGIN - bonus_gap) / 2
+    compact_card(
+        c,
+        MARGIN,
+        325,
+        bonus_w,
+        60,
+        "Self-learning: logged, not personal",
+        "importance_impressions stores a de-duplicated view_event_id only after at least 50% visibility for at least 2 s, plus exposure probability and explicit feedback reason. Only Not relevant/Outdated changes non-protected ranking; no per-user behavior model.",
+        TEAL,
+    )
+    compact_card(
+        c,
+        MARGIN + bonus_w + bonus_gap,
+        325,
+        bonus_w,
+        60,
+        "Data decay: reversible archive",
+        "Pinned, open, confirmed, and unresolved-conflict records are protected. Eligible bodies move to AES-GCM archive; checksum, immutable versions, provenance, and audit remain, and authorized rehydrate verifies integrity.",
+        AMBER,
+    )
+
+    label(c, "3.4  SCENARIO A-F PATHS", MARGIN, 309, TEAL)
+    scenario_specs = (
+        ("A  Evidence", "Glance -> exact immutable source", TEAL),
+        ("B  Collaboration", "selection comment -> mention/task -> diff/restore", BLUE),
+        ("C  Retention", "archive preview -> checksum -> rehydrate", AMBER),
+        ("D  Concurrency", "stale edit -> 409; tenant boundary", RED),
+        ("E  Patient safety", "request -> approval -> receipt/withdrawal", VIOLET),
+        ("F  Voice review", "speaker/time source -> reviewed fact", TEAL),
+    )
+    scenario_gap = 7
+    scenario_w = (PAGE_W - 2 * MARGIN - 2 * scenario_gap) / 3
+    for index, (title, body, accent) in enumerate(scenario_specs):
+        compact_card(
+            c,
+            MARGIN + (index % 3) * (scenario_w + scenario_gap),
+            260 - (index // 3) * 43,
+            scenario_w,
+            37,
+            title,
+            body,
+            accent,
+        )
+
+    truth_gap = 7
+    truth_w = (PAGE_W - 2 * MARGIN - 2 * truth_gap) / 3
+    compact_card(
+        c,
+        MARGIN,
+        157,
+        truth_w,
+        52,
+        "VERIFIED",
+        "Deterministic controls, exact provenance, versioning, abstention, publication gates, browser paths, and the promoted image.",
+        TEAL,
+    )
+    compact_card(
+        c,
+        MARGIN + truth_w + truth_gap,
+        157,
+        truth_w,
+        52,
+        "MEASURED - LOW",
+        f"OpenAI on mock/synthetic holdouts: facts accuracy {float(FACT_METRICS['accuracy']):.3f}; voice WER {float(VOICE_METRICS['wer']):.3f}. Low means review/abstain, not publication.",
+        VIOLET,
+    )
+    compact_card(
+        c,
+        MARGIN + 2 * (truth_w + truth_gap),
+        157,
+        truth_w,
+        52,
+        "NOT CLINICALLY VALIDATED",
+        f"Redaction passed {int(REDACTION_EVALUATION['sample_count'])} synthetic cases; unseen-data safety, compliance, hosted performance, and clinical validity remain unproven.",
+        RED,
+    )
+
+    index_gap = 9
+    index_left_w = 230
+    index_right_w = PAGE_W - 2 * MARGIN - index_gap - index_left_w
+    compact_card(
+        c,
+        MARGIN,
+        58,
+        index_left_w,
+        88,
+        "EVIDENCE INDEX (repository paths)",
+        "docs/evidence/release-candidate.txt<br/>docs/evidence/glance-benchmark.json<br/>docs/evidence/ffmpeg-container-version.txt<br/>artifacts/evaluation/fact-calibration.json<br/>artifacts/evaluation/voice-calibration.json<br/>artifacts/evaluation/redaction-v2.json",
+        BLUE,
+    )
+    compact_card(
+        c,
+        MARGIN + index_left_w + index_gap,
+        58,
+        index_right_w,
+        88,
+        "DELIVERY FILE INDEX",
+        f"Technical Brief (+ binding); narrated Demo MP4 (+ .en.srt)<br/>DEMO_RUNBOOK.md; editable architecture.drawio + schema.drawio<br/>ATTRIBUTION.txt; THIRD_PARTY_NOTICES.md;<br/>THIRD_PARTY_LICENSES/DISTRIBUTION_NOTICES.md<br/><b>Binding:</b> {CANDIDATE_SHORT} / sha256:{IMAGE_SHORT}...; demo sha256:{DEMO_FILE_SHA256_SHORT}...<br/>Synthetic collaboration release; not an EHR, medical device, or certification.",
+        AMBER,
     )
     c.showPage()
 
@@ -871,7 +1076,14 @@ def build() -> Path:
     render_svg(ROOT / "docs" / "architecture.svg", architecture_png)
     render_svg(ROOT / "docs" / "schema.svg", schema_png)
 
-    pdf = canvas.Canvas(str(OUTPUT), pagesize=A4, pageCompression=1)
+    pdf = canvas.Canvas(
+        str(OUTPUT),
+        pagesize=A4,
+        pageCompression=1,
+        initialFontName="Body",
+        initialFontSize=12,
+        initialLeading=14.4,
+    )
     pdf.setTitle("Nightingale Technical Brief")
     pdf.setAuthor("Nightingale contributors")
     pdf.setSubject(
@@ -888,7 +1100,7 @@ def build() -> Path:
         OUTPUT,
         EVIDENCE_ROOT,
         VALIDATED_EVIDENCE,
-        bound_artifacts=EVALUATION_REPORTS,
+        bound_artifacts=technical_brief_bound_artifacts(ROOT),
     )
     return OUTPUT
 

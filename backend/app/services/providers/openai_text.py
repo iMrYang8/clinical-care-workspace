@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from app.services.egress import QualifiedRedactedText
 from app.services.providers.base import (
     ClinicalFact,
     ClinicalNoteDraft,
@@ -48,14 +49,18 @@ class OpenAITextProvider:
         review_model: str | None = None,
         transport: Transport | None = None,
         timeout_seconds: float = 30.0,
+        connect_timeout_seconds: float = 5.0,
     ) -> None:
         if not api_key or not extract_model:
             raise ValueError("OpenAI provider requires an API key and configured model")
         self.api_key = api_key
         self.extract_model = extract_model
         self.review_model = review_model
-        self.transport = transport or self._http_transport
+        # Raw-string transport is private to this provider. Production callers
+        # must cross the QualifiedRedactedText methods guarded below.
+        self._transport = transport or self._http_transport
         self.timeout_seconds = timeout_seconds
+        self.connect_timeout_seconds = connect_timeout_seconds
 
     async def _http_transport(
         self, model: str, text: str, interaction_type: str
@@ -83,7 +88,10 @@ class OpenAITextProvider:
             ],
             "text": {"format": {"type": "json_object"}},
         }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        timeout = httpx.Timeout(
+            self.timeout_seconds, connect=self.connect_timeout_seconds
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 "https://api.openai.com/v1/responses",
                 headers={"Authorization": f"Bearer {self.api_key}"},
@@ -167,9 +175,13 @@ class OpenAITextProvider:
         )
 
     async def extract(
-        self, redacted_text: str, context: ExtractionContext
+        self, payload: QualifiedRedactedText, context: ExtractionContext
     ) -> ClinicalNoteDraft:
-        raw = await self.transport(
+        if not isinstance(payload, QualifiedRedactedText):
+            raise ValueError("REMOTE_TEXT_EGRESS_NOT_QUALIFIED")
+        payload.assert_qualified()
+        redacted_text = payload.text
+        raw = await self._transport(
             self.extract_model, redacted_text, context.interaction_type
         )
         return self._draft_from_raw(
@@ -178,10 +190,14 @@ class OpenAITextProvider:
 
     async def review(
         self,
-        redacted_text: str,
+        payload: QualifiedRedactedText,
         context: ExtractionContext,
         primary: ClinicalNoteDraft,
     ) -> ClinicalNoteDraft:
+        if not isinstance(payload, QualifiedRedactedText):
+            raise ValueError("REMOTE_TEXT_EGRESS_NOT_QUALIFIED")
+        payload.assert_qualified()
+        redacted_text = payload.text
         if not self.review_model:
             raise ValueError("HIGH_RISK_REVIEW_MODEL_UNAVAILABLE")
         review_payload = json.dumps(
@@ -206,7 +222,7 @@ class OpenAITextProvider:
             ensure_ascii=False,
             sort_keys=True,
         )
-        raw = await self.transport(
+        raw = await self._transport(
             self.review_model,
             review_payload,
             f"{context.interaction_type}:review",

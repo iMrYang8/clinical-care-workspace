@@ -11,6 +11,7 @@ from pathlib import Path
 
 from validate_release_evidence import (
     EvidenceError,
+    technical_brief_bound_artifacts,
     validate_pdf_binding,
     validate_release_evidence,
     write_pdf_binding,
@@ -37,6 +38,18 @@ def expect_invalid(root: Path) -> None:
 
 
 def main() -> None:
+    bound = technical_brief_bound_artifacts(ROOT)
+    expected_demo_keys = {
+        "output/demo/Nightingale_Final_Demo_EN_Samantha.mp4",
+        "output/demo/Nightingale_Final_Demo_EN.srt",
+        "output/demo/Nightingale_Final_Demo_EN_Samantha_metadata.json",
+        "output/demo/Nightingale_Final_Demo_EN_Samantha_SHA256.txt",
+    }
+    actual_demo_keys = {key for key in bound if key.startswith("output/demo/")}
+    assert actual_demo_keys == expected_demo_keys
+    assert not any("9m50s" in key for key in bound)
+    assert "output/demo/Nightingale_Final_Demo_EN_metadata.json" not in bound
+
     with tempfile.TemporaryDirectory(prefix="nightingale-evidence-test-") as raw:
         evidence = Path(raw)
         for name in (
@@ -109,6 +122,35 @@ def main() -> None:
             pass
         else:
             raise AssertionError("tampered PDF unexpectedly validated")
+
+        pdf.write_bytes(b"%PDF-1.4\nsynthetic validator fixture\n")
+        demo = evidence / "final-demo.mp4"
+        demo.write_bytes(b"narrated-demo-fixture")
+        demo_artifacts = {"output/demo/final-demo.mp4": demo}
+        write_pdf_binding(
+            pdf,
+            evidence,
+            validated,
+            bound_artifacts=demo_artifacts,
+        )
+        validate_pdf_binding(
+            pdf,
+            evidence,
+            validated,
+            bound_artifacts=demo_artifacts,
+        )
+        demo.write_bytes(demo.read_bytes() + b"tampered")
+        try:
+            validate_pdf_binding(
+                pdf,
+                evidence,
+                validated,
+                bound_artifacts=demo_artifacts,
+            )
+        except EvidenceError:
+            pass
+        else:
+            raise AssertionError("tampered bound demo unexpectedly validated")
 
     print("Release evidence commit/image/log/PDF tamper checks passed.")
 

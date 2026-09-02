@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import type { ClinicalTimelineEntry } from "@/features/api"
+import type { EditorPresenceRecord } from "@/features/editorPresence"
 import { formatSingaporeDateTime } from "@/lib/dateTime"
 import { AiManualHighlight, aiDisplayProjection } from "./AiManualHighlight"
 import { type EntryDraft, EntryEditor } from "./EntryEditor"
@@ -36,13 +37,16 @@ type TimelineEntryCardProps = {
   authorName?: string | null
   authorRole?: "patient" | "staff" | "clinician" | "system" | "admin" | null
   sourceFocus?: SourceFocus | null
+  editorPresence?: EditorPresenceRecord[]
   onSave: (entry: ClinicalTimelineEntry, draft: EntryDraft) => Promise<void>
+  onLoadLatest: (entryId: string) => Promise<ClinicalTimelineEntry>
   onCreateComment: (
     entryId: string,
     body: CommentCreate,
   ) => Promise<CommentPublic>
   onOpenComments: (entry: ClinicalTimelineEntry) => void
   onOpenVersions: (entry: ClinicalTimelineEntry) => void
+  onPresence?: (presence: EditorPresenceRecord) => void
 }
 
 const sectionStyle: Record<string, string> = {
@@ -113,10 +117,13 @@ export function TimelineEntryCard({
   authorName,
   authorRole,
   sourceFocus,
+  editorPresence = [],
   onSave,
+  onLoadLatest,
   onCreateComment,
   onOpenComments,
   onOpenVersions,
+  onPresence,
 }: TimelineEntryCardProps) {
   const [editingEntry, setEditingEntry] =
     useState<ClinicalTimelineEntry | null>(null)
@@ -288,7 +295,10 @@ export function TimelineEntryCard({
           </DialogHeader>
           {editingEntry && (
             <EntryEditor
+              actorId={currentUser.user_id}
               currentVersionId={entry.version_id}
+              editorPresence={editorPresence}
+              entryId={editingEntry.id}
               initialDraft={{
                 title: editingEntry.title,
                 content: editingEntry.content,
@@ -296,7 +306,19 @@ export function TimelineEntryCard({
               }}
               onCancel={() => setEditingEntry(null)}
               onCreateComment={(body) => onCreateComment(editingEntry.id, body)}
+              onLoadLatest={async () => {
+                const latest = await onLoadLatest(editingEntry.id)
+                return {
+                  draft: {
+                    title: latest.title,
+                    content: latest.content,
+                    patient_facing: latest.patient_facing,
+                  },
+                  versionId: latest.version_id,
+                }
+              }}
               onReviewVersions={() => onOpenVersions(entry)}
+              onPresence={onPresence}
               onSave={async (draft, baseVersionId) => {
                 await onSave(
                   { ...editingEntry, version_id: baseVersionId },

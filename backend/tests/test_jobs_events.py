@@ -30,6 +30,7 @@ from app.services.ai_jobs import (
     claim_job,
     worker_context_for_job,
 )
+from app.services.egress import QualifiedRedactedText
 from app.services.providers.base import (
     ClinicalFact,
     ClinicalNoteDraft,
@@ -162,38 +163,18 @@ def test_ai_job_idempotency_attempts_fallback_and_domain_event(
         assert all("Tan Mei Ling" not in str(event.payload_json) for event in events)
 
 
-def test_failed_job_retry_persists_each_attempt(
-    client: TestClient, auth_headers, monkeypatch
+def test_nonretryable_provider_failure_persists_review_only_fallback(
+    client: TestClient, auth_headers, owner_session: Session, monkeypatch
 ) -> None:
     import app.services.ai_jobs as ai_jobs
     from app.core.config import settings
 
     class RaisingProvider:
         async def extract(
-            self, redacted_text: str, context: ExtractionContext
+            self, payload: QualifiedRedactedText, context: ExtractionContext
         ) -> ClinicalNoteDraft:
+            del payload, context
             raise RuntimeError("S1234567D")
-
-    class WorkingProvider:
-        async def extract(
-            self, redacted_text: str, context: ExtractionContext
-        ) -> ClinicalNoteDraft:
-            start = redacted_text.index("allergy")
-            return ClinicalNoteDraft(
-                summary="reviewed",
-                facts=[
-                    ClinicalFact(
-                        fact_type="allergy",
-                        value="allergy",
-                        evidence_start=start,
-                        evidence_end=start + 7,
-                        evidence_quote="allergy",
-                        feature_keys=["entity:allergy"],
-                    )
-                ],
-                provider="synthetic-remote",
-                model="configured-test-model",
-            )
 
     monkeypatch.setattr(settings, "PRESIDIO_REQUIRED", False)
     monkeypatch.setattr(
@@ -211,31 +192,37 @@ def test_failed_job_retry_persists_each_attempt(
             "content": "single allergy evidence",
         },
     ).json()
-    failed = client.post(
+    fallback = client.post(
         f"/api/v1/patients/{patient_id}/ai/ingest",
         headers=headers | {"Idempotency-Key": "retry-fixture"},
         json={"source_entry_version_id": entry["version_id"]},
     )
-    assert failed.status_code == 200, failed.text
-    assert failed.json()["state"] == "failed"
-    assert failed.json()["attempt_count"] == 1
-    assert failed.json()["error_code"] == "AI_JOB_FAILED"
-    assert "S1234567D" not in failed.text
+    assert fallback.status_code == 200, fallback.text
+    payload = fallback.json()
+    assert payload["state"] == "needs_review"
+    assert payload["attempt_count"] == 1
+    assert payload["error_code"] == "PROVIDER_FAILURE"
+    assert payload["error_class"] == "unknown"
+    assert payload["provider_outage"] is False
+    assert payload["next_run_at"] is None
+    assert payload["ai_run"]["status"] == "fallback"
+    assert payload["ai_run"]["fallback_reason"] == "PROVIDER_FAILURE"
+    assert payload["ai_run"]["needs_review"] is True
+    assert payload["retry_history"][-1]["next_retry_at"] is None
+    assert "S1234567D" not in fallback.text
 
-    monkeypatch.setattr(
-        ai_jobs, "_configured_remote_provider", lambda *_: WorkingProvider()
-    )
-    retried = client.post(f"/api/v1/jobs/{failed.json()['id']}/retry", headers=headers)
-    assert retried.status_code == 200, retried.text
-    assert retried.json()["state"] == "completed"
-    assert retried.json()["attempt_count"] == 2
-    with Session(engine) as session:
-        attempts = session.exec(
-            select(JobAttempt).where(
-                JobAttempt.job_id == uuid.UUID(failed.json()["id"])
-            )
-        ).all()
-        assert [attempt.status for attempt in attempts] == ["failed", "completed"]
+    # Review-only output is durable, but an unknown/permanent transport error
+    # does not manufacture a retry schedule or re-run the provider implicitly.
+    retried = client.post(f"/api/v1/jobs/{payload['id']}/retry", headers=headers)
+    assert retried.status_code == 409, retried.text
+    assert retried.json()["detail"]["code"] == "JOB_NOT_RETRYABLE"
+    owner_session.expire_all()
+    attempts = owner_session.exec(
+        select(JobAttempt).where(JobAttempt.job_id == uuid.UUID(payload["id"]))
+    ).all()
+    assert [attempt.status for attempt in attempts] == ["completed"]
+    assert attempts[0].error_code == "PROVIDER_FAILURE"
+    assert attempts[0].retry_scheduled_at is None
 
 
 def test_server_trusted_name_and_risk_force_redaction_and_second_review(
@@ -271,17 +258,19 @@ def test_server_trusted_name_and_risk_force_redaction_and_second_review(
             )
 
         async def extract(
-            self, redacted_text: str, context: ExtractionContext
+            self, payload: QualifiedRedactedText, context: ExtractionContext
         ) -> ClinicalNoteDraft:
+            redacted_text = payload.text
             outbound.append(("primary", redacted_text))
             return self._draft(redacted_text, "configured-primary-model")
 
         async def review(
             self,
-            redacted_text: str,
+            payload: QualifiedRedactedText,
             context: ExtractionContext,
             primary: ClinicalNoteDraft,
         ) -> ClinicalNoteDraft:
+            redacted_text = payload.text
             outbound.append(("review", redacted_text))
             return self._draft(redacted_text, self.review_model)
 
@@ -445,8 +434,9 @@ def test_invalid_interaction_type_never_reaches_provider_or_plaintext_storage(
 
     class SpyProvider:
         async def extract(
-            self, redacted_text: str, context: ExtractionContext
+            self, payload: QualifiedRedactedText, context: ExtractionContext
         ) -> ClinicalNoteDraft:
+            redacted_text = payload.text
             outbound.append(redacted_text)
             raise AssertionError("provider must not be called")
 
@@ -493,8 +483,9 @@ def test_provider_warning_and_exception_text_are_mapped_to_fixed_codes(
 
     class WarningProvider:
         async def extract(
-            self, redacted_text: str, context: ExtractionContext
+            self, payload: QualifiedRedactedText, context: ExtractionContext
         ) -> ClinicalNoteDraft:
+            del payload, context
             return ClinicalNoteDraft(
                 summary="fixed summary",
                 facts=[],
@@ -606,6 +597,10 @@ def test_retry_serializes_against_worker_claim(
     assert failed is not None
     failed.state = "failed"
     failed.error_code = "SYNTHETIC_FAILURE"
+    # Model the provider-retry path explicitly. Failed jobs without a due
+    # ``next_run_at`` are permanent/manual-review failures and must not be
+    # claimed automatically.
+    failed.next_run_at = get_datetime_utc() - timedelta(seconds=1)
     owner_session.add(failed)
     owner_session.commit()
 
@@ -691,6 +686,7 @@ def test_worker_runner_skips_inactive_user_and_selects_healthy_worker(
         email="second.worker@nightingale.example",
         full_name="Second Synthetic Worker",
         hashed_password=first_worker.hashed_password,
+        account_kind="service",
     )
     owner_session.add(second_user)
     owner_session.flush()
@@ -804,8 +800,9 @@ def test_expired_claim_cannot_finalize_after_new_worker_reclaims(
 
     class BlockingProvider:
         async def extract(
-            self, redacted_text: str, context: ExtractionContext
+            self, payload: QualifiedRedactedText, context: ExtractionContext
         ) -> ClinicalNoteDraft:
+            del payload, context
             started.set()
             await release.wait()
             return ClinicalNoteDraft(

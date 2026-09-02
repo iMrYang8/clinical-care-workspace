@@ -16,6 +16,7 @@ from app.models import (
     Clinic,
     ClinicalFactAssertion,
     ClinicMembership,
+    ClinicOperationalSetting,
     Comment,
     CommentMention,
     ConflictCase,
@@ -61,6 +62,27 @@ PLATFORM_ADMIN_PASSWORD = "local-platform-owner-only"
 OTHER_CLINICIAN_EMAIL = "clinician@other-clinic.example"
 
 
+def _persona_account_kind(persona: str) -> str:
+    if persona == "patient":
+        return "patient"
+    if persona in {"worker", "service"}:
+        return "service"
+    return "staff"
+
+
+def _sync_demo_account_kinds(session: Session) -> None:
+    """Keep deterministic identities aligned with their authentication boundary."""
+
+    for persona, email in PERSONA_EMAILS.items():
+        user = session.exec(select(User).where(User.email == email)).first()
+        if user is None:
+            continue
+        account_kind = _persona_account_kind(persona)
+        if user.account_kind != account_kind:
+            user.account_kind = account_kind
+            session.add(user)
+
+
 def _seed_redaction_qualification(session: Session, clinic_id: uuid.UUID) -> None:
     row_id = demo_id(f"redaction-evaluation-{clinic_id}")
     if session.get(RedactionEvaluationRun, row_id) is None:
@@ -80,6 +102,31 @@ def _seed_redaction_qualification(session: Session, clinic_id: uuid.UUID) -> Non
                 metrics_json={"provenance": "deterministic_synthetic_gold"},
             )
         )
+
+
+def _seed_clinic_operational_setting(session: Session, clinic_id: uuid.UUID) -> None:
+    """Give every deterministic clinic an explicit runtime voice policy."""
+
+    existing = session.exec(
+        select(ClinicOperationalSetting).where(
+            ClinicOperationalSetting.clinic_id == clinic_id
+        )
+    ).first()
+    if existing is not None:
+        return
+    session.add(
+        ClinicOperationalSetting(
+            id=demo_id(f"clinic-operational-setting-{clinic_id}"),
+            clinic_id=clinic_id,
+            worker_enabled=True,
+            supported_languages_json=["en", "ms", "nan", "zh", "cmn"],
+            messaging_channels_json=["email", "sms", "whatsapp"],
+            remote_text_egress_enabled=False,
+            remote_audio_egress_enabled=False,
+            calibration_required=True,
+            onboarding_status="ready",
+        )
+    )
 
 
 def _seed_platform_administrator(session: Session) -> None:
@@ -1692,8 +1739,9 @@ def _seed_demo_domain(session: Session) -> None:
 
     # Re-seeding must never replay the original card payload over user feedback
     # or highlight state. Build the projection from the current rows instead;
-    # on first seed this produces the four deterministic cards, and on restart
-    # it preserves accept/reject/pin/learning changes without count growth.
+    # on first seed this produces the four deterministic current-priority and
+    # safety-review cards, and on restart it preserves accept/reject/pin/learning
+    # changes without count growth.
     from app.api.deps import RequestContext
     from app.services.nightingale import rebuild_glance
 
@@ -2314,9 +2362,12 @@ def _seed_today_visits(session: Session) -> None:
 
 def seed_demo_data(session: Session, *, include_scenarios: bool = True) -> None:
     if session.get(Clinic, demo_id("clinic-primary")) is not None:
+        _sync_demo_account_kinds(session)
         _seed_platform_administrator(session)
         _seed_redaction_qualification(session, demo_id("clinic-primary"))
         _seed_redaction_qualification(session, demo_id("clinic-other"))
+        _seed_clinic_operational_setting(session, demo_id("clinic-primary"))
+        _seed_clinic_operational_setting(session, demo_id("clinic-other"))
         _seed_patient_identity(
             session,
             clinic_id=demo_id("clinic-primary"),
@@ -2362,6 +2413,8 @@ def seed_demo_data(session: Session, *, include_scenarios: bool = True) -> None:
     session.flush()
     _seed_redaction_qualification(session, primary.id)
     _seed_redaction_qualification(session, other.id)
+    _seed_clinic_operational_setting(session, primary.id)
+    _seed_clinic_operational_setting(session, other.id)
 
     password_hash = get_password_hash("synthetic-demo-only")
     personas = {
@@ -2370,6 +2423,7 @@ def seed_demo_data(session: Session, *, include_scenarios: bool = True) -> None:
             email=email.strip().lower(),
             full_name=name.replace("_", " ").title(),
             hashed_password=password_hash,
+            account_kind=_persona_account_kind(name),
         )
         for name, email in PERSONA_EMAILS.items()
     }

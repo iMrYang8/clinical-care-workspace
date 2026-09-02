@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +64,64 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def technical_brief_bound_artifacts(project_root: Path | str) -> dict[str, Path]:
+    """Return every non-release artifact whose content appears in the PDF."""
+
+    root = Path(project_root).resolve()
+    evaluation_root = Path(
+        os.environ.get("NIGHTINGALE_EVALUATION_DIR", root / "artifacts" / "evaluation")
+    ).resolve()
+    demo_video = Path(
+        os.environ.get(
+            "NIGHTINGALE_DEMO_VIDEO",
+            root / "output" / "demo" / "Nightingale_Final_Demo_EN_Samantha.mp4",
+        )
+    ).resolve()
+    demo_metadata = Path(
+        os.environ.get(
+            "NIGHTINGALE_DEMO_METADATA",
+            root
+            / "output"
+            / "demo"
+            / "Nightingale_Final_Demo_EN_Samantha_metadata.json",
+        )
+    ).resolve()
+    demo_sha256 = Path(
+        os.environ.get(
+            "NIGHTINGALE_DEMO_SHA256",
+            root / "output" / "demo" / "Nightingale_Final_Demo_EN_Samantha_SHA256.txt",
+        )
+    ).resolve()
+    demo_srt = Path(
+        os.environ.get(
+            "NIGHTINGALE_DEMO_SRT",
+            root / "output" / "demo" / "Nightingale_Final_Demo_EN.srt",
+        )
+    ).resolve()
+    return {
+        "artifacts/evaluation/fact-calibration.json": (
+            evaluation_root / "fact-calibration.json"
+        ),
+        "artifacts/evaluation/redaction-v2.json": (
+            evaluation_root / "redaction-v2.json"
+        ),
+        "artifacts/evaluation/voice-calibration.json": (
+            evaluation_root / "voice-calibration.json"
+        ),
+        "datasets/manifests/evaluation-pack-v1.json": (
+            root / "datasets" / "manifests" / "evaluation-pack-v1.json"
+        ),
+        "docs/architecture.drawio": root / "docs" / "architecture.drawio",
+        "docs/architecture.svg": root / "docs" / "architecture.svg",
+        "docs/schema.drawio": root / "docs" / "schema.drawio",
+        "docs/schema.svg": root / "docs" / "schema.svg",
+        "output/demo/Nightingale_Final_Demo_EN_Samantha.mp4": demo_video,
+        "output/demo/Nightingale_Final_Demo_EN.srt": demo_srt,
+        "output/demo/Nightingale_Final_Demo_EN_Samantha_SHA256.txt": demo_sha256,
+        "output/demo/Nightingale_Final_Demo_EN_Samantha_metadata.json": demo_metadata,
+    }
 
 
 def _release_log_section(log_text: str, heading: str) -> str:
@@ -295,22 +354,13 @@ def main() -> None:
         "verified_backend_image_id": validated["image_id"],
     }
     if args.pdf:
-        evaluation_artifacts = {
-            f"artifacts/evaluation/{name}": (
-                Path(__file__).resolve().parents[1] / "artifacts" / "evaluation" / name
-            )
-            for name in (
-                "fact-calibration.json",
-                "voice-calibration.json",
-                "redaction-v2.json",
-            )
-        }
+        project_root = Path(__file__).resolve().parents[1]
         result["pdf_binding"] = str(
             validate_pdf_binding(
                 args.pdf,
                 args.evidence_dir,
                 validated,
-                bound_artifacts=evaluation_artifacts,
+                bound_artifacts=technical_brief_bound_artifacts(project_root),
             )
         )
     print(json.dumps(result, sort_keys=True))

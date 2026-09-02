@@ -1,7 +1,21 @@
+x-qualified-external-retention: &qualified-external-retention
+  EXTERNAL_PROXY_RETENTION_DAYS: ${EXTERNAL_PROXY_RETENTION_DAYS:?Set verified proxy retention to 1-30 days}
+  EXTERNAL_CONTAINER_RETENTION_DAYS: ${EXTERNAL_CONTAINER_RETENTION_DAYS:?Set verified container retention to 1-30 days}
+  EXTERNAL_APM_RETENTION_DAYS: ${EXTERNAL_APM_RETENTION_DAYS:?Set verified APM retention to 1-30 days}
+  EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE: ${EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE:?Set deployment_policy or provider_contract}
+  EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID: ${EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID:?Set an inspectable policy or contract reference}
+
+x-bounded-container-logging: &bounded-container-logging
+  driver: local
+  options:
+    max-size: "${CONTAINER_LOG_MAX_SIZE:-20m}"
+    max-file: "${CONTAINER_LOG_MAX_FILES:-5}"
+
 services:
 
   proxy:
     restart: always
+    logging: *bounded-container-logging
     ports:
       # Listen on port 80, default for HTTP, necessary to redirect to HTTPS
       - "${NIGHTINGALE_PRODUCTION_BIND_ADDRESS:-0.0.0.0}:${NIGHTINGALE_PRODUCTION_HTTP_PORT:-80}:80"
@@ -28,25 +42,47 @@ services:
       - --certificatesresolvers.le.acme.storage=/certificates/acme.json
       # Use the TLS Challenge for Let's Encrypt
       - --certificatesresolvers.le.acme.tlschallenge=true
-      # Enable the access log, with HTTP requests
+      # Keep only operational fields; never retain a raw URL/query/header.
       - --accesslog
+      - --accesslog.format=json
+      - --accesslog.fields.defaultmode=drop
+      - --accesslog.fields.names.StartUTC=keep
+      - --accesslog.fields.names.Duration=keep
+      - --accesslog.fields.names.RequestMethod=keep
+      - --accesslog.fields.names.RouterName=keep
+      - --accesslog.fields.names.ServiceName=keep
+      - --accesslog.fields.names.DownstreamStatus=keep
       # Enable the Traefik log, for configurations and errors
       - --log
+    labels:
+      com.nightingale.observability.proxy-retention-days: ${EXTERNAL_PROXY_RETENTION_DAYS:?Set verified proxy retention to 1-30 days}
+      com.nightingale.observability.container-retention-days: ${EXTERNAL_CONTAINER_RETENTION_DAYS:?Set verified container retention to 1-30 days}
+      com.nightingale.observability.apm-retention-days: ${EXTERNAL_APM_RETENTION_DAYS:?Set verified APM retention to 1-30 days}
+      com.nightingale.observability.retention-evidence: ${EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE:?Set deployment_policy or provider_contract}
+      com.nightingale.observability.retention-evidence-id: ${EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID:?Set an inspectable policy or contract reference}
 
   db:
     restart: always
+    logging: *bounded-container-logging
 
   prestart:
     # Production callers must select a release image explicitly. The deploy
     # workflow replaces the initial SHA tag with its inspected image ID before
     # migration or application startup.
     image: ${NIGHTINGALE_BACKEND_IMAGE:?Set to a verified release image}
+    environment:
+      <<: *qualified-external-retention
+      NOTIFICATION_WEBHOOK_SECRET: ${NOTIFICATION_WEBHOOK_SECRET:?Set an independent callback secret}
+    logging: *bounded-container-logging
 
   backend:
     image: ${NIGHTINGALE_BACKEND_IMAGE:?Set to a verified release image}
     restart: always
     environment:
+      <<: *qualified-external-retention
+      NOTIFICATION_WEBHOOK_SECRET: ${NOTIFICATION_WEBHOOK_SECRET:?Set an independent callback secret}
       FRONTEND_HOST: https://${DOMAIN:?Variable not set}
+    logging: *bounded-container-logging
     labels:
       # Route HTTPS traffic for this domain
       - traefik.http.routers.backend-https.rule=Host(`${DOMAIN:?Variable not set}`)
@@ -58,6 +94,10 @@ services:
   ai-worker:
     image: ${NIGHTINGALE_BACKEND_IMAGE:?Set to a verified release image}
     restart: always
+    environment:
+      <<: *qualified-external-retention
+      NOTIFICATION_WEBHOOK_SECRET: ${NOTIFICATION_WEBHOOK_SECRET:?Set an independent callback secret}
+    logging: *bounded-container-logging
 
 volumes:
   # Create a volume to store the certificates, even if the container is recreated
@@ -67,6 +107,9 @@ volumes:
   # The release verification topology is disposable only when both named
   # volumes carry this checkout fingerprint. Production keeps persistent data.
   nightingale-db-data:
+    labels:
+      com.nightingale.checkout_fingerprint: ${NIGHTINGALE_CHECKOUT_FINGERPRINT:-unscoped}
+  nightingale-operational-events:
     labels:
       com.nightingale.checkout_fingerprint: ${NIGHTINGALE_CHECKOUT_FINGERPRINT:-unscoped}
 

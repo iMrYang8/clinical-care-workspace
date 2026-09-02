@@ -215,7 +215,9 @@ def test_inactive_authenticated_membership_marks_session_invalid(
     response = client.get("/api/v1/auth/me", headers=headers)
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Inactive membership"
+    # Strict identity RLS hides an inactive membership before the application
+    # can distinguish it from any other invalid membership context.
+    assert response.json()["detail"] == "Invalid membership context"
     assert response.headers["X-Nightingale-Session-Invalid"] == "1"
 
 

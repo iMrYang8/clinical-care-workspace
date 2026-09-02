@@ -11,13 +11,14 @@ from typing import Literal, cast
 import jwt
 from fastapi import APIRouter, Header, HTTPException, Response
 from jwt.exceptions import InvalidTokenError
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, select
 
 from app.api.deps import CurrentContext, SessionDep
 from app.core import security
 from app.core.config import settings
-from app.core.db import set_rls_clinic
+from app.core.db import set_rls_actor, set_rls_clinic, set_rls_patient_bootstrap
 from app.core.field_crypto import field_codec
 from app.models import (
     AuditEvent,
@@ -38,12 +39,13 @@ from app.models import (
     PatientPortalInvitationCreate,
     PatientPortalInvitationPublic,
     PatientUserLink,
+    PatientVisit,
     Token,
     User,
     get_datetime_utc,
 )
-from app.services.invitations import deliver_patient_portal_invitation
-from app.services.nightingale import emit_change, get_patient
+from app.services.messaging import dispatch_notification, queue_notification
+from app.services.nightingale import clinic_day_bounds, emit_change, get_patient
 
 router = APIRouter(prefix="/patients", tags=["patients"])
 auth_router = APIRouter(prefix="/auth/patient-invitations", tags=["auth"])
@@ -276,11 +278,27 @@ def patient_detail(session: SessionDep, patient: Patient) -> PatientDetailPublic
         ),
         None,
     )
+    day_start, day_end = clinic_day_bounds(session, patient.clinic_id)
+    today_visit = session.exec(
+        select(PatientVisit)
+        .where(
+            PatientVisit.clinic_id == patient.clinic_id,
+            PatientVisit.patient_id == patient.id,
+            PatientVisit.scheduled_at >= day_start,
+            PatientVisit.scheduled_at < day_end,
+            col(PatientVisit.status).notin_({"cancelled", "no_show"}),
+        )
+        .order_by(col(PatientVisit.scheduled_at))
+    ).first()
     return PatientDetailPublic(
         id=patient.id,
         display_name=candidate.display_name,
         date_of_birth=candidate.date_of_birth,
         medical_record_number=candidate.medical_record_number,
+        today_visit_id=today_visit.id if today_visit is not None else None,
+        today_visit_at=today_visit.scheduled_at if today_visit is not None else None,
+        today_visit_status=today_visit.status if today_visit is not None else None,
+        today_visit_type=today_visit.visit_type if today_visit is not None else None,
         identity_document_type=identity.identifier_type if identity else None,
         masked_identity_document=candidate.masked_identity_document,
         portal_access_state=cast(
@@ -503,6 +521,23 @@ def invite_patient(
     )
     session.add(invitation)
     session.flush()
+    clinic = session.get(Clinic, context.clinic_id)
+    notification, _ = queue_notification(
+        session,
+        clinic_id=context.clinic_id,
+        patient_id=patient.id,
+        purpose="patient_enrollment",
+        channel="email",
+        destination=normalized_email,
+        template_key="patient-portal-invitation-v1",
+        payload={
+            "enrollment_token": raw_token,
+            "clinic_name": clinic.name if clinic else "Your clinic",
+        },
+        idempotency_key=f"patient-portal-invitation:{invitation.id}",
+        portal_invitation_id=invitation.id,
+        created_by_membership_id=context.membership.id,
+    )
     emit_change(
         session,
         context,
@@ -511,21 +546,31 @@ def invite_patient(
         resource_id=invitation.id,
     )
     session.commit()
-    clinic = session.get(Clinic, context.clinic_id)
-    try:
-        deliver_patient_portal_invitation(
-            recipient=normalized_email,
-            token=raw_token,
-            clinic_name=clinic.name if clinic else "Your clinic",
-        )
-    except Exception:
-        invitation.revoked_at = get_datetime_utc()
-        session.add(invitation)
-        session.commit()
+    dispatch_notification(session, notification)
+    session.commit()
+    if notification.state == "failed":
         raise HTTPException(
             status_code=503, detail="Invitation delivery did not complete"
         )
-    return PatientPortalInvitationPublic.model_validate(invitation)
+    return PatientPortalInvitationPublic(
+        id=invitation.id,
+        patient_id=invitation.patient_id,
+        email=invitation.email,
+        expires_at=invitation.expires_at,
+        created_at=invitation.created_at,
+        notification_id=notification.id,
+        notification_state=cast(
+            Literal[
+                "queued",
+                "submitted",
+                "delivered",
+                "failed",
+                "acknowledged",
+                "revoked",
+            ],
+            notification.state,
+        ),
+    )
 
 
 def _invitation(
@@ -533,7 +578,7 @@ def _invitation(
     body: PatientInvitationPreviewRequest | PatientInvitationAccept,
     *,
     lock: bool,
-) -> tuple[Clinic, PatientPortalInvitation, Patient]:
+) -> tuple[Clinic, PatientPortalInvitation, Patient, uuid.UUID | None]:
     clinic_text, separator, _ = body.token.partition(".")
     try:
         clinic_id = uuid.UUID(clinic_text) if separator else None
@@ -541,11 +586,47 @@ def _invitation(
         clinic_id = None
     if clinic_id is None:
         raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
-    set_rls_clinic(session, clinic_id)
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    normalized_email = str(body.email).strip().lower()
+    existing_user_id: uuid.UUID | None = None
+    if session.get_bind().dialect.name == "postgresql":
+        bootstrap = (
+            session.connection()
+            .execute(
+                text("SELECT * FROM app_lookup_patient_enrollment(:token_hash)"),
+                {"token_hash": token_hash},
+            )
+            .one_or_none()
+        )
+        if bootstrap is None or uuid.UUID(str(bootstrap.clinic_id)) != clinic_id:
+            raise HTTPException(
+                status_code=400, detail="Invitation is invalid or expired"
+            )
+        patient_id = uuid.UUID(str(bootstrap.patient_id))
+        invited_user_id = (
+            session.connection()
+            .execute(
+                text(
+                    "SELECT app_lookup_invited_user("
+                    ":clinic_id, :token_hash, :email, 'patient')"
+                ),
+                {
+                    "clinic_id": clinic_id,
+                    "token_hash": token_hash,
+                    "email": normalized_email,
+                },
+            )
+            .scalar_one_or_none()
+        )
+        if invited_user_id is not None:
+            existing_user_id = uuid.UUID(str(invited_user_id))
+        set_rls_clinic(session, clinic_id)
+        set_rls_patient_bootstrap(session, patient_id)
+    else:
+        set_rls_clinic(session, clinic_id)
     statement = select(PatientPortalInvitation).where(
         PatientPortalInvitation.clinic_id == clinic_id,
-        PatientPortalInvitation.token_hash
-        == hashlib.sha256(body.token.encode()).hexdigest(),
+        PatientPortalInvitation.token_hash == token_hash,
     )
     if lock:
         statement = statement.with_for_update()
@@ -556,37 +637,47 @@ def _invitation(
         or invitation.accepted_at is not None
         or invitation.revoked_at is not None
         or invitation.expires_at <= now
-        or str(invitation.email).strip().lower() != str(body.email).strip().lower()
+        or invitation.email is None
+        or str(invitation.email).strip().lower() != normalized_email
     ):
         raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
     clinic = session.get(Clinic, clinic_id)
     patient = session.get(Patient, invitation.patient_id)
-    creator = session.exec(
-        select(ClinicMembership).where(
-            ClinicMembership.id == invitation.created_by_membership_id,
-            ClinicMembership.clinic_id == clinic_id,
-            col(ClinicMembership.is_active).is_(True),
-            col(ClinicMembership.role).in_(["staff", "clinician"]),
-        )
-    ).first()
+    creator_is_valid = True
+    if session.get_bind().dialect.name != "postgresql":
+        creator = session.exec(
+            select(ClinicMembership).where(
+                ClinicMembership.id == invitation.created_by_membership_id,
+                ClinicMembership.clinic_id == clinic_id,
+                col(ClinicMembership.is_active).is_(True),
+                col(ClinicMembership.role).in_(["staff", "clinician"]),
+            )
+        ).first()
+        creator_is_valid = creator is not None
     if (
         clinic is None
         or patient is None
         or patient.clinic_id != clinic_id
-        or creator is None
+        or not creator_is_valid
     ):
         raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
-    return clinic, invitation, patient
+    if session.get_bind().dialect.name != "postgresql":
+        existing_user = session.exec(
+            select(User).where(User.email == normalized_email)
+        ).first()
+        existing_user_id = existing_user.id if existing_user is not None else None
+    return clinic, invitation, patient, existing_user_id
 
 
 @auth_router.post("/preview", response_model=PatientInvitationPreviewPublic)
 def preview_patient_invitation(
     body: PatientInvitationPreviewRequest, session: SessionDep
 ) -> PatientInvitationPreviewPublic:
-    clinic, invitation, patient = _invitation(session, body, lock=False)
-    user = session.exec(
-        select(User).where(User.email == str(body.email).strip().lower())
-    ).first()
+    clinic, invitation, patient, existing_user_id = _invitation(
+        session, body, lock=False
+    )
+    if invitation.email is None:
+        raise HTTPException(status_code=400, detail="Invitation is invalid or expired")
     return PatientInvitationPreviewPublic(
         clinic_name=clinic.name,
         patient_display_name=field_codec.decrypt_text(
@@ -596,7 +687,7 @@ def preview_patient_invitation(
             patient.display_name_ciphertext,
         ),
         email=invitation.email,
-        account_exists=user is not None,
+        account_exists=existing_user_id is not None,
     )
 
 
@@ -606,9 +697,18 @@ def accept_patient_invitation(
     response: Response,
     session: SessionDep,
 ) -> Token:
-    clinic, invitation, patient = _invitation(session, body, lock=True)
+    clinic, invitation, patient, existing_user_id = _invitation(
+        session, body, lock=True
+    )
     normalized_email = str(body.email).strip().lower()
-    user = session.exec(select(User).where(User.email == normalized_email)).first()
+    prospective_user_id = existing_user_id or uuid.uuid4()
+    set_rls_actor(
+        session,
+        prospective_user_id,
+        role="patient",
+        patient_id=patient.id,
+    )
+    user = session.get(User, prospective_user_id)
     if user is None:
         if len(body.password) < 16:
             raise HTTPException(
@@ -616,16 +716,21 @@ def accept_patient_invitation(
                 detail="New patient portal passwords must be at least 16 characters",
             )
         user = User(
+            id=prospective_user_id,
             email=normalized_email,
             full_name=body.full_name,
             hashed_password=security.get_password_hash(body.password),
+            account_kind="patient",
         )
         session.add(user)
         session.flush()
     else:
-        valid_password, updated_hash = security.verify_password(
-            body.password, user.hashed_password
-        )
+        valid_password = False
+        updated_hash: str | None = None
+        if user.account_kind == "patient" and user.hashed_password is not None:
+            valid_password, updated_hash = security.verify_password(
+                body.password, user.hashed_password
+            )
         if not valid_password or not user.is_active:
             raise HTTPException(
                 status_code=400, detail="Invitation is invalid or expired"
@@ -643,8 +748,14 @@ def accept_patient_invitation(
         membership = ClinicMembership(
             clinic_id=clinic.id, user_id=user.id, role="patient"
         )
-        session.add(membership)
-        session.flush()
+        try:
+            with session.begin_nested():
+                session.add(membership)
+                session.flush()
+        except IntegrityError as exc:
+            raise HTTPException(
+                status_code=409, detail="Account cannot accept patient access"
+            ) from exc
     elif membership.role != "patient" or not membership.is_active:
         raise HTTPException(
             status_code=409, detail="Account cannot accept patient access"
@@ -660,6 +771,7 @@ def accept_patient_invitation(
         session.add(
             PatientUserLink(clinic_id=clinic.id, patient_id=patient.id, user_id=user.id)
         )
+        session.flush()
     invitation.accepted_at = get_datetime_utc()
     session.add(invitation)
     session.add(
@@ -669,6 +781,7 @@ def accept_patient_invitation(
             action="patient.portal_invitation_accepted",
             resource_type="patient",
             resource_id=patient.id,
+            reason_code="invitation_accepted",
             metadata_json={},
         )
     )

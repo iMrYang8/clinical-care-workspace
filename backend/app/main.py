@@ -1,11 +1,17 @@
+import asyncio
+import logging
+import re
+import time
+import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
 import sentry_sdk
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
 from sentry_sdk.types import Event, Hint
@@ -17,9 +23,21 @@ from app.api.main import api_router
 from app.core.config import settings
 from app.core.db import assert_restricted_runtime_database
 from app.services.nightingale import VersionConflictError
+from app.services.operational_events import (
+    initialize_operational_event_store,
+    purge_operational_events,
+    record_operational_event,
+    run_operational_event_purge_loop,
+)
 from app.services.redaction import assert_presidio_runtime
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
+access_logger = logging.getLogger("nightingale.access")
+_SAFE_EXCEPTION_TYPE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,127}$")
+_SAFE_EVENT_ID = re.compile(r"^[0-9a-f]{32}$")
+_SAFE_HTTP_METHODS = frozenset(
+    {"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"}
+)
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -27,50 +45,41 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 
 
 def _sanitize_sentry_event(event: Event, _hint: Hint) -> Event | None:
-    """Remove clinical request bodies and credentials from error/trace events."""
+    """Return a minimal error envelope with no free-form request carriers."""
 
-    # Custom instrumentation can place identifiers or clinical values outside
-    # Sentry's request object. Fail closed by dropping every free-form carrier;
-    # exception types and core envelope metadata remain available for grouping.
-    event_data = cast(dict[str, Any], event)
-    for key in (
-        "breadcrumbs",
-        "contexts",
-        "extra",
-        "fingerprint",
-        "logentry",
-        "message",
-        "spans",
-        "stacktrace",
-        "tags",
-        "threads",
-        "transaction",
-        "user",
-    ):
-        event_data.pop(key, None)
-    request = event.get("request")
-    if isinstance(request, dict):
-        for key in (
-            "data",
-            "body",
-            "cookies",
-            "headers",
-            "env",
-            "query_string",
-            "url",
-            "path_info",
-            "fragment",
-        ):
-            request.pop(key, None)
-    exception = event.get("exception")
+    # Build a new event instead of trying to enumerate every place custom
+    # instrumentation might attach a URL, header, body, local, or exception
+    # message. Only bounded SDK identifiers and code-defined exception types
+    # survive; request data is absent by construction.
+    source = cast(dict[str, Any], event)
+    sanitized: dict[str, Any] = {}
+    event_id = source.get("event_id")
+    if isinstance(event_id, str) and _SAFE_EVENT_ID.fullmatch(event_id):
+        sanitized["event_id"] = event_id
+    level = source.get("level")
+    if level in {"fatal", "error", "warning", "info", "debug"}:
+        sanitized["level"] = level
+    if source.get("platform") == "python":
+        sanitized["platform"] = "python"
+
+    exception = source.get("exception")
     if isinstance(exception, dict):
         values = exception.get("values")
         if isinstance(values, list):
+            safe_values: list[dict[str, str]] = []
             for value in values:
                 if isinstance(value, dict):
-                    value["value"] = "REDACTED"
-                    value.pop("stacktrace", None)
-    return event
+                    exception_type = value.get("type")
+                    safe_type = (
+                        exception_type
+                        if isinstance(exception_type, str)
+                        and _SAFE_EXCEPTION_TYPE.fullmatch(exception_type)
+                        else "SanitizedError"
+                    )
+                    safe_values.append({"type": safe_type, "value": "REDACTED"})
+            if safe_values:
+                sanitized["exception"] = {"values": safe_values}
+    return cast(Event, sanitized)
 
 
 if settings.SENTRY_DSN and settings.FASTAPI_ENV != "development":
@@ -88,11 +97,22 @@ if settings.SENTRY_DSN and settings.FASTAPI_ENV != "development":
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    initialize_operational_event_store()
+    purge_operational_events()
     if settings.FASTAPI_ENV != "development":
         assert_restricted_runtime_database()
         if settings.AI_PROVIDER == "openai" and settings.REMOTE_TEXT_EGRESS_ENABLED:
             assert_presidio_runtime(settings.PRESIDIO_NLP_MODEL)
-    yield
+    purge_task = asyncio.create_task(
+        run_operational_event_purge_loop(),
+        name="operational-event-retention-purge",
+    )
+    try:
+        yield
+    finally:
+        purge_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await purge_task
 
 
 app = FastAPI(
@@ -146,7 +166,13 @@ class CookieCsrfMiddleware:
             f"{settings.API_V1_STR}/auth/login",
             f"{settings.API_V1_STR}/auth/demo-login",
             f"{settings.API_V1_STR}/platform/auth/login",
-        }
+            f"{settings.API_V1_STR}/patient-access/enroll/start",
+            f"{settings.API_V1_STR}/patient-access/login/start",
+            f"{settings.API_V1_STR}/patient-access/resend",
+            f"{settings.API_V1_STR}/patient-access/verify",
+        } or request.url.path.startswith(
+            f"{settings.API_V1_STR}/notification-webhooks/"
+        )
         if is_mutation and cookie_auth and not bearer_auth and not login_path:
             supplied = request.headers.get("origin")
             if supplied is None:
@@ -168,6 +194,89 @@ class CookieCsrfMiddleware:
 
 
 app.add_middleware(CookieCsrfMiddleware)
+
+
+class SafeAccessLogMiddleware:
+    """Emit an allowlisted access record without URLs, identifiers, or bodies.
+
+    The default proxy/ASGI access formats include the raw request target. Patient
+    search terms and opaque record identifiers therefore do not belong in them.
+    Route *names* are assigned by the application and are safe to retain; raw
+    paths, query strings, headers, cookies, request bodies and exception text are
+    deliberately never read or logged here.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        started = time.perf_counter()
+        request_id = str(uuid.uuid4())
+        status_code = 500
+        response_started = False
+        raw_method = str(scope.get("method", "UNKNOWN")).upper()
+        method = raw_method if raw_method in _SAFE_HTTP_METHODS else "OTHER"
+
+        async def send_with_request_id(message: Message) -> None:
+            nonlocal response_started, status_code
+            if message["type"] == "http.response.start":
+                response_started = True
+                status_code = int(message["status"])
+                headers = MutableHeaders(scope=message)
+                headers["X-Request-ID"] = request_id
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_request_id)
+        except Exception:
+            # Stop exception values, request state, and raw server error pages at
+            # the application boundary.  The response and log contain only a
+            # stable machine code plus the generated correlation ID.
+            if not response_started:
+                status_code = 500
+                response = JSONResponse(
+                    status_code=500,
+                    content={"detail": {"code": "INTERNAL_ERROR"}},
+                )
+                await response(scope, receive, send_with_request_id)
+            else:
+                access_logger.error(
+                    "request_stream_failed request_id=%s code=INTERNAL_ERROR",
+                    request_id,
+                )
+        finally:
+            route = scope.get("route")
+            route_name = getattr(route, "name", None)
+            safe_route_name = route_name if isinstance(route_name, str) else "unmatched"
+            duration_ms = round((time.perf_counter() - started) * 1_000)
+            access_logger.info(
+                "request_completed request_id=%s route=%s method=%s status=%s duration_ms=%s",
+                request_id,
+                safe_route_name,
+                method,
+                status_code,
+                duration_ms,
+            )
+            try:
+                record_operational_event(
+                    request_id=request_id,
+                    route=safe_route_name,
+                    method=method,
+                    status=status_code,
+                    duration_ms=duration_ms,
+                )
+            except Exception:
+                access_logger.error(
+                    "operational_event_store_failed request_id=%s code=STORE_ERROR",
+                    request_id,
+                )
+
+
+app.add_middleware(SafeAccessLogMiddleware)
 
 
 def _merge_vary(existing: str | None, required: tuple[str, ...]) -> str:
@@ -223,6 +332,18 @@ class PrivateResponseCacheMiddleware:
 
 
 app.add_middleware(PrivateResponseCacheMiddleware)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(
+    _request: Request, _exc: RequestValidationError
+) -> JSONResponse:
+    """Return no rejected values, free-form validator text, or field paths."""
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": {"code": "REQUEST_VALIDATION_FAILED"}},
+    )
 
 
 @app.exception_handler(VersionConflictError)

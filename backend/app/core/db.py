@@ -11,6 +11,18 @@ engine = create_engine(str(settings.DATABASE_URL))
 RUNTIME_DATABASE_ROLE = "nightingale_app"
 
 _RLS_CLINIC_SESSION_KEY = "nightingale.rls_clinic_id"
+_RLS_ACTOR_SESSION_KEY = "nightingale.rls_actor_id"
+_RLS_ROLE_SESSION_KEY = "nightingale.rls_actor_role"
+_RLS_PATIENT_SESSION_KEY = "nightingale.rls_patient_id"
+_RLS_INVITATION_TOKEN_SESSION_KEY = "nightingale.rls_invitation_token_hash"
+
+_SESSION_GUCS = {
+    _RLS_CLINIC_SESSION_KEY: "app.current_clinic_id",
+    _RLS_ACTOR_SESSION_KEY: "app.current_actor_id",
+    _RLS_ROLE_SESSION_KEY: "app.current_actor_role",
+    _RLS_PATIENT_SESSION_KEY: "app.current_patient_id",
+    _RLS_INVITATION_TOKEN_SESSION_KEY: "app.current_invitation_token_hash",
+}
 
 
 @event.listens_for(Session, "after_begin")
@@ -19,23 +31,76 @@ def _restore_rls_clinic_after_commit(
 ) -> None:
     """Reapply the transaction-local tenant GUC on a session's next transaction."""
 
-    clinic_id = session.info.get(_RLS_CLINIC_SESSION_KEY)
-    if connection.dialect.name == "postgresql" and isinstance(clinic_id, str):
-        connection.execute(
-            text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
-            {"clinic_id": clinic_id},
+    if connection.dialect.name == "postgresql":
+        for session_key, guc in _SESSION_GUCS.items():
+            value = session.info.get(session_key)
+            if isinstance(value, str):
+                connection.execute(
+                    text("SELECT set_config(:guc, :value, true)"),
+                    {"guc": guc, "value": value},
+                )
+
+
+def _set_rls_value(session: Session, session_key: str, value: str) -> None:
+    session.info[session_key] = value
+    if session.get_bind().dialect.name == "postgresql":
+        session.connection().execute(
+            text("SELECT set_config(:guc, :value, true)"),
+            {"guc": _SESSION_GUCS[session_key], "value": value},
+        )
+
+
+def _clear_rls_value(session: Session, session_key: str) -> None:
+    # Retain an explicit empty value so ``after_begin`` re-applies the clear on
+    # every later transaction owned by this Session. Dropping the key would let
+    # a connection-level fixture/default (or a prior transaction context) leak
+    # back in after commit.
+    session.info[session_key] = ""
+    if session.get_bind().dialect.name == "postgresql":
+        session.connection().execute(
+            text("SELECT set_config(:guc, '', true)"),
+            {"guc": _SESSION_GUCS[session_key]},
         )
 
 
 def set_rls_clinic(session: Session, clinic_id: uuid.UUID) -> None:
     """Bind a trusted clinic to this Session without leaking it through the pool."""
 
-    session.info[_RLS_CLINIC_SESSION_KEY] = str(clinic_id)
-    if session.get_bind().dialect.name == "postgresql":
-        session.connection().execute(
-            text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
-            {"clinic_id": str(clinic_id)},
-        )
+    _set_rls_value(session, _RLS_CLINIC_SESSION_KEY, str(clinic_id))
+
+
+def set_rls_actor(
+    session: Session,
+    actor_id: uuid.UUID,
+    *,
+    role: str | None = None,
+    patient_id: uuid.UUID | None = None,
+) -> None:
+    """Bind the authenticated actor used by identity and patient projections."""
+
+    _set_rls_value(session, _RLS_ACTOR_SESSION_KEY, str(actor_id))
+    if role is not None:
+        _set_rls_value(session, _RLS_ROLE_SESSION_KEY, role)
+    if patient_id is not None:
+        _set_rls_value(session, _RLS_PATIENT_SESSION_KEY, str(patient_id))
+
+
+def set_rls_patient_bootstrap(session: Session, patient_id: uuid.UUID) -> None:
+    """Bind an opaque-secret bootstrap to one patient without inventing an actor."""
+
+    _clear_rls_value(session, _RLS_ACTOR_SESSION_KEY)
+    _set_rls_value(session, _RLS_ROLE_SESSION_KEY, "patient")
+    _set_rls_value(session, _RLS_PATIENT_SESSION_KEY, str(patient_id))
+
+
+def set_rls_invitation_token_hash(session: Session, token_hash: str) -> None:
+    """Bind the already-verified one-time staff invitation secret."""
+
+    if len(token_hash) != 64 or any(
+        character not in "0123456789abcdef" for character in token_hash
+    ):
+        raise ValueError("INVALID_INVITATION_TOKEN_HASH")
+    _set_rls_value(session, _RLS_INVITATION_TOKEN_SESSION_KEY, token_hash)
 
 
 def assert_restricted_runtime_connection(connection: Connection) -> None:

@@ -23,6 +23,14 @@ services:
     environment:
       FASTAPI_ENV: "development"
       ENABLE_DEMO_AUTH: "true"
+      NOTIFICATION_EMAIL_PROVIDER: "deterministic"
+      NOTIFICATION_SMS_PROVIDER: "deterministic"
+      NOTIFICATION_WHATSAPP_PROVIDER: "deterministic"
+      EXTERNAL_PROXY_RETENTION_DAYS: "30"
+      EXTERNAL_CONTAINER_RETENTION_DAYS: "30"
+      EXTERNAL_APM_RETENTION_DAYS: "30"
+      EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE: "deterministic_fixture"
+      EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID: "fixture:nightingale:external-observability-30d"
 
   backend:
     build:
@@ -65,11 +73,27 @@ services:
       SMTP_HOST: "mailpit"
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
+      NOTIFICATION_EMAIL_PROVIDER: "deterministic"
+      NOTIFICATION_SMS_PROVIDER: "deterministic"
+      NOTIFICATION_WHATSAPP_PROVIDER: "deterministic"
+      EXTERNAL_PROXY_RETENTION_DAYS: "30"
+      EXTERNAL_CONTAINER_RETENTION_DAYS: "30"
+      EXTERNAL_APM_RETENTION_DAYS: "30"
+      EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE: "deterministic_fixture"
+      EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID: "fixture:nightingale:external-observability-30d"
 
   ai-worker:
     environment:
       FASTAPI_ENV: "development"
       ENABLE_DEMO_AUTH: "true"
+      NOTIFICATION_EMAIL_PROVIDER: "deterministic"
+      NOTIFICATION_SMS_PROVIDER: "deterministic"
+      NOTIFICATION_WHATSAPP_PROVIDER: "deterministic"
+      EXTERNAL_PROXY_RETENTION_DAYS: "30"
+      EXTERNAL_CONTAINER_RETENTION_DAYS: "30"
+      EXTERNAL_APM_RETENTION_DAYS: "30"
+      EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE: "deterministic_fixture"
+      EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID: "fixture:nightingale:external-observability-30d"
 
   mailpit:
     image: axllent/mailpit
@@ -102,6 +126,9 @@ services:
 
 volumes:
   nightingale-db-data:
+    labels:
+      com.nightingale.checkout_fingerprint: ${NIGHTINGALE_CHECKOUT_FINGERPRINT:-unscoped}
+  nightingale-operational-events:
     labels:
       com.nightingale.checkout_fingerprint: ${NIGHTINGALE_CHECKOUT_FINGERPRINT:-unscoped}
 

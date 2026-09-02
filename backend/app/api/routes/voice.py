@@ -8,6 +8,7 @@ from app.api.deps import CurrentContext, SessionDep
 from app.core.config import settings
 from app.models import (
     AudioChunkAck,
+    JobPublic,
     TranscriptCorrection,
     TranscriptRevisionPublic,
     VoiceChunkStatus,
@@ -22,9 +23,11 @@ from app.models import (
     VoicePublishRequest,
     VoiceReanalyzePublic,
     VoiceReanalyzeRequest,
+    VoiceRemoteAudioConsentUpdate,
     VoiceSessionCreate,
     VoiceSessionPublic,
 )
+from app.services.ai_jobs import get_scoped_job, job_public
 from app.services.voice.service import (
     abandon_empty_voice_device,
     authorized_audio_asset,
@@ -39,6 +42,7 @@ from app.services.voice.service import (
     publish_voice_result,
     seal_voice_device,
     transcript_public,
+    update_remote_audio_consent,
     upload_audio_chunk,
     voice_device_public,
     voice_session_public,
@@ -87,7 +91,9 @@ def create_session(
     voice_session = create_voice_session(session, context, body)
     session.commit()
     session.refresh(voice_session)
-    return voice_session_public(voice_session, patient_safe=context.role == "patient")
+    return voice_session_public(
+        session, voice_session, patient_safe=context.role == "patient"
+    )
 
 
 @router.get("/sessions/{session_id}", response_model=VoiceSessionPublic)
@@ -95,7 +101,48 @@ def session_status(
     session_id: uuid.UUID, session: SessionDep, context: CurrentContext
 ) -> VoiceSessionPublic:
     voice_session = get_voice_session(session, context, session_id)
-    return voice_session_public(voice_session, patient_safe=context.role == "patient")
+    return voice_session_public(
+        session, voice_session, patient_safe=context.role == "patient"
+    )
+
+
+@router.put(
+    "/sessions/{session_id}/remote-audio-consent",
+    response_model=VoiceSessionPublic,
+)
+def set_remote_audio_consent(
+    session_id: uuid.UUID,
+    body: VoiceRemoteAudioConsentUpdate,
+    session: SessionDep,
+    context: CurrentContext,
+) -> VoiceSessionPublic:
+    voice_session = get_voice_session(session, context, session_id, lock=True)
+    updated = update_remote_audio_consent(
+        session,
+        context,
+        voice_session,
+        consent=body.consent,
+    )
+    session.commit()
+    session.refresh(updated)
+    return voice_session_public(
+        session, updated, patient_safe=context.role == "patient"
+    )
+
+
+@router.get("/sessions/{session_id}/job", response_model=JobPublic)
+def session_job_status(
+    session_id: uuid.UUID, session: SessionDep, context: CurrentContext
+) -> JobPublic:
+    if context.role not in {"staff", "clinician", "admin"}:
+        raise HTTPException(status_code=403, detail="Clinical team role required")
+    voice_session = get_voice_session(session, context, session_id)
+    if voice_session.processing_job_id is None:
+        raise HTTPException(status_code=404, detail="Voice processing job not found")
+    return job_public(
+        session,
+        get_scoped_job(session, context, voice_session.processing_job_id),
+    )
 
 
 @router.post(
@@ -304,6 +351,7 @@ def publish(
         context,
         voice_session,
         expected_revision_id=body.expected_revision_id,
+        medication_reviews=body.medication_reviews,
     )
     session.commit()
     return result

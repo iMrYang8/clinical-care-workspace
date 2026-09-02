@@ -85,6 +85,24 @@ export type AIRunPublic = {
 };
 
 /**
+ * AppointmentDeliveryCreate
+ */
+export type AppointmentDeliveryCreate = {
+    /**
+     * Channel
+     */
+    channel: 'email' | 'sms' | 'whatsapp';
+    /**
+     * Destination
+     */
+    destination: string;
+    /**
+     * Scheduled For
+     */
+    scheduled_for?: string | null;
+};
+
+/**
  * AssignmentUpdate
  */
 export type AssignmentUpdate = {
@@ -144,6 +162,14 @@ export type AuditEventPublic = {
      * Created At
      */
     created_at: string;
+    /**
+     * Reason Code
+     */
+    reason_code?: string;
+    /**
+     * Clinical Rationale Present
+     */
+    clinical_rationale_present?: boolean;
 };
 
 /**
@@ -255,6 +281,399 @@ export type ClinicAISettingUpdate = {
 };
 
 /**
+ * ClinicFormularyConceptCreate
+ */
+export type ClinicFormularyConceptCreate = {
+    /**
+     * Concept Code
+     */
+    concept_code: string;
+    /**
+     * Canonical Name
+     */
+    canonical_name: string;
+    /**
+     * Multilingual Aliases
+     */
+    multilingual_aliases: {
+        [key: string]: Array<string>;
+    };
+    /**
+     * Dose Unit
+     */
+    dose_unit: string;
+    /**
+     * Minimum Single Dose
+     */
+    minimum_single_dose: number;
+    /**
+     * Maximum Single Dose
+     */
+    maximum_single_dose: number;
+    /**
+     * Permitted Routes
+     */
+    permitted_routes: Array<string>;
+    /**
+     * Contraindicated Allergy Concepts
+     */
+    contraindicated_allergy_concepts?: Array<string>;
+};
+
+/**
+ * ClinicFormularyConceptPublic
+ */
+export type ClinicFormularyConceptPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Concept Code
+     */
+    concept_code: string;
+    /**
+     * Canonical Name
+     */
+    canonical_name: string;
+    /**
+     * Multilingual Aliases
+     */
+    multilingual_aliases: {
+        [key: string]: Array<string>;
+    };
+    /**
+     * Dose Unit
+     */
+    dose_unit: string;
+    /**
+     * Minimum Single Dose
+     */
+    minimum_single_dose: number;
+    /**
+     * Maximum Single Dose
+     */
+    maximum_single_dose: number;
+    /**
+     * Permitted Routes
+     */
+    permitted_routes: Array<string>;
+    /**
+     * Contraindicated Allergy Concepts
+     */
+    contraindicated_allergy_concepts: Array<string>;
+};
+
+/**
+ * ClinicFormularyQualificationRequest
+ */
+export type ClinicFormularyQualificationRequest = {
+    /**
+     * Expected Content Sha256
+     */
+    expected_content_sha256: string;
+};
+
+/**
+ * ClinicFormularyReadinessPublic
+ */
+export type ClinicFormularyReadinessPublic = {
+    /**
+     * Ready
+     */
+    ready: boolean;
+    /**
+     * Reason Code
+     */
+    reason_code?: string | null;
+    /**
+     * Active Version Id
+     */
+    active_version_id?: string | null;
+    /**
+     * Version Code
+     */
+    version_code?: string | null;
+    /**
+     * Content Sha256
+     */
+    content_sha256?: string | null;
+    /**
+     * Qualification Source
+     */
+    qualification_source?: 'clinic_admin' | 'platform_template' | null;
+};
+
+/**
+ * ClinicFormularyVersionCreate
+ */
+export type ClinicFormularyVersionCreate = {
+    /**
+     * Version Code
+     */
+    version_code: string;
+    /**
+     * Concepts
+     */
+    concepts: Array<ClinicFormularyConceptCreate>;
+};
+
+/**
+ * ClinicFormularyVersionPublic
+ */
+export type ClinicFormularyVersionPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Version Code
+     */
+    version_code: string;
+    /**
+     * Status
+     */
+    status: 'draft' | 'active' | 'retired';
+    /**
+     * Content Sha256
+     */
+    content_sha256: string;
+    /**
+     * Computed Content Sha256
+     */
+    computed_content_sha256: string | null;
+    /**
+     * Digest Matches
+     */
+    digest_matches: boolean;
+    /**
+     * Qualification State
+     */
+    qualification_state: 'unqualified' | 'qualified' | 'invalid' | 'active' | 'retired';
+    /**
+     * Qualification Source
+     */
+    qualification_source: 'clinic_admin' | 'platform_template' | null;
+    /**
+     * Content Locked At
+     */
+    content_locked_at: string | null;
+    /**
+     * Qualified At
+     */
+    qualified_at: string | null;
+    /**
+     * Effective At
+     */
+    effective_at: string;
+    /**
+     * Retired At
+     */
+    retired_at: string | null;
+    /**
+     * Concept Count
+     */
+    concept_count: number;
+    /**
+     * Concepts
+     */
+    concepts?: Array<ClinicFormularyConceptPublic>;
+};
+
+/**
+ * ClinicFormularyVersionsPublic
+ */
+export type ClinicFormularyVersionsPublic = {
+    /**
+     * Data
+     */
+    data: Array<ClinicFormularyVersionPublic>;
+    /**
+     * Count
+     */
+    count: number;
+};
+
+/**
+ * ClinicInitialStaff
+ */
+export type ClinicInitialStaff = {
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Full Name
+     */
+    full_name: string;
+    /**
+     * Role
+     */
+    role?: 'admin' | 'clinician' | 'staff';
+};
+
+/**
+ * ClinicOnboardingCreate
+ */
+export type ClinicOnboardingCreate = {
+    /**
+     * Code
+     */
+    code: string;
+    /**
+     * Slug
+     */
+    slug: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Timezone
+     */
+    timezone: string;
+    /**
+     * Initial Staff
+     */
+    initial_staff: Array<ClinicInitialStaff>;
+    /**
+     * Worker Enabled
+     */
+    worker_enabled?: boolean;
+    /**
+     * Supported Languages
+     */
+    supported_languages?: Array<'en' | 'ms' | 'nan' | 'zh' | 'cmn'>;
+    /**
+     * Messaging Channels
+     */
+    messaging_channels?: Array<'email' | 'sms' | 'whatsapp' | 'portal'>;
+    /**
+     * Remote Text Egress Enabled
+     */
+    remote_text_egress_enabled?: boolean;
+    /**
+     * Remote Audio Egress Enabled
+     */
+    remote_audio_egress_enabled?: boolean;
+    /**
+     * Calibration Required
+     */
+    calibration_required?: boolean;
+    /**
+     * Formulary Template
+     */
+    formulary_template?: 'nightingale-clinic-formulary-v1';
+};
+
+/**
+ * ClinicOperationalSettingPublic
+ */
+export type ClinicOperationalSettingPublic = {
+    /**
+     * Clinic Id
+     */
+    clinic_id: string;
+    /**
+     * Timezone
+     */
+    timezone: string;
+    /**
+     * Worker Enabled
+     */
+    worker_enabled: boolean;
+    /**
+     * Supported Languages
+     */
+    supported_languages: Array<string>;
+    /**
+     * Messaging Channels
+     */
+    messaging_channels: Array<string>;
+    /**
+     * Remote Text Egress Enabled
+     */
+    remote_text_egress_enabled: boolean;
+    /**
+     * Remote Audio Egress Enabled
+     */
+    remote_audio_egress_enabled: boolean;
+    /**
+     * Calibration Required
+     */
+    calibration_required: boolean;
+    /**
+     * External Proxy Retention Days
+     */
+    external_proxy_retention_days: number;
+    /**
+     * External Container Retention Days
+     */
+    external_container_retention_days: number;
+    /**
+     * External Apm Retention Days
+     */
+    external_apm_retention_days: number;
+    /**
+     * External Observability Retention Evidence
+     */
+    external_observability_retention_evidence: 'unqualified' | 'deterministic_fixture' | 'deployment_policy' | 'provider_contract';
+    /**
+     * External Observability Retention Evidence Id
+     */
+    external_observability_retention_evidence_id: string;
+    /**
+     * Formulary Template
+     */
+    formulary_template: string;
+    /**
+     * Onboarding Status
+     */
+    onboarding_status: 'draft' | 'ready' | 'blocked';
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
+ * ClinicPreflightCheckPublic
+ */
+export type ClinicPreflightCheckPublic = {
+    /**
+     * Key
+     */
+    key: 'code' | 'timezone' | 'initial_staff' | 'worker' | 'languages' | 'messaging' | 'egress_policy' | 'observability_retention' | 'formulary' | 'calibration';
+    /**
+     * Passed
+     */
+    passed: boolean;
+    /**
+     * Reason Code
+     */
+    reason_code?: string | null;
+};
+
+/**
+ * ClinicPreflightPublic
+ */
+export type ClinicPreflightPublic = {
+    /**
+     * Clinic Id
+     */
+    clinic_id: string;
+    /**
+     * Ready
+     */
+    ready: boolean;
+    /**
+     * Checks
+     */
+    checks: Array<ClinicPreflightCheckPublic>;
+    settings: ClinicOperationalSettingPublic;
+};
+
+/**
  * ClinicalFactAssertionPublic
  */
 export type ClinicalFactAssertionPublic = {
@@ -275,6 +694,34 @@ export type ClinicalFactAssertionPublic = {
      */
     normalized_value: string;
     /**
+     * Polarity
+     */
+    polarity?: string;
+    /**
+     * Assertion Scope
+     */
+    assertion_scope?: string;
+    /**
+     * Allergy Category
+     */
+    allergy_category?: 'drug' | 'food' | 'environmental' | null;
+    /**
+     * Source Language
+     */
+    source_language?: string;
+    /**
+     * Assertion State
+     */
+    assertion_state?: 'active' | 'superseded';
+    /**
+     * Superseded By Assertion Id
+     */
+    superseded_by_assertion_id?: string | null;
+    /**
+     * Superseded At
+     */
+    superseded_at?: string | null;
+    /**
      * Clinical Status
      */
     clinical_status: string;
@@ -294,6 +741,26 @@ export type ClinicalFactAssertionPublic = {
      * Provenance Pointer Id
      */
     provenance_pointer_id: string;
+    /**
+     * Medication
+     */
+    medication?: string | null;
+    /**
+     * Dose Value
+     */
+    dose_value?: number | null;
+    /**
+     * Dose Unit
+     */
+    dose_unit?: string | null;
+    /**
+     * Route
+     */
+    route?: string | null;
+    /**
+     * Frequency
+     */
+    frequency?: string | null;
 };
 
 /**
@@ -348,6 +815,26 @@ export type ClinicalFactPublic = {
      * Stale
      */
     stale: boolean;
+    /**
+     * Medication
+     */
+    medication?: string | null;
+    /**
+     * Dose Value
+     */
+    dose_value?: number | null;
+    /**
+     * Dose Unit
+     */
+    dose_unit?: string | null;
+    /**
+     * Route
+     */
+    route?: string | null;
+    /**
+     * Frequency
+     */
+    frequency?: string | null;
 };
 
 /**
@@ -370,10 +857,7 @@ export type ClinicalGlanceCard = {
      * Pinned
      */
     pinned: boolean;
-    /**
-     * Risk Reason
-     */
-    risk_reason: string;
+    risk_reason: RiskReason;
     /**
      * Provenance Pointer Id
      */
@@ -410,6 +894,30 @@ export type ClinicalGlanceCard = {
      * Abstention Reason
      */
     abstention_reason?: string | null;
+    /**
+     * Support State
+     */
+    support_state?: 'current' | 'historical' | 'superseded';
+    /**
+     * Fallback Kind
+     */
+    fallback_kind?: 'stored' | 'rule_derived' | null;
+    /**
+     * Support Review Required
+     */
+    support_review_required?: boolean;
+    /**
+     * Current Priority Eligible
+     */
+    current_priority_eligible?: boolean;
+    /**
+     * Current Confidence State
+     */
+    current_confidence_state?: 'qualified' | 'unavailable' | 'review_required';
+    /**
+     * Current Confidence Reasons
+     */
+    current_confidence_reasons?: Array<string>;
 };
 
 /**
@@ -436,6 +944,42 @@ export type ClinicalGlancePublic = {
      * Review Cards
      */
     review_cards?: Array<ClinicalGlanceCard>;
+    /**
+     * Importance Mode
+     */
+    importance_mode: 'disabled' | 'shadow' | 'active';
+    /**
+     * Freshness State
+     */
+    freshness_state?: 'fresh' | 'stale' | 'unavailable';
+    /**
+     * Age Seconds
+     */
+    age_seconds?: number;
+    /**
+     * Provider Outage
+     */
+    provider_outage?: boolean;
+    /**
+     * Outage Message
+     */
+    outage_message?: string | null;
+    /**
+     * Fallback Kind
+     */
+    fallback_kind?: 'stored' | 'rule_derived' | null;
+    /**
+     * Safety Review Required
+     */
+    safety_review_required?: boolean;
+    /**
+     * Current Confidence State
+     */
+    current_confidence_state?: 'qualified' | 'unavailable' | 'review_required';
+    /**
+     * Current Confidence Reasons
+     */
+    current_confidence_reasons?: Array<string>;
 };
 
 /**
@@ -525,6 +1069,10 @@ export type CommentPublic = {
      */
     assigned_membership_id: string | null;
     /**
+     * Revision
+     */
+    revision: number;
+    /**
      * Mentioned User Ids
      */
     mentioned_user_ids?: Array<string>;
@@ -590,6 +1138,94 @@ export type ConflictPublic = {
      * Created At
      */
     created_at: string;
+    /**
+     * Left Assertion Scope
+     */
+    left_assertion_scope?: string | null;
+    /**
+     * Right Assertion Scope
+     */
+    right_assertion_scope?: string | null;
+    /**
+     * Left Polarity
+     */
+    left_polarity?: string | null;
+    /**
+     * Right Polarity
+     */
+    right_polarity?: string | null;
+    /**
+     * Left Allergy Category
+     */
+    left_allergy_category?: 'drug' | 'food' | 'environmental' | null;
+    /**
+     * Right Allergy Category
+     */
+    right_allergy_category?: 'drug' | 'food' | 'environmental' | null;
+    /**
+     * Left Origin
+     */
+    left_origin?: string | null;
+    /**
+     * Right Origin
+     */
+    right_origin?: string | null;
+    /**
+     * Left Source Role
+     */
+    left_source_role?: string | null;
+    /**
+     * Right Source Role
+     */
+    right_source_role?: string | null;
+    /**
+     * Left Source Language
+     */
+    left_source_language?: string | null;
+    /**
+     * Right Source Language
+     */
+    right_source_language?: string | null;
+    /**
+     * Left Assertion State
+     */
+    left_assertion_state?: 'active' | 'superseded' | null;
+    /**
+     * Right Assertion State
+     */
+    right_assertion_state?: 'active' | 'superseded' | null;
+    /**
+     * Left Effective Time
+     */
+    left_effective_time?: string | null;
+    /**
+     * Right Effective Time
+     */
+    right_effective_time?: string | null;
+    /**
+     * Left Recorded At
+     */
+    left_recorded_at?: string | null;
+    /**
+     * Right Recorded At
+     */
+    right_recorded_at?: string | null;
+    /**
+     * Review Required
+     */
+    review_required?: boolean;
+    /**
+     * Safety Review State
+     */
+    safety_review_state?: 'ready' | 'review_required' | 'critical_unresolved';
+    /**
+     * Current Confidence State
+     */
+    current_confidence_state?: 'qualified' | 'unavailable' | 'review_required';
+    /**
+     * Current Confidence Reasons
+     */
+    current_confidence_reasons?: Array<string>;
 };
 
 /**
@@ -732,6 +1368,22 @@ export type DecisionExplanationPublic = {
      * Abstention Reason
      */
     abstention_reason: string | null;
+    /**
+     * Current Confidence State
+     */
+    current_confidence_state?: 'qualified' | 'unavailable' | 'review_required';
+    /**
+     * Confidence Qualification Reasons
+     */
+    confidence_qualification_reasons?: Array<string>;
+    /**
+     * Confidence Qualified At
+     */
+    confidence_qualified_at?: string | null;
+    /**
+     * Safety Review Required
+     */
+    safety_review_required?: boolean;
 };
 
 /**
@@ -760,6 +1412,58 @@ export type DiffPublic = {
      * Unified Diff
      */
     unified_diff: string;
+};
+
+/**
+ * EditorPresenceHeartbeatCreate
+ *
+ * A content-free signal that an actor is editing one immutable version.
+ */
+export type EditorPresenceHeartbeatCreate = {
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+};
+
+/**
+ * EditorPresencePublic
+ *
+ * Short-lived editor identity projection delivered over clinic SSE.
+ */
+export type EditorPresencePublic = {
+    /**
+     * Clinic Id
+     */
+    clinic_id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Entry Id
+     */
+    entry_id: string;
+    /**
+     * Entry Version Id
+     */
+    entry_version_id: string;
+    /**
+     * Actor Id
+     */
+    actor_id: string;
+    /**
+     * Actor Role
+     */
+    actor_role: 'staff' | 'clinician';
+    /**
+     * Actor Display Name
+     */
+    actor_display_name: string;
+    /**
+     * Expires At
+     */
+    expires_at: string;
 };
 
 /**
@@ -997,6 +1701,42 @@ export type GlancePublic = {
      * Cards
      */
     cards: Array<PatientGlanceCard>;
+    /**
+     * Importance Mode
+     */
+    importance_mode: 'disabled' | 'shadow' | 'active';
+    /**
+     * Freshness State
+     */
+    freshness_state?: 'fresh' | 'stale' | 'unavailable';
+    /**
+     * Age Seconds
+     */
+    age_seconds?: number;
+    /**
+     * Provider Outage
+     */
+    provider_outage?: boolean;
+    /**
+     * Outage Message
+     */
+    outage_message?: string | null;
+    /**
+     * Fallback Kind
+     */
+    fallback_kind?: 'stored' | 'rule_derived' | null;
+    /**
+     * Safety Review Required
+     */
+    safety_review_required?: boolean;
+    /**
+     * Current Confidence State
+     */
+    current_confidence_state?: 'qualified' | 'unavailable' | 'review_required';
+    /**
+     * Current Confidence Reasons
+     */
+    current_confidence_reasons?: Array<string>;
 };
 
 /**
@@ -1127,10 +1867,7 @@ export type HighlightPublic = {
      * Final Score
      */
     final_score: number;
-    /**
-     * Risk Reason
-     */
-    risk_reason: string;
+    risk_reason: RiskReason;
     /**
      * Unresolved
      */
@@ -1143,6 +1880,232 @@ export type HighlightPublic = {
      * Provenance Pointer Id
      */
     provenance_pointer_id: string;
+    /**
+     * Support State
+     */
+    support_state?: 'current' | 'historical' | 'superseded';
+    /**
+     * Support Review Required
+     */
+    support_review_required?: boolean;
+    /**
+     * Current Priority Eligible
+     */
+    current_priority_eligible?: boolean;
+    /**
+     * Safety Review Required
+     */
+    safety_review_required?: boolean;
+    /**
+     * Current Confidence State
+     */
+    current_confidence_state?: 'qualified' | 'unavailable' | 'review_required';
+    /**
+     * Current Confidence Reasons
+     */
+    current_confidence_reasons?: Array<string>;
+};
+
+/**
+ * HighlightSupportReviewPublic
+ */
+export type HighlightSupportReviewPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Highlight Id
+     */
+    highlight_id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Source Entry Version Id
+     */
+    source_entry_version_id: string;
+    /**
+     * Observed Current Version Id
+     */
+    observed_current_version_id: string;
+    /**
+     * Support State
+     */
+    support_state: 'current' | 'historical' | 'superseded';
+    /**
+     * Review Status
+     */
+    review_status: 'pending' | 'reaffirmed' | 'superseded';
+    /**
+     * Reviewed At
+     */
+    reviewed_at: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * ImportanceExposureQualificationReportPublic
+ */
+export type ImportanceExposureQualificationReportPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Report Version
+     */
+    report_version: string;
+    /**
+     * Window Start
+     */
+    window_start: string;
+    /**
+     * Window End
+     */
+    window_end: string;
+    /**
+     * Source Candidate Set Count
+     */
+    source_candidate_set_count: number;
+    /**
+     * Candidate Count
+     */
+    candidate_count: number;
+    /**
+     * Telemetry Count
+     */
+    telemetry_count: number;
+    /**
+     * Displayed Count
+     */
+    displayed_count: number;
+    /**
+     * Protected Candidate Count
+     */
+    protected_candidate_count: number;
+    /**
+     * Protected Displayed Count
+     */
+    protected_displayed_count: number;
+    /**
+     * Ordinary Candidate Count
+     */
+    ordinary_candidate_count: number;
+    /**
+     * Ordinary Displayed Count
+     */
+    ordinary_displayed_count: number;
+    /**
+     * Protected Recall
+     */
+    protected_recall: number;
+    /**
+     * Ordinary Recall
+     */
+    ordinary_recall: number;
+    /**
+     * Ordinary Exposure Rate
+     */
+    ordinary_exposure_rate: number;
+    /**
+     * Missing Telemetry Count
+     */
+    missing_telemetry_count: number;
+    /**
+     * Duplicate Telemetry Count
+     */
+    duplicate_telemetry_count: number;
+    /**
+     * Surfaces
+     */
+    surfaces: {
+        [key: string]: ImportanceExposureSurfacePublic;
+    };
+    /**
+     * Qualified
+     */
+    qualified: boolean;
+    /**
+     * Qualification Reasons
+     */
+    qualification_reasons?: Array<string>;
+    /**
+     * Current
+     */
+    current: boolean;
+    /**
+     * Current Reasons
+     */
+    current_reasons?: Array<string>;
+    /**
+     * Effective Mode
+     */
+    effective_mode: 'disabled' | 'shadow' | 'active';
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
+ * ImportanceExposureReportCreate
+ */
+export type ImportanceExposureReportCreate = {
+    /**
+     * Window Hours
+     */
+    window_hours?: number;
+};
+
+/**
+ * ImportanceExposureSurfacePublic
+ */
+export type ImportanceExposureSurfacePublic = {
+    /**
+     * Candidate Count
+     */
+    candidate_count: number;
+    /**
+     * Telemetry Count
+     */
+    telemetry_count: number;
+    /**
+     * Displayed Count
+     */
+    displayed_count: number;
+    /**
+     * Protected Candidate Count
+     */
+    protected_candidate_count: number;
+    /**
+     * Protected Displayed Count
+     */
+    protected_displayed_count: number;
+    /**
+     * Ordinary Candidate Count
+     */
+    ordinary_candidate_count: number;
+    /**
+     * Ordinary Displayed Count
+     */
+    ordinary_displayed_count: number;
+    /**
+     * Missing Telemetry Count
+     */
+    missing_telemetry_count: number;
+    /**
+     * Duplicate Telemetry Count
+     */
+    duplicate_telemetry_count: number;
 };
 
 /**
@@ -1178,7 +2141,7 @@ export type ImportanceImpressionCreate = {
     /**
      * Surface
      */
-    surface?: string;
+    surface?: 'current_priorities' | 'clinical_review';
     /**
      * Exposure Probability
      */
@@ -1234,6 +2197,52 @@ export type JobPublic = {
      * Updated At
      */
     updated_at: string;
+    /**
+     * Error Class
+     */
+    error_class?: string | null;
+    /**
+     * Next Run At
+     */
+    next_run_at?: string | null;
+    /**
+     * Provider Outage
+     */
+    provider_outage?: boolean;
+    /**
+     * Retry History
+     */
+    retry_history?: Array<{
+        [key: string]: unknown;
+    }>;
+    /**
+     * Delayed At
+     */
+    delayed_at?: string | null;
+    /**
+     * Timed Out At
+     */
+    timed_out_at?: string | null;
+    /**
+     * Last Attempt At
+     */
+    last_attempt_at?: string | null;
+    /**
+     * Outage Started At
+     */
+    outage_started_at?: string | null;
+    /**
+     * Outage Age Seconds
+     */
+    outage_age_seconds?: number;
+    /**
+     * Retry After Seconds
+     */
+    retry_after_seconds?: number | null;
+    /**
+     * Visible State
+     */
+    visible_state?: 'queued' | 'running' | 'delayed' | 'timed_out' | 'failed' | null;
 };
 
 /**
@@ -1277,7 +2286,7 @@ export type MePublic = {
     /**
      * Email
      */
-    email: string;
+    email: string | null;
     /**
      * Full Name
      */
@@ -1302,6 +2311,40 @@ export type MePublic = {
      * Role
      */
     role: 'patient' | 'staff' | 'clinician' | 'admin' | 'worker';
+};
+
+/**
+ * MedicationReviewAttestation
+ */
+export type MedicationReviewAttestation = {
+    /**
+     * Assertion Id
+     */
+    assertion_id: string;
+    /**
+     * Medication
+     */
+    medication: string;
+    /**
+     * Dose Value
+     */
+    dose_value?: number | null;
+    /**
+     * Dose Unit
+     */
+    dose_unit?: string | null;
+    /**
+     * Route
+     */
+    route?: string | null;
+    /**
+     * Frequency
+     */
+    frequency?: string | null;
+    /**
+     * Confirmed
+     */
+    confirmed?: boolean;
 };
 
 /**
@@ -1437,6 +2480,339 @@ export type Message = {
 };
 
 /**
+ * NotificationAttemptPublic
+ */
+export type NotificationAttemptPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Notification Id
+     */
+    notification_id: string;
+    /**
+     * Attempt No
+     */
+    attempt_no: number;
+    /**
+     * Provider
+     */
+    provider: string;
+    /**
+     * Provider Message Id
+     */
+    provider_message_id: string | null;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Error Class
+     */
+    error_class: string | null;
+    /**
+     * Error Code
+     */
+    error_code: string | null;
+    /**
+     * Started At
+     */
+    started_at: string;
+    /**
+     * Completed At
+     */
+    completed_at: string | null;
+};
+
+/**
+ * NotificationPublic
+ */
+export type NotificationPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string | null;
+    /**
+     * Visit Id
+     */
+    visit_id: string | null;
+    /**
+     * Publication Id
+     */
+    publication_id: string | null;
+    /**
+     * Purpose
+     */
+    purpose: string;
+    /**
+     * Channel
+     */
+    channel: 'email' | 'sms' | 'whatsapp' | 'portal';
+    /**
+     * Destination Masked
+     */
+    destination_masked: string;
+    /**
+     * State
+     */
+    state: 'queued' | 'submitted' | 'delivered' | 'failed' | 'acknowledged' | 'revoked';
+    /**
+     * Available At
+     */
+    available_at: string;
+    /**
+     * Submitted At
+     */
+    submitted_at: string | null;
+    /**
+     * Delivered At
+     */
+    delivered_at: string | null;
+    /**
+     * Failed At
+     */
+    failed_at: string | null;
+    /**
+     * Acknowledged At
+     */
+    acknowledged_at: string | null;
+    /**
+     * Revoked At
+     */
+    revoked_at: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+    /**
+     * Attempt Count
+     */
+    attempt_count?: number;
+    /**
+     * Attempts
+     */
+    attempts?: Array<NotificationAttemptPublic>;
+    /**
+     * Receipts
+     */
+    receipts?: Array<NotificationReceiptPublic>;
+};
+
+/**
+ * NotificationReceiptPublic
+ */
+export type NotificationReceiptPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Notification Id
+     */
+    notification_id: string;
+    /**
+     * Provider
+     */
+    provider: string;
+    /**
+     * Provider Event Id
+     */
+    provider_event_id: string;
+    /**
+     * Provider Message Id
+     */
+    provider_message_id: string;
+    /**
+     * Event Type
+     */
+    event_type: string;
+    /**
+     * Signature Verified
+     */
+    signature_verified: boolean;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Received At
+     */
+    received_at: string;
+};
+
+/**
+ * NotificationResendRequest
+ */
+export type NotificationResendRequest = {
+    /**
+     * Channel
+     */
+    channel?: 'email' | 'sms' | 'whatsapp' | 'portal' | null;
+    /**
+     * Destination
+     */
+    destination?: string | null;
+};
+
+/**
+ * PatientAccessEnrollStartRequest
+ */
+export type PatientAccessEnrollStartRequest = {
+    /**
+     * Invitation Token
+     */
+    invitation_token: string;
+    /**
+     * Claim Code
+     */
+    claim_code: string;
+    /**
+     * Phone
+     */
+    phone: string;
+};
+
+/**
+ * PatientAccessLoginStartRequest
+ */
+export type PatientAccessLoginStartRequest = {
+    /**
+     * Portal Id
+     */
+    portal_id: string;
+};
+
+/**
+ * PatientAccessProvisionCreate
+ */
+export type PatientAccessProvisionCreate = {
+    /**
+     * Phone
+     */
+    phone: string;
+    /**
+     * Channel
+     */
+    channel?: 'sms' | 'whatsapp';
+};
+
+/**
+ * PatientAccessProvisionPublic
+ */
+export type PatientAccessProvisionPublic = {
+    access: PatientAccessPublic;
+    /**
+     * Invitation Token
+     */
+    invitation_token: string;
+    /**
+     * Claim Code
+     */
+    claim_code: string;
+    /**
+     * Claim Code Expires At
+     */
+    claim_code_expires_at: string;
+    /**
+     * Notification Id
+     */
+    notification_id: string;
+    /**
+     * Notification State
+     */
+    notification_state: 'queued' | 'submitted' | 'delivered' | 'failed' | 'acknowledged' | 'revoked';
+};
+
+/**
+ * PatientAccessPublic
+ */
+export type PatientAccessPublic = {
+    /**
+     * Credential Id
+     */
+    credential_id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Clinic Id
+     */
+    clinic_id: string;
+    /**
+     * Portal Id
+     */
+    portal_id: string;
+    /**
+     * Masked Phone
+     */
+    masked_phone: string;
+    /**
+     * Access State
+     */
+    access_state: 'pending' | 'active' | 'revoked';
+};
+
+/**
+ * PatientAccessRecoveryCreate
+ */
+export type PatientAccessRecoveryCreate = {
+    /**
+     * Phone
+     */
+    phone: string;
+    /**
+     * Channel
+     */
+    channel?: 'sms' | 'whatsapp';
+    /**
+     * Reason Code
+     */
+    reason_code?: string;
+};
+
+/**
+ * PatientAccessRevokeRequest
+ */
+export type PatientAccessRevokeRequest = {
+    /**
+     * Reason Code
+     */
+    reason_code?: string;
+};
+
+/**
+ * PatientAccessVerifyPublic
+ */
+export type PatientAccessVerifyPublic = {
+    access: PatientAccessPublic;
+    token: Token;
+};
+
+/**
+ * PatientAccessVerifyRequest
+ */
+export type PatientAccessVerifyRequest = {
+    /**
+     * Challenge Token
+     */
+    challenge_token: string;
+    /**
+     * Otp
+     */
+    otp: string;
+};
+
+/**
  * PatientCreate
  */
 export type PatientCreate = {
@@ -1490,6 +2866,10 @@ export type PatientDetailPublic = {
      * Same Name Count
      */
     same_name_count?: number;
+    /**
+     * Today Visit Id
+     */
+    today_visit_id?: string | null;
     /**
      * Today Visit At
      */
@@ -1584,6 +2964,18 @@ export type PatientGlanceCard = {
      * Provenance Pointer Id
      */
     provenance_pointer_id: string;
+    /**
+     * Support State
+     */
+    support_state?: 'current' | 'historical' | 'superseded';
+    /**
+     * Support Review Required
+     */
+    support_review_required?: boolean;
+    /**
+     * Current Priority Eligible
+     */
+    current_priority_eligible?: boolean;
 };
 
 /**
@@ -1671,6 +3063,92 @@ export type PatientInvitationPreviewRequest = {
 };
 
 /**
+ * PatientOTPChallengePublic
+ */
+export type PatientOTPChallengePublic = {
+    /**
+     * Challenge Id
+     */
+    challenge_id: string;
+    /**
+     * Challenge Token
+     */
+    challenge_token: string;
+    /**
+     * Purpose
+     */
+    purpose: 'enrollment' | 'login' | 'recovery' | 'phone_change';
+    /**
+     * Portal Id
+     */
+    portal_id: string;
+    /**
+     * Masked Phone
+     */
+    masked_phone: string;
+    /**
+     * Expires At
+     */
+    expires_at: string;
+    /**
+     * Resend Available At
+     */
+    resend_available_at: string;
+    /**
+     * Attempts Remaining
+     */
+    attempts_remaining: number;
+    /**
+     * Notification Id
+     */
+    notification_id: string;
+    /**
+     * Delivery State
+     */
+    delivery_state: 'queued' | 'submitted' | 'delivered' | 'failed' | 'acknowledged' | 'revoked';
+};
+
+/**
+ * PatientOTPResendRequest
+ */
+export type PatientOTPResendRequest = {
+    /**
+     * Challenge Token
+     */
+    challenge_token: string;
+};
+
+/**
+ * PatientPortalEventPublic
+ */
+export type PatientPortalEventPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Event Type
+     */
+    event_type: string;
+    /**
+     * Aggregate Type
+     */
+    aggregate_type: string;
+    /**
+     * Aggregate Id
+     */
+    aggregate_id: string;
+    /**
+     * Created At
+     */
+    created_at: string;
+};
+
+/**
  * PatientPortalInvitationCreate
  */
 export type PatientPortalInvitationCreate = {
@@ -1695,7 +3173,7 @@ export type PatientPortalInvitationPublic = {
     /**
      * Email
      */
-    email: string;
+    email: string | null;
     /**
      * State
      */
@@ -1708,6 +3186,14 @@ export type PatientPortalInvitationPublic = {
      * Created At
      */
     created_at: string;
+    /**
+     * Notification Id
+     */
+    notification_id?: string | null;
+    /**
+     * Notification State
+     */
+    notification_state?: 'queued' | 'submitted' | 'delivered' | 'failed' | 'acknowledged' | 'revoked' | null;
 };
 
 /**
@@ -1735,6 +3221,10 @@ export type PatientPublic = {
      */
     same_name_count?: number;
     /**
+     * Today Visit Id
+     */
+    today_visit_id?: string | null;
+    /**
      * Today Visit At
      */
     today_visit_at?: string | null;
@@ -1753,6 +3243,68 @@ export type PatientPublic = {
 };
 
 /**
+ * PatientPublicationAcknowledgementCreate
+ */
+export type PatientPublicationAcknowledgementCreate = {
+    /**
+     * Event Type
+     */
+    event_type?: 'opened' | 'acknowledged';
+    /**
+     * Notification Id
+     */
+    notification_id?: string | null;
+};
+
+/**
+ * PatientPublicationAcknowledgementPublic
+ */
+export type PatientPublicationAcknowledgementPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Publication Id
+     */
+    publication_id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Channel
+     */
+    channel: string;
+    /**
+     * Event Type
+     */
+    event_type: string;
+    /**
+     * Acknowledged At
+     */
+    acknowledged_at: string;
+};
+
+/**
+ * PatientPublicationCorrectionCreate
+ */
+export type PatientPublicationCorrectionCreate = {
+    /**
+     * Replacement Entry Version Id
+     */
+    replacement_entry_version_id: string;
+    /**
+     * Medication Reviews
+     */
+    medication_reviews?: Array<MedicationReviewAttestation>;
+    /**
+     * Outreach Required
+     */
+    outreach_required?: true;
+};
+
+/**
  * PatientPublicationCreate
  */
 export type PatientPublicationCreate = {
@@ -1764,6 +3316,14 @@ export type PatientPublicationCreate = {
      * Sharing Request Id
      */
     sharing_request_id?: string | null;
+    /**
+     * Medication Reviews
+     */
+    medication_reviews?: Array<MedicationReviewAttestation>;
+    /**
+     * Correction Reason Code
+     */
+    correction_reason_code?: string | null;
 };
 
 /**
@@ -1816,12 +3376,54 @@ export type PatientPublicationPublic = {
     items?: Array<{
         [key: string]: unknown;
     }>;
+    /**
+     * Medication Review Complete
+     */
+    medication_review_complete?: boolean;
+    /**
+     * Medication Reviews
+     */
+    medication_reviews?: Array<{
+        [key: string]: unknown;
+    }>;
+    /**
+     * Correction Reason Code
+     */
+    correction_reason_code?: string | null;
+    /**
+     * Replacement Publication Id
+     */
+    replacement_publication_id?: string | null;
+    /**
+     * Acknowledgement State
+     */
+    acknowledgement_state?: 'not_required' | 'pending' | 'acknowledged';
+    /**
+     * Outreach Required
+     */
+    outreach_required?: boolean;
+    /**
+     * Notification Id
+     */
+    notification_id?: string | null;
+    /**
+     * Notification State
+     */
+    notification_state?: 'queued' | 'submitted' | 'delivered' | 'failed' | 'acknowledged' | 'revoked' | null;
+    /**
+     * Delivery Warning
+     */
+    delivery_warning?: 'notification_queue_failed' | 'notification_delivery_failed' | 'notification_revoked' | null;
 };
 
 /**
  * PatientPublicationReceiptPublic
  */
 export type PatientPublicationReceiptPublic = {
+    /**
+     * Publication Id
+     */
+    publication_id: string;
     /**
      * Entry Title
      */
@@ -1842,6 +3444,40 @@ export type PatientPublicationReceiptPublic = {
      * Status
      */
     status: 'active' | 'withdrawn';
+    /**
+     * Replacement Publication Id
+     */
+    replacement_publication_id?: string | null;
+    /**
+     * Acknowledged At
+     */
+    acknowledged_at?: string | null;
+    /**
+     * Outreach Status
+     */
+    outreach_status?: string | null;
+    /**
+     * Acknowledgement State
+     */
+    acknowledgement_state?: 'not_required' | 'pending' | 'acknowledged';
+    /**
+     * Outreach Required
+     */
+    outreach_required?: boolean;
+    /**
+     * Replacement Entry Title
+     */
+    replacement_entry_title?: string | null;
+};
+
+/**
+ * PatientSharingApprovalCreate
+ */
+export type PatientSharingApprovalCreate = {
+    /**
+     * Medication Reviews
+     */
+    medication_reviews?: Array<MedicationReviewAttestation>;
 };
 
 /**
@@ -2010,6 +3646,28 @@ export type PatientsPublic = {
 };
 
 /**
+ * PatientsSearchRequest
+ */
+export type PatientsSearchRequest = {
+    /**
+     * Search
+     */
+    search?: string | null;
+    /**
+     * Visit Scope
+     */
+    visit_scope?: 'all' | 'today' | 'previous';
+    /**
+     * Offset
+     */
+    offset?: number;
+    /**
+     * Limit
+     */
+    limit?: number;
+};
+
+/**
  * PlatformAuditPublic
  */
 export type PlatformAuditPublic = {
@@ -2037,6 +3695,10 @@ export type PlatformAuditPublic = {
      * Created At
      */
     created_at: string;
+    /**
+     * Reason Code
+     */
+    reason_code?: string;
 };
 
 /**
@@ -2189,6 +3851,162 @@ export type ProvenanceResolved = {
      * Audio End Ms
      */
     audio_end_ms: number | null;
+    /**
+     * Support State
+     */
+    support_state?: 'current' | 'historical' | 'superseded';
+};
+
+/**
+ * ProviderCallbackCreate
+ */
+export type ProviderCallbackCreate = {
+    /**
+     * Notification Id
+     */
+    notification_id: string;
+    /**
+     * Provider Event Id
+     */
+    provider_event_id: string;
+    /**
+     * Provider Message Id
+     */
+    provider_message_id: string;
+    /**
+     * Event Type
+     */
+    event_type: 'submitted' | 'delivered' | 'failed' | 'bounced' | 'undeliverable' | 'acknowledged';
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+};
+
+/**
+ * ProvisionalSafetyAlertPublic
+ */
+export type ProvisionalSafetyAlertPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Source Event Id
+     */
+    source_event_id: string;
+    /**
+     * Source Start Offset
+     */
+    source_start_offset: number;
+    /**
+     * Source End Offset
+     */
+    source_end_offset: number;
+    /**
+     * Source Language
+     */
+    source_language: string;
+    /**
+     * Concept Code
+     */
+    concept_code: string;
+    /**
+     * Assertion Scope
+     */
+    assertion_scope: string;
+    /**
+     * Polarity
+     */
+    polarity: string;
+    /**
+     * Severity
+     */
+    severity: string;
+    /**
+     * State
+     */
+    state: 'pending' | 'confirmed' | 'dismissed' | 'superseded';
+    /**
+     * Completed Segment At
+     */
+    completed_segment_at: string;
+    /**
+     * Detected At
+     */
+    detected_at: string;
+    /**
+     * Reviewed At
+     */
+    reviewed_at: string | null;
+    /**
+     * Review Reason Code
+     */
+    review_reason_code: string | null;
+    /**
+     * Confirmed Assertion Id
+     */
+    confirmed_assertion_id: string | null;
+};
+
+/**
+ * ProvisionalSafetyAlertReviewRequest
+ */
+export type ProvisionalSafetyAlertReviewRequest = {
+    /**
+     * Reason Code
+     */
+    reason_code?: string | null;
+};
+
+/**
+ * PublicationCorrectionOutreachPublic
+ */
+export type PublicationCorrectionOutreachPublic = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Patient Id
+     */
+    patient_id: string;
+    /**
+     * Withdrawn Publication Id
+     */
+    withdrawn_publication_id: string;
+    /**
+     * Replacement Publication Id
+     */
+    replacement_publication_id: string | null;
+    /**
+     * Notification Id
+     */
+    notification_id: string | null;
+    /**
+     * Status
+     */
+    status: string;
+    /**
+     * Due At
+     */
+    due_at: string | null;
+    /**
+     * Completed At
+     */
+    completed_at: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
 };
 
 /**
@@ -2218,6 +4036,13 @@ export type ReviewRequestCreate = {
      */
     reason: string;
 };
+
+/**
+ * RiskReason
+ *
+ * Exhaustive, PHI-free reason codes exposed by ranking projections.
+ */
+export type RiskReason = 'critical' | 'unresolved' | 'clinician_confirmed' | 'clinical_entity' | 'clinic_feedback' | 'recency' | 'clinician_accepted' | 'care_plan_conflict' | 'clinician_confirmed_follow_up' | 'medication_status_conflict' | 'open_medication_reconciliation' | 'scheduled_follow_up' | 'synthetic_dataset_recent_encounter' | 'unavailable_review_required';
 
 /**
  * TeamMemberPublic
@@ -2281,6 +4106,36 @@ export type TranscriptCorrection = {
      * Text
      */
     text: string;
+};
+
+/**
+ * TranscriptLanguageSpanPublic
+ */
+export type TranscriptLanguageSpanPublic = {
+    /**
+     * Start Offset
+     */
+    start_offset: number;
+    /**
+     * End Offset
+     */
+    end_offset: number;
+    /**
+     * Language Code
+     */
+    language_code: 'en' | 'ms' | 'nan' | 'zh' | 'cmn' | 'und';
+    /**
+     * Confidence
+     */
+    confidence?: number | null;
+    /**
+     * Detection Source
+     */
+    detection_source: 'provider_hint' | 'lexicon_rule' | 'lexicon_and_provider' | 'mixed_rule' | 'unavailable' | 'human_review';
+    /**
+     * Review Required
+     */
+    review_required?: boolean;
 };
 
 /**
@@ -2398,9 +4253,25 @@ export type TranscriptSegmentPublic = {
      */
     speaker_id: string | null;
     /**
+     * Speaker Ids
+     */
+    speaker_ids?: Array<string>;
+    /**
      * Detected Language
      */
     detected_language: string | null;
+    /**
+     * Source Language
+     */
+    source_language?: string;
+    /**
+     * Language Confidence
+     */
+    language_confidence?: number | null;
+    /**
+     * Language Spans
+     */
+    language_spans?: Array<TranscriptLanguageSpanPublic>;
     /**
      * Confidence
      */
@@ -2649,6 +4520,10 @@ export type VoicePublishRequest = {
      * Expected Revision Id
      */
     expected_revision_id: string;
+    /**
+     * Medication Reviews
+     */
+    medication_reviews?: Array<MedicationReviewAttestation>;
 };
 
 /**
@@ -2680,6 +4555,16 @@ export type VoiceReanalyzeRequest = {
 };
 
 /**
+ * VoiceRemoteAudioConsentUpdate
+ */
+export type VoiceRemoteAudioConsentUpdate = {
+    /**
+     * Consent
+     */
+    consent: boolean;
+};
+
+/**
  * VoiceSessionCreate
  */
 export type VoiceSessionCreate = {
@@ -2699,6 +4584,10 @@ export type VoiceSessionCreate = {
      * Fixture Id
      */
     fixture_id?: string | null;
+    /**
+     * Remote Audio Consent
+     */
+    remote_audio_consent?: boolean;
 };
 
 /**
@@ -2749,6 +4638,14 @@ export type VoiceSessionPublic = {
      * Published Entry Id
      */
     published_entry_id?: string | null;
+    /**
+     * Remote Audio Consent Recorded
+     */
+    remote_audio_consent_recorded?: boolean;
+    /**
+     * Remote Audio Consent At
+     */
+    remote_audio_consent_at?: string | null;
     /**
      * Created At
      */
@@ -3041,6 +4938,171 @@ export type adminAuditEventsResponses = {
 
 export type adminAuditEventsResponse = adminAuditEventsResponses[keyof adminAuditEventsResponses];
 
+export type adminFormularyListFormularyVersionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/formulary/versions';
+};
+
+export type adminFormularyListFormularyVersionsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminFormularyListFormularyVersionsError = adminFormularyListFormularyVersionsErrors[keyof adminFormularyListFormularyVersionsErrors];
+
+export type adminFormularyListFormularyVersionsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClinicFormularyVersionsPublic;
+};
+
+export type adminFormularyListFormularyVersionsResponse = adminFormularyListFormularyVersionsResponses[keyof adminFormularyListFormularyVersionsResponses];
+
+export type adminFormularyCreateFormularyVersionData = {
+    body: ClinicFormularyVersionCreate;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/formulary/versions';
+};
+
+export type adminFormularyCreateFormularyVersionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminFormularyCreateFormularyVersionError = adminFormularyCreateFormularyVersionErrors[keyof adminFormularyCreateFormularyVersionErrors];
+
+export type adminFormularyCreateFormularyVersionResponses = {
+    /**
+     * Successful Response
+     */
+    201: ClinicFormularyVersionPublic;
+};
+
+export type adminFormularyCreateFormularyVersionResponse = adminFormularyCreateFormularyVersionResponses[keyof adminFormularyCreateFormularyVersionResponses];
+
+export type adminFormularyReadFormularyVersionData = {
+    body?: never;
+    path: {
+        /**
+         * Version Id
+         */
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/formulary/versions/{version_id}';
+};
+
+export type adminFormularyReadFormularyVersionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminFormularyReadFormularyVersionError = adminFormularyReadFormularyVersionErrors[keyof adminFormularyReadFormularyVersionErrors];
+
+export type adminFormularyReadFormularyVersionResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClinicFormularyVersionPublic;
+};
+
+export type adminFormularyReadFormularyVersionResponse = adminFormularyReadFormularyVersionResponses[keyof adminFormularyReadFormularyVersionResponses];
+
+export type adminFormularyReadFormularyReadinessData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/formulary/readiness';
+};
+
+export type adminFormularyReadFormularyReadinessErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminFormularyReadFormularyReadinessError = adminFormularyReadFormularyReadinessErrors[keyof adminFormularyReadFormularyReadinessErrors];
+
+export type adminFormularyReadFormularyReadinessResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClinicFormularyReadinessPublic;
+};
+
+export type adminFormularyReadFormularyReadinessResponse = adminFormularyReadFormularyReadinessResponses[keyof adminFormularyReadFormularyReadinessResponses];
+
+export type adminFormularyQualifyFormularyVersionData = {
+    body: ClinicFormularyQualificationRequest;
+    path: {
+        /**
+         * Version Id
+         */
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/formulary/versions/{version_id}/qualify';
+};
+
+export type adminFormularyQualifyFormularyVersionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminFormularyQualifyFormularyVersionError = adminFormularyQualifyFormularyVersionErrors[keyof adminFormularyQualifyFormularyVersionErrors];
+
+export type adminFormularyQualifyFormularyVersionResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClinicFormularyVersionPublic;
+};
+
+export type adminFormularyQualifyFormularyVersionResponse = adminFormularyQualifyFormularyVersionResponses[keyof adminFormularyQualifyFormularyVersionResponses];
+
+export type adminFormularyActivateFormularyVersionData = {
+    body: ClinicFormularyQualificationRequest;
+    path: {
+        /**
+         * Version Id
+         */
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/formulary/versions/{version_id}/activate';
+};
+
+export type adminFormularyActivateFormularyVersionErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type adminFormularyActivateFormularyVersionError = adminFormularyActivateFormularyVersionErrors[keyof adminFormularyActivateFormularyVersionErrors];
+
+export type adminFormularyActivateFormularyVersionResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClinicFormularyVersionPublic;
+};
+
+export type adminFormularyActivateFormularyVersionResponse = adminFormularyActivateFormularyVersionResponses[keyof adminFormularyActivateFormularyVersionResponses];
+
 export type aiIngestData = {
     body: AIIngestRequest;
     headers: {
@@ -3221,10 +5283,6 @@ export type patientsPatientsData = {
     path?: never;
     query?: {
         /**
-         * Search
-         */
-        search?: string | null;
-        /**
          * Visit Scope
          */
         visit_scope?: 'all' | 'today' | 'previous';
@@ -3399,6 +5457,196 @@ export type authAcceptPatientInvitationResponses = {
 
 export type authAcceptPatientInvitationResponse = authAcceptPatientInvitationResponses[keyof authAcceptPatientInvitationResponses];
 
+export type patientAccessBeginPatientEnrollmentData = {
+    body: PatientAccessEnrollStartRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/patient-access/enroll/start';
+};
+
+export type patientAccessBeginPatientEnrollmentErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientAccessBeginPatientEnrollmentError = patientAccessBeginPatientEnrollmentErrors[keyof patientAccessBeginPatientEnrollmentErrors];
+
+export type patientAccessBeginPatientEnrollmentResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientOTPChallengePublic;
+};
+
+export type patientAccessBeginPatientEnrollmentResponse = patientAccessBeginPatientEnrollmentResponses[keyof patientAccessBeginPatientEnrollmentResponses];
+
+export type patientAccessBeginPatientLoginData = {
+    body: PatientAccessLoginStartRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/patient-access/login/start';
+};
+
+export type patientAccessBeginPatientLoginErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientAccessBeginPatientLoginError = patientAccessBeginPatientLoginErrors[keyof patientAccessBeginPatientLoginErrors];
+
+export type patientAccessBeginPatientLoginResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientOTPChallengePublic;
+};
+
+export type patientAccessBeginPatientLoginResponse = patientAccessBeginPatientLoginResponses[keyof patientAccessBeginPatientLoginResponses];
+
+export type patientAccessResendPatientOtpData = {
+    body: PatientOTPResendRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/patient-access/resend';
+};
+
+export type patientAccessResendPatientOtpErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientAccessResendPatientOtpError = patientAccessResendPatientOtpErrors[keyof patientAccessResendPatientOtpErrors];
+
+export type patientAccessResendPatientOtpResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientOTPChallengePublic;
+};
+
+export type patientAccessResendPatientOtpResponse = patientAccessResendPatientOtpResponses[keyof patientAccessResendPatientOtpResponses];
+
+export type patientAccessVerifyPatientOtpData = {
+    body: PatientAccessVerifyRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/patient-access/verify';
+};
+
+export type patientAccessVerifyPatientOtpErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientAccessVerifyPatientOtpError = patientAccessVerifyPatientOtpErrors[keyof patientAccessVerifyPatientOtpErrors];
+
+export type patientAccessVerifyPatientOtpResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientAccessVerifyPublic;
+};
+
+export type patientAccessVerifyPatientOtpResponse = patientAccessVerifyPatientOtpResponses[keyof patientAccessVerifyPatientOtpResponses];
+
+export type patientAccessProvisionPatientAccessData = {
+    body: PatientAccessProvisionCreate;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/patient-access';
+};
+
+export type patientAccessProvisionPatientAccessErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientAccessProvisionPatientAccessError = patientAccessProvisionPatientAccessErrors[keyof patientAccessProvisionPatientAccessErrors];
+
+export type patientAccessProvisionPatientAccessResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientAccessProvisionPublic;
+};
+
+export type patientAccessProvisionPatientAccessResponse = patientAccessProvisionPatientAccessResponses[keyof patientAccessProvisionPatientAccessResponses];
+
+export type patientAccessRevokePatientAccessData = {
+    body: PatientAccessRevokeRequest;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/patient-access/revoke';
+};
+
+export type patientAccessRevokePatientAccessErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientAccessRevokePatientAccessError = patientAccessRevokePatientAccessErrors[keyof patientAccessRevokePatientAccessErrors];
+
+export type patientAccessRevokePatientAccessResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientAccessPublic;
+};
+
+export type patientAccessRevokePatientAccessResponse = patientAccessRevokePatientAccessResponses[keyof patientAccessRevokePatientAccessResponses];
+
+export type patientAccessRecoverPatientAccessData = {
+    body: PatientAccessRecoveryCreate;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/patient-access/recover';
+};
+
+export type patientAccessRecoverPatientAccessErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientAccessRecoverPatientAccessError = patientAccessRecoverPatientAccessErrors[keyof patientAccessRecoverPatientAccessErrors];
+
+export type patientAccessRecoverPatientAccessResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientAccessProvisionPublic;
+};
+
+export type patientAccessRecoverPatientAccessResponse = patientAccessRecoverPatientAccessResponses[keyof patientAccessRecoverPatientAccessResponses];
+
 export type platformPlatformLoginData = {
     body: PlatformLogin;
     path?: never;
@@ -3495,6 +5743,72 @@ export type platformPlatformClinicsResponses = {
 };
 
 export type platformPlatformClinicsResponse = platformPlatformClinicsResponses[keyof platformPlatformClinicsResponses];
+
+export type platformClinicOnboardingPreflightData = {
+    body: ClinicOnboardingCreate;
+    headers?: {
+        /**
+         * X-Request-Id
+         */
+        'X-Request-ID'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/platform/clinics/preflight';
+};
+
+export type platformClinicOnboardingPreflightErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type platformClinicOnboardingPreflightError = platformClinicOnboardingPreflightErrors[keyof platformClinicOnboardingPreflightErrors];
+
+export type platformClinicOnboardingPreflightResponses = {
+    /**
+     * Successful Response
+     */
+    200: ClinicPreflightPublic;
+};
+
+export type platformClinicOnboardingPreflightResponse = platformClinicOnboardingPreflightResponses[keyof platformClinicOnboardingPreflightResponses];
+
+export type platformOnboardClinicData = {
+    body: ClinicOnboardingCreate;
+    headers?: {
+        /**
+         * X-Request-Id
+         */
+        'X-Request-ID'?: string | null;
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/platform/clinics/onboard';
+};
+
+export type platformOnboardClinicErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type platformOnboardClinicError = platformOnboardClinicErrors[keyof platformOnboardClinicErrors];
+
+export type platformOnboardClinicResponses = {
+    /**
+     * Successful Response
+     */
+    201: PlatformClinicPublic;
+};
+
+export type platformOnboardClinicResponse = platformOnboardClinicResponses[keyof platformOnboardClinicResponses];
 
 export type platformPlatformPatientsData = {
     body?: never;
@@ -3598,6 +5912,31 @@ export type platformPlatformAuditLogResponses = {
 };
 
 export type platformPlatformAuditLogResponse = platformPlatformAuditLogResponses[keyof platformPlatformAuditLogResponses];
+
+export type patientsSearchPatientsData = {
+    body: PatientsSearchRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/patients/search';
+};
+
+export type patientsSearchPatientsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type patientsSearchPatientsError = patientsSearchPatientsErrors[keyof patientsSearchPatientsErrors];
+
+export type patientsSearchPatientsResponses = {
+    /**
+     * Successful Response
+     */
+    200: PatientsPublic;
+};
+
+export type patientsSearchPatientsResponse = patientsSearchPatientsResponses[keyof patientsSearchPatientsResponses];
 
 export type patientsPatientTimelineData = {
     body?: never;
@@ -3960,6 +6299,12 @@ export type collaborationListCommentsResponse = collaborationListCommentsRespons
 
 export type collaborationCreateCommentData = {
     body: CommentCreate;
+    headers?: {
+        /**
+         * If-Match
+         */
+        'If-Match'?: string | null;
+    };
     path: {
         /**
          * Entry Id
@@ -3988,8 +6333,44 @@ export type collaborationCreateCommentResponses = {
 
 export type collaborationCreateCommentResponse = collaborationCreateCommentResponses[keyof collaborationCreateCommentResponses];
 
+export type collaborationHeartbeatEditorPresenceData = {
+    body: EditorPresenceHeartbeatCreate;
+    path: {
+        /**
+         * Entry Id
+         */
+        entry_id: string;
+    };
+    query?: never;
+    url: '/api/v1/entries/{entry_id}/presence';
+};
+
+export type collaborationHeartbeatEditorPresenceErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type collaborationHeartbeatEditorPresenceError = collaborationHeartbeatEditorPresenceErrors[keyof collaborationHeartbeatEditorPresenceErrors];
+
+export type collaborationHeartbeatEditorPresenceResponses = {
+    /**
+     * Successful Response
+     */
+    200: EditorPresencePublic;
+};
+
+export type collaborationHeartbeatEditorPresenceResponse = collaborationHeartbeatEditorPresenceResponses[keyof collaborationHeartbeatEditorPresenceResponses];
+
 export type collaborationReplyData = {
     body: CommentCreate;
+    headers?: {
+        /**
+         * If-Match
+         */
+        'If-Match'?: string | null;
+    };
     path: {
         /**
          * Comment Id
@@ -4020,6 +6401,12 @@ export type collaborationReplyResponse = collaborationReplyResponses[keyof colla
 
 export type collaborationResolveData = {
     body?: never;
+    headers?: {
+        /**
+         * If-Match
+         */
+        'If-Match'?: string | null;
+    };
     path: {
         /**
          * Comment Id
@@ -4050,6 +6437,12 @@ export type collaborationResolveResponse = collaborationResolveResponses[keyof c
 
 export type collaborationUnresolveData = {
     body?: never;
+    headers?: {
+        /**
+         * If-Match
+         */
+        'If-Match'?: string | null;
+    };
     path: {
         /**
          * Comment Id
@@ -4080,6 +6473,12 @@ export type collaborationUnresolveResponse = collaborationUnresolveResponses[key
 
 export type collaborationAssignData = {
     body: AssignmentUpdate;
+    headers?: {
+        /**
+         * If-Match
+         */
+        'If-Match'?: string | null;
+    };
     path: {
         /**
          * Comment Id
@@ -4246,6 +6645,98 @@ export type trustPinResponses = {
 
 export type trustPinResponse = trustPinResponses[keyof trustPinResponses];
 
+export type trustReaffirmHighlightSupportData = {
+    body?: never;
+    path: {
+        /**
+         * Highlight Id
+         */
+        highlight_id: string;
+    };
+    query?: never;
+    url: '/api/v1/highlights/{highlight_id}/support-review/reaffirm';
+};
+
+export type trustReaffirmHighlightSupportErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustReaffirmHighlightSupportError = trustReaffirmHighlightSupportErrors[keyof trustReaffirmHighlightSupportErrors];
+
+export type trustReaffirmHighlightSupportResponses = {
+    /**
+     * Successful Response
+     */
+    200: HighlightPublic;
+};
+
+export type trustReaffirmHighlightSupportResponse = trustReaffirmHighlightSupportResponses[keyof trustReaffirmHighlightSupportResponses];
+
+export type trustSupersedeHighlightSupportData = {
+    body?: never;
+    path: {
+        /**
+         * Highlight Id
+         */
+        highlight_id: string;
+    };
+    query?: never;
+    url: '/api/v1/highlights/{highlight_id}/support-review/supersede';
+};
+
+export type trustSupersedeHighlightSupportErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustSupersedeHighlightSupportError = trustSupersedeHighlightSupportErrors[keyof trustSupersedeHighlightSupportErrors];
+
+export type trustSupersedeHighlightSupportResponses = {
+    /**
+     * Successful Response
+     */
+    200: HighlightPublic;
+};
+
+export type trustSupersedeHighlightSupportResponse = trustSupersedeHighlightSupportResponses[keyof trustSupersedeHighlightSupportResponses];
+
+export type trustListHighlightSupportReviewsData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/highlight-support-reviews';
+};
+
+export type trustListHighlightSupportReviewsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustListHighlightSupportReviewsError = trustListHighlightSupportReviewsErrors[keyof trustListHighlightSupportReviewsErrors];
+
+export type trustListHighlightSupportReviewsResponses = {
+    /**
+     * Response Trust-List Highlight Support Reviews
+     *
+     * Successful Response
+     */
+    200: Array<HighlightSupportReviewPublic>;
+};
+
+export type trustListHighlightSupportReviewsResponse = trustListHighlightSupportReviewsResponses[keyof trustListHighlightSupportReviewsResponses];
+
 export type trustFeedbackData = {
     body: ImportanceFeedbackCreate;
     headers: {
@@ -4366,6 +6857,56 @@ export type trustRecordImportanceImpressionResponses = {
 };
 
 export type trustRecordImportanceImpressionResponse = trustRecordImportanceImpressionResponses[keyof trustRecordImportanceImpressionResponses];
+
+export type trustCreateImportanceExposureReportData = {
+    body: ImportanceExposureReportCreate;
+    path?: never;
+    query?: never;
+    url: '/api/v1/importance/exposure-reports';
+};
+
+export type trustCreateImportanceExposureReportErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustCreateImportanceExposureReportError = trustCreateImportanceExposureReportErrors[keyof trustCreateImportanceExposureReportErrors];
+
+export type trustCreateImportanceExposureReportResponses = {
+    /**
+     * Successful Response
+     */
+    201: ImportanceExposureQualificationReportPublic;
+};
+
+export type trustCreateImportanceExposureReportResponse = trustCreateImportanceExposureReportResponses[keyof trustCreateImportanceExposureReportResponses];
+
+export type trustCurrentImportanceExposureReportData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/importance/exposure-reports/current';
+};
+
+export type trustCurrentImportanceExposureReportErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustCurrentImportanceExposureReportError = trustCurrentImportanceExposureReportErrors[keyof trustCurrentImportanceExposureReportErrors];
+
+export type trustCurrentImportanceExposureReportResponses = {
+    /**
+     * Successful Response
+     */
+    200: ImportanceExposureQualificationReportPublic;
+};
+
+export type trustCurrentImportanceExposureReportResponse = trustCurrentImportanceExposureReportResponses[keyof trustCurrentImportanceExposureReportResponses];
 
 export type trustProvenanceResolveData = {
     body?: never;
@@ -4615,8 +7156,47 @@ export type trustPublishForPatientResponses = {
 
 export type trustPublishForPatientResponse = trustPublishForPatientResponses[keyof trustPublishForPatientResponses];
 
+export type trustCorrectPatientPublicationData = {
+    body: PatientPublicationCorrectionCreate;
+    headers: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key': string;
+    };
+    path: {
+        /**
+         * Publication Id
+         */
+        publication_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patient-publications/{publication_id}/correct';
+};
+
+export type trustCorrectPatientPublicationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustCorrectPatientPublicationError = trustCorrectPatientPublicationErrors[keyof trustCorrectPatientPublicationErrors];
+
+export type trustCorrectPatientPublicationResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientPublicationPublic;
+};
+
+export type trustCorrectPatientPublicationResponse = trustCorrectPatientPublicationResponses[keyof trustCorrectPatientPublicationResponses];
+
 export type trustApprovePatientSharingRequestData = {
-    body?: never;
+    /**
+     * Body
+     */
+    body?: PatientSharingApprovalCreate | null;
     path: {
         /**
          * Request Id
@@ -4644,6 +7224,142 @@ export type trustApprovePatientSharingRequestResponses = {
 };
 
 export type trustApprovePatientSharingRequestResponse = trustApprovePatientSharingRequestResponses[keyof trustApprovePatientSharingRequestResponses];
+
+export type trustAcknowledgePatientPublicationData = {
+    body: PatientPublicationAcknowledgementCreate;
+    path: {
+        /**
+         * Publication Id
+         */
+        publication_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patient-publications/{publication_id}/acknowledgements';
+};
+
+export type trustAcknowledgePatientPublicationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustAcknowledgePatientPublicationError = trustAcknowledgePatientPublicationErrors[keyof trustAcknowledgePatientPublicationErrors];
+
+export type trustAcknowledgePatientPublicationResponses = {
+    /**
+     * Successful Response
+     */
+    201: PatientPublicationAcknowledgementPublic;
+};
+
+export type trustAcknowledgePatientPublicationResponse = trustAcknowledgePatientPublicationResponses[keyof trustAcknowledgePatientPublicationResponses];
+
+export type trustListPatientPortalEventsData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: {
+        /**
+         * Since
+         */
+        since?: string | null;
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/api/v1/patients/{patient_id}/portal-events';
+};
+
+export type trustListPatientPortalEventsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustListPatientPortalEventsError = trustListPatientPortalEventsErrors[keyof trustListPatientPortalEventsErrors];
+
+export type trustListPatientPortalEventsResponses = {
+    /**
+     * Response Trust-List Patient Portal Events
+     *
+     * Successful Response
+     */
+    200: Array<PatientPortalEventPublic>;
+};
+
+export type trustListPatientPortalEventsResponse = trustListPatientPortalEventsResponses[keyof trustListPatientPortalEventsResponses];
+
+export type trustStreamPatientPortalEventsData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: {
+        /**
+         * Since
+         */
+        since?: string | null;
+    };
+    url: '/api/v1/patients/{patient_id}/portal-events/stream';
+};
+
+export type trustStreamPatientPortalEventsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustStreamPatientPortalEventsError = trustStreamPatientPortalEventsErrors[keyof trustStreamPatientPortalEventsErrors];
+
+export type trustStreamPatientPortalEventsResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
+export type trustListPublicationCorrectionOutreachData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/publication-correction-outreach';
+};
+
+export type trustListPublicationCorrectionOutreachErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type trustListPublicationCorrectionOutreachError = trustListPublicationCorrectionOutreachErrors[keyof trustListPublicationCorrectionOutreachErrors];
+
+export type trustListPublicationCorrectionOutreachResponses = {
+    /**
+     * Response Trust-List Publication Correction Outreach
+     *
+     * Successful Response
+     */
+    200: Array<PublicationCorrectionOutreachPublic>;
+};
+
+export type trustListPublicationCorrectionOutreachResponse = trustListPublicationCorrectionOutreachResponses[keyof trustListPublicationCorrectionOutreachResponses];
 
 export type trustWithdrawPatientPublicationData = {
     body?: never;
@@ -4708,6 +7424,321 @@ export type eventsEventStreamResponses = {
      */
     200: unknown;
 };
+
+export type notificationsListAppointmentNotificationsData = {
+    body?: never;
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+        /**
+         * Visit Id
+         */
+        visit_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/visits/{visit_id}/notifications';
+};
+
+export type notificationsListAppointmentNotificationsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsListAppointmentNotificationsError = notificationsListAppointmentNotificationsErrors[keyof notificationsListAppointmentNotificationsErrors];
+
+export type notificationsListAppointmentNotificationsResponses = {
+    /**
+     * Response Notifications-List Appointment Notifications
+     *
+     * Successful Response
+     */
+    200: Array<NotificationPublic>;
+};
+
+export type notificationsListAppointmentNotificationsResponse = notificationsListAppointmentNotificationsResponses[keyof notificationsListAppointmentNotificationsResponses];
+
+export type notificationsCreateAppointmentNotificationData = {
+    body: AppointmentDeliveryCreate;
+    headers?: {
+        /**
+         * Idempotency-Key
+         */
+        'Idempotency-Key'?: string | null;
+    };
+    path: {
+        /**
+         * Patient Id
+         */
+        patient_id: string;
+        /**
+         * Visit Id
+         */
+        visit_id: string;
+    };
+    query?: never;
+    url: '/api/v1/patients/{patient_id}/visits/{visit_id}/notifications';
+};
+
+export type notificationsCreateAppointmentNotificationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsCreateAppointmentNotificationError = notificationsCreateAppointmentNotificationErrors[keyof notificationsCreateAppointmentNotificationErrors];
+
+export type notificationsCreateAppointmentNotificationResponses = {
+    /**
+     * Successful Response
+     */
+    201: NotificationPublic;
+};
+
+export type notificationsCreateAppointmentNotificationResponse = notificationsCreateAppointmentNotificationResponses[keyof notificationsCreateAppointmentNotificationResponses];
+
+export type notificationsNotificationDeliveryWorklistData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * State
+         */
+        state?: 'attention' | 'queued' | 'submitted' | 'failed';
+        /**
+         * Limit
+         */
+        limit?: number;
+    };
+    url: '/api/v1/notifications/worklist';
+};
+
+export type notificationsNotificationDeliveryWorklistErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsNotificationDeliveryWorklistError = notificationsNotificationDeliveryWorklistErrors[keyof notificationsNotificationDeliveryWorklistErrors];
+
+export type notificationsNotificationDeliveryWorklistResponses = {
+    /**
+     * Response Notifications-Notification Delivery Worklist
+     *
+     * Successful Response
+     */
+    200: Array<NotificationPublic>;
+};
+
+export type notificationsNotificationDeliveryWorklistResponse = notificationsNotificationDeliveryWorklistResponses[keyof notificationsNotificationDeliveryWorklistResponses];
+
+export type notificationsReadNotificationData = {
+    body?: never;
+    path: {
+        /**
+         * Notification Id
+         */
+        notification_id: string;
+    };
+    query?: never;
+    url: '/api/v1/notifications/{notification_id}';
+};
+
+export type notificationsReadNotificationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsReadNotificationError = notificationsReadNotificationErrors[keyof notificationsReadNotificationErrors];
+
+export type notificationsReadNotificationResponses = {
+    /**
+     * Successful Response
+     */
+    200: NotificationPublic;
+};
+
+export type notificationsReadNotificationResponse = notificationsReadNotificationResponses[keyof notificationsReadNotificationResponses];
+
+export type notificationsResendNotificationData = {
+    /**
+     * Body
+     */
+    body?: NotificationResendRequest | null;
+    path: {
+        /**
+         * Notification Id
+         */
+        notification_id: string;
+    };
+    query?: never;
+    url: '/api/v1/notifications/{notification_id}/resend';
+};
+
+export type notificationsResendNotificationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsResendNotificationError = notificationsResendNotificationErrors[keyof notificationsResendNotificationErrors];
+
+export type notificationsResendNotificationResponses = {
+    /**
+     * Successful Response
+     */
+    200: NotificationPublic;
+};
+
+export type notificationsResendNotificationResponse = notificationsResendNotificationResponses[keyof notificationsResendNotificationResponses];
+
+export type notificationsRevokeNotificationData = {
+    body?: never;
+    path: {
+        /**
+         * Notification Id
+         */
+        notification_id: string;
+    };
+    query?: never;
+    url: '/api/v1/notifications/{notification_id}/revoke';
+};
+
+export type notificationsRevokeNotificationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsRevokeNotificationError = notificationsRevokeNotificationErrors[keyof notificationsRevokeNotificationErrors];
+
+export type notificationsRevokeNotificationResponses = {
+    /**
+     * Successful Response
+     */
+    200: NotificationPublic;
+};
+
+export type notificationsRevokeNotificationResponse = notificationsRevokeNotificationResponses[keyof notificationsRevokeNotificationResponses];
+
+export type notificationsAcknowledgeNotificationData = {
+    body?: never;
+    path: {
+        /**
+         * Notification Id
+         */
+        notification_id: string;
+    };
+    query?: never;
+    url: '/api/v1/notifications/{notification_id}/acknowledge';
+};
+
+export type notificationsAcknowledgeNotificationErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsAcknowledgeNotificationError = notificationsAcknowledgeNotificationErrors[keyof notificationsAcknowledgeNotificationErrors];
+
+export type notificationsAcknowledgeNotificationResponses = {
+    /**
+     * Successful Response
+     */
+    200: NotificationPublic;
+};
+
+export type notificationsAcknowledgeNotificationResponse = notificationsAcknowledgeNotificationResponses[keyof notificationsAcknowledgeNotificationResponses];
+
+export type notificationsProviderCallbackData = {
+    body: ProviderCallbackCreate;
+    headers: {
+        /**
+         * X-Notification-Signature
+         */
+        'X-Notification-Signature': string;
+    };
+    path: {
+        /**
+         * Clinic Id
+         */
+        clinic_id: string;
+        /**
+         * Provider
+         */
+        provider: string;
+    };
+    query?: never;
+    url: '/api/v1/notification-webhooks/{clinic_id}/{provider}';
+};
+
+export type notificationsProviderCallbackErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsProviderCallbackError = notificationsProviderCallbackErrors[keyof notificationsProviderCallbackErrors];
+
+export type notificationsProviderCallbackResponses = {
+    /**
+     * Successful Response
+     */
+    200: NotificationPublic;
+};
+
+export type notificationsProviderCallbackResponse = notificationsProviderCallbackResponses[keyof notificationsProviderCallbackResponses];
+
+export type notificationsTwilioProviderCallbackData = {
+    body?: never;
+    headers?: {
+        /**
+         * X-Twilio-Signature
+         */
+        'X-Twilio-Signature'?: string | null;
+    };
+    path: {
+        /**
+         * Clinic Id
+         */
+        clinic_id: string;
+        /**
+         * Notification Id
+         */
+        notification_id: string;
+    };
+    query?: never;
+    url: '/api/v1/notification-webhooks/twilio/{clinic_id}/{notification_id}';
+};
+
+export type notificationsTwilioProviderCallbackErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type notificationsTwilioProviderCallbackError = notificationsTwilioProviderCallbackErrors[keyof notificationsTwilioProviderCallbackErrors];
+
+export type notificationsTwilioProviderCallbackResponses = {
+    /**
+     * Successful Response
+     */
+    200: NotificationPublic;
+};
+
+export type notificationsTwilioProviderCallbackResponse = notificationsTwilioProviderCallbackResponses[keyof notificationsTwilioProviderCallbackResponses];
 
 export type decayPreviewData = {
     body?: never;
@@ -4843,6 +7874,66 @@ export type voiceSessionStatusResponses = {
 };
 
 export type voiceSessionStatusResponse = voiceSessionStatusResponses[keyof voiceSessionStatusResponses];
+
+export type voiceSetRemoteAudioConsentData = {
+    body: VoiceRemoteAudioConsentUpdate;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/remote-audio-consent';
+};
+
+export type voiceSetRemoteAudioConsentErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceSetRemoteAudioConsentError = voiceSetRemoteAudioConsentErrors[keyof voiceSetRemoteAudioConsentErrors];
+
+export type voiceSetRemoteAudioConsentResponses = {
+    /**
+     * Successful Response
+     */
+    200: VoiceSessionPublic;
+};
+
+export type voiceSetRemoteAudioConsentResponse = voiceSetRemoteAudioConsentResponses[keyof voiceSetRemoteAudioConsentResponses];
+
+export type voiceSessionJobStatusData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/job';
+};
+
+export type voiceSessionJobStatusErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceSessionJobStatusError = voiceSessionJobStatusErrors[keyof voiceSessionJobStatusErrors];
+
+export type voiceSessionJobStatusResponses = {
+    /**
+     * Successful Response
+     */
+    200: JobPublic;
+};
+
+export type voiceSessionJobStatusResponse = voiceSessionJobStatusResponses[keyof voiceSessionJobStatusResponses];
 
 export type voiceJoinDeviceData = {
     body: VoiceDeviceJoin;
@@ -5245,3 +8336,95 @@ export type voiceLiveStatusResponses = {
 };
 
 export type voiceLiveStatusResponse = voiceLiveStatusResponses[keyof voiceLiveStatusResponses];
+
+export type voiceListLiveSafetyAlertsData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/sessions/{session_id}/safety-alerts';
+};
+
+export type voiceListLiveSafetyAlertsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceListLiveSafetyAlertsError = voiceListLiveSafetyAlertsErrors[keyof voiceListLiveSafetyAlertsErrors];
+
+export type voiceListLiveSafetyAlertsResponses = {
+    /**
+     * Response Voice-List Live Safety Alerts
+     *
+     * Successful Response
+     */
+    200: Array<ProvisionalSafetyAlertPublic>;
+};
+
+export type voiceListLiveSafetyAlertsResponse = voiceListLiveSafetyAlertsResponses[keyof voiceListLiveSafetyAlertsResponses];
+
+export type voiceConfirmLiveSafetyAlertData = {
+    body: ProvisionalSafetyAlertReviewRequest;
+    path: {
+        /**
+         * Alert Id
+         */
+        alert_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/safety-alerts/{alert_id}/confirm';
+};
+
+export type voiceConfirmLiveSafetyAlertErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceConfirmLiveSafetyAlertError = voiceConfirmLiveSafetyAlertErrors[keyof voiceConfirmLiveSafetyAlertErrors];
+
+export type voiceConfirmLiveSafetyAlertResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProvisionalSafetyAlertPublic;
+};
+
+export type voiceConfirmLiveSafetyAlertResponse = voiceConfirmLiveSafetyAlertResponses[keyof voiceConfirmLiveSafetyAlertResponses];
+
+export type voiceDismissLiveSafetyAlertData = {
+    body: ProvisionalSafetyAlertReviewRequest;
+    path: {
+        /**
+         * Alert Id
+         */
+        alert_id: string;
+    };
+    query?: never;
+    url: '/api/v1/voice/safety-alerts/{alert_id}/dismiss';
+};
+
+export type voiceDismissLiveSafetyAlertErrors = {
+    /**
+     * Validation Error
+     */
+    422: HTTPValidationError;
+};
+
+export type voiceDismissLiveSafetyAlertError = voiceDismissLiveSafetyAlertErrors[keyof voiceDismissLiveSafetyAlertErrors];
+
+export type voiceDismissLiveSafetyAlertResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProvisionalSafetyAlertPublic;
+};
+
+export type voiceDismissLiveSafetyAlertResponse = voiceDismissLiveSafetyAlertResponses[keyof voiceDismissLiveSafetyAlertResponses];

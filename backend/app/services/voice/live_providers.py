@@ -25,11 +25,13 @@ class LiveTranscriptEvent:
     kind: Literal["ready", "delta", "completed"]
     text: str = ""
     item_id: str | None = None
+    source_language: str | None = None
 
 
 class LiveTranscriptionConnection(Protocol):
     provider_name: str
     model: str
+    remote_audio_egress_required: bool
 
     async def send_audio(self, pcm16: bytes) -> None: ...
 
@@ -82,6 +84,7 @@ def _json_message(payload: dict[str, object]) -> str:
 
 class OpenAILiveTranscriptionConnection:
     provider_name = "openai-realtime"
+    remote_audio_egress_required = True
 
     def __init__(
         self,
@@ -107,10 +110,19 @@ class OpenAILiveTranscriptionConnection:
                                 "format": {"type": "audio/pcm", "rate": 24_000},
                                 "transcription": {
                                     "model": self.model,
-                                    "languages": ["en", "zh", "cmn"],
+                                    "languages": ["en", "ms", "nan", "zh", "cmn"],
                                     "delay": "low",
                                 },
-                                "turn_detection": None,
+                                # Completed turns must arrive while capture is
+                                # still running so provisional safety rules can
+                                # fire within seconds, not only after the final
+                                # recording commit.
+                                "turn_detection": {
+                                    "type": "server_vad",
+                                    "threshold": 0.5,
+                                    "prefix_padding_ms": 300,
+                                    "silence_duration_ms": 500,
+                                },
                             }
                         },
                     },
@@ -171,6 +183,9 @@ class OpenAILiveTranscriptionConnection:
                     item_id=(
                         str(payload["item_id"]) if payload.get("item_id") else None
                     ),
+                    source_language=(
+                        str(payload["language"]) if payload.get("language") else None
+                    ),
                 )
             if event_type == "conversation.item.input_audio_transcription.completed":
                 transcript = payload.get("transcript")
@@ -183,6 +198,9 @@ class OpenAILiveTranscriptionConnection:
                     text=transcript,
                     item_id=(
                         str(payload["item_id"]) if payload.get("item_id") else None
+                    ),
+                    source_language=(
+                        str(payload["language"]) if payload.get("language") else None
                     ),
                 )
             if event_type == "error":
@@ -257,6 +275,7 @@ class OpenAILiveTranscriptionProvider:
 
 class DeterministicLiveTranscriptionConnection:
     provider_name = "deterministic-synthetic-fixture"
+    remote_audio_egress_required = False
 
     def __init__(self, *, model: str, max_frame_bytes: int) -> None:
         self.model = model
@@ -264,11 +283,12 @@ class DeterministicLiveTranscriptionConnection:
         self._events: asyncio.Queue[LiveTranscriptEvent] = asyncio.Queue()
         self._pieces = iter(
             (
-                "Patient reports a penicillin allergy. ",
-                "医生会复核 medication and breathing difficulty.",
+                ("Patient reports a penicillin allergy.", "en"),
+                ("医生会复核 medication and breathing difficulty.", "zh"),
             )
         )
         self._text = ""
+        self._turn_no = 0
         self._committed = False
         self._closed = False
         self._events.put_nowait(LiveTranscriptEvent(kind="ready"))
@@ -278,12 +298,29 @@ class DeterministicLiveTranscriptionConnection:
             raise LiveTranscriptionError("LIVE_TRANSCRIPT_ALREADY_COMMITTED")
         if not pcm16 or len(pcm16) % 2 != 0 or len(pcm16) > self.max_frame_bytes:
             raise LiveTranscriptionError("LIVE_TRANSCRIPT_FRAME_INVALID")
-        piece = next(self._pieces, "")
+        piece, language = next(self._pieces, ("", "und"))
         if piece:
+            self._turn_no += 1
+            if self._text:
+                self._text += " "
             self._text += piece
+            item_id = f"synthetic-live-turn-{self._turn_no}"
             await self._events.put(
                 LiveTranscriptEvent(
-                    kind="delta", text=piece, item_id="synthetic-live-turn-1"
+                    kind="delta",
+                    text=piece,
+                    item_id=item_id,
+                    source_language=language,
+                )
+            )
+            # Model server VAD by completing each bounded turn before the
+            # browser issues its final session commit.
+            await self._events.put(
+                LiveTranscriptEvent(
+                    kind="completed",
+                    text=piece,
+                    item_id=item_id,
+                    source_language=language,
                 )
             )
 
@@ -295,7 +332,8 @@ class DeterministicLiveTranscriptionConnection:
             LiveTranscriptEvent(
                 kind="completed",
                 text=self._text.strip(),
-                item_id="synthetic-live-turn-1",
+                item_id="synthetic-live-final",
+                source_language="multilingual",
             )
         )
 

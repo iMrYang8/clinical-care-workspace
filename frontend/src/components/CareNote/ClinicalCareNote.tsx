@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import {
   type ClinicalGlanceCard,
@@ -42,14 +42,23 @@ import {
   type ClinicalTimelineEntry,
   clinicalApi,
   type DismissReason,
+  type PatientPortalInvitationResult,
 } from "@/features/api"
+import {
+  type EditorPresenceRecord,
+  editorPresenceFromDomainEvent,
+  editorPresenceKey,
+} from "@/features/editorPresence"
 import { patientRouteReferenceFromId } from "@/features/routeReferences"
 import { useDomainEvents } from "@/hooks/useDomainEvents"
 import { formatSingaporeDate, formatSingaporeDateTime } from "@/lib/dateTime"
+import { AppointmentDeliveryPanel } from "./AppointmentDeliveryPanel"
 import { CommentsRail } from "./CommentsRail"
+import { allergyCategoryLabel } from "./conflictPresentation"
 import { EntryComposer } from "./EntryComposer"
 import { GlanceTopCard } from "./GlanceTopCard"
 import { PatientSharingPanel } from "./PatientSharingPanel"
+import { authoritativeSupportState } from "./provenanceSupport"
 import { type SourceFocus, TimelineEntryCard } from "./TimelineEntryCard"
 import { VersionHistoryDrawer } from "./VersionHistoryDrawer"
 
@@ -65,8 +74,11 @@ type EvidenceView = {
   entryOrigin: string
   entrySection: string
   isHistorical: boolean
+  currentEntryContent: string
+  currentEntryTitle: string
   provenance: ProvenanceResolved
   sourceDate: string
+  supportState: "current" | "historical" | "superseded"
 }
 
 function highlightedEvidence(evidence: EvidenceView) {
@@ -99,7 +111,39 @@ export function ClinicalCareNote({
     currentUser.role === "staff" || currentUser.role === "clinician"
   const readOnlyOversight = currentUser.role === "admin"
   const queryClient = useQueryClient()
-  useDomainEvents(canCollaborate, currentUser.clinic_id)
+  const [editorPresence, setEditorPresence] = useState<
+    Record<string, EditorPresenceRecord>
+  >({})
+  const applyEditorPresence = useCallback(
+    (presence: EditorPresenceRecord) => {
+      if (
+        presence.clinic_id !== currentUser.clinic_id ||
+        presence.patient_id !== patientId
+      )
+        return
+      setEditorPresence((current) => {
+        const now = Date.now()
+        const active = Object.fromEntries(
+          Object.entries(current).filter(
+            ([, item]) => Date.parse(item.expires_at) > now,
+          ),
+        )
+        if (Date.parse(presence.expires_at) > now) {
+          active[editorPresenceKey(presence)] = presence
+        }
+        return active
+      })
+    },
+    [currentUser.clinic_id, patientId],
+  )
+  const handleDomainEvent = useCallback(
+    (event: Parameters<typeof editorPresenceFromDomainEvent>[0]) => {
+      const presence = editorPresenceFromDomainEvent(event)
+      if (presence) applyEditorPresence(presence)
+    },
+    [applyEditorPresence],
+  )
+  useDomainEvents(canCollaborate, currentUser.clinic_id, handleDomainEvent)
   const [selectedEntry, setSelectedEntry] =
     useState<ClinicalTimelineEntry | null>(null)
   const [versionEntry, setVersionEntry] =
@@ -108,7 +152,17 @@ export function ClinicalCareNote({
   const [evidence, setEvidence] = useState<EvidenceView | null>(null)
   const [liveMessage, setLiveMessage] = useState("")
   const [portalEmail, setPortalEmail] = useState("")
+  const [portalPhone, setPortalPhone] = useState("")
+  const [portalChannel, setPortalChannel] = useState<
+    "email" | "sms" | "whatsapp"
+  >("sms")
+  const [portalInviteResult, setPortalInviteResult] =
+    useState<PatientPortalInvitationResult | null>(null)
   const [portalInviteOpen, setPortalInviteOpen] = useState(false)
+  const [portalProvisionMode, setPortalProvisionMode] = useState<
+    "invite" | "recover"
+  >("invite")
+  const [portalRevokeOpen, setPortalRevokeOpen] = useState(false)
   const [conflictResolution, setConflictResolution] = useState("")
   const [correctionEntryId, setCorrectionEntryId] = useState("")
   const [resolvingConflictId, setResolvingConflictId] = useState<string | null>(
@@ -161,10 +215,38 @@ export function ClinicalCareNote({
     },
   })
   const inviteMutation = useMutation({
-    mutationFn: () => clinicalApi.invitePatient(patientId, portalEmail),
-    onSuccess: async () => {
+    mutationFn: () => {
+      if (portalProvisionMode === "recover") {
+        if (portalChannel === "email")
+          throw new Error("Phone recovery requires SMS or WhatsApp")
+        return clinicalApi.recoverPatientAccess(patientId, {
+          channel: portalChannel,
+          phone: portalPhone.trim(),
+        })
+      }
+      return portalChannel === "email"
+        ? clinicalApi.invitePatient(patientId, {
+            channel: "email",
+            email: portalEmail.trim(),
+          })
+        : clinicalApi.invitePatient(patientId, {
+            channel: portalChannel,
+            phone: portalPhone.trim(),
+          })
+    },
+    onSuccess: async (result) => {
+      setPortalInviteResult(result)
       setPortalEmail("")
-      setPortalInviteOpen(false)
+      setPortalPhone("")
+      await queryClient.invalidateQueries({
+        queryKey: ["patients", patientId, "detail"],
+      })
+    },
+  })
+  const revokeAccessMutation = useMutation({
+    mutationFn: () => clinicalApi.revokePatientAccess(patientId),
+    onSuccess: async () => {
+      setPortalRevokeOpen(false)
       await queryClient.invalidateQueries({
         queryKey: ["patients", patientId, "detail"],
       })
@@ -176,6 +258,7 @@ export function ClinicalCareNote({
     staleTime: 5 * 60 * 1000,
   })
   const patient = patientDetailQuery.data
+  const hardenedGlance = glanceQuery.data
   const timeline = timelineQuery.data ?? []
   const timelineGroups = useMemo(() => {
     const grouped = new Map<string, ClinicalTimelineEntry[]>()
@@ -284,7 +367,33 @@ export function ClinicalCareNote({
     },
   })
 
-  const showPointer = async (pointerId: string) => {
+  const supportReviewMutation = useMutation({
+    mutationFn: ({
+      card,
+      resolution,
+    }: {
+      card: ClinicalGlanceCard
+      resolution: "reaffirm" | "supersede"
+    }) =>
+      resolution === "reaffirm"
+        ? clinicalApi.reaffirmHighlightSupport(card.highlight_id)
+        : clinicalApi.supersedeHighlightSupport(card.highlight_id),
+    onSuccess: async (_, variables) => {
+      setLiveMessage(
+        variables.resolution === "reaffirm"
+          ? `Historical support reaffirmed for ${variables.card.label}`
+          : `Support superseded for ${variables.card.label}`,
+      )
+      await queryClient.invalidateQueries({
+        queryKey: ["patients", patientId, "glance"],
+      })
+    },
+  })
+
+  const showPointer = async (
+    pointerId: string,
+    declaredSupportState?: "current" | "historical" | "superseded",
+  ) => {
     setLiveMessage("Opening source details…")
     try {
       const provenance = await clinicalApi.resolveProvenance(pointerId)
@@ -293,6 +402,8 @@ export function ClinicalCareNote({
       )
       let entryContent = matchedEntry?.content ?? ""
       let entryTitle = matchedEntry?.title ?? "Historical source"
+      let currentEntryContent = matchedEntry?.content ?? ""
+      let currentEntryTitle = matchedEntry?.title ?? "Current note"
       let authorId = matchedEntry?.author_id ?? null
       let sourceDate =
         matchedEntry?.created_at ?? matchedEntry?.occurred_at ?? ""
@@ -311,6 +422,8 @@ export function ClinicalCareNote({
           .find(({ version }) => version.id === provenance.entry_version_id)
         if (historical) {
           matchedEntry = historical.entry
+          currentEntryContent = historical.entry.content
+          currentEntryTitle = historical.entry.title
           entryContent = historical.version.content
           entryTitle = historical.version.title
           authorId = historical.version.author_id
@@ -328,15 +441,25 @@ export function ClinicalCareNote({
         startOffset: provenance.start_offset,
         endOffset: provenance.end_offset,
       })
+      const sourceVersionIsCurrent =
+        matchedEntry.version_id === provenance.entry_version_id
+      const supportState = authoritativeSupportState(
+        provenance.support_state,
+        declaredSupportState,
+        sourceVersionIsCurrent,
+      )
       setEvidence({
         entryTitle,
         entryContent,
         authorId,
         entryOrigin: matchedEntry.origin,
         entrySection: matchedEntry.section,
+        currentEntryContent,
+        currentEntryTitle,
         sourceDate,
         provenance,
-        isHistorical: matchedEntry.version_id !== provenance.entry_version_id,
+        isHistorical: supportState !== "current" || !sourceVersionIsCurrent,
+        supportState,
       })
       setLiveMessage(`Source opened: ${entryTitle}`)
     } catch (caught) {
@@ -344,7 +467,7 @@ export function ClinicalCareNote({
     }
   }
   const showSource = (card: ClinicalGlanceCard) =>
-    showPointer(card.provenance_pointer_id)
+    showPointer(card.provenance_pointer_id, card.support_state)
 
   if (patientDetailQuery.isLoading || timelineQuery.isLoading) {
     return (
@@ -530,6 +653,9 @@ export function ClinicalCareNote({
                       <li className="relative" key={entry.id}>
                         <span className="absolute -left-[1.7rem] top-8 size-3 rounded-full border-2 border-background bg-primary" />
                         <TimelineEntryCard
+                          editorPresence={Object.values(editorPresence).filter(
+                            (presence) => presence.entry_id === entry.id,
+                          )}
                           authorName={
                             teamQuery.data?.find(
                               (member) => member.user_id === entry.author_id,
@@ -555,6 +681,8 @@ export function ClinicalCareNote({
                           }}
                           onOpenComments={setSelectedEntry}
                           onOpenVersions={setVersionEntry}
+                          onPresence={applyEditorPresence}
+                          onLoadLatest={clinicalApi.readEntry}
                           onSave={async (target, draft) => {
                             await clinicalApi.patchEntry(
                               target.id,
@@ -576,11 +704,20 @@ export function ClinicalCareNote({
 
         <aside className="flex flex-col gap-5 lg:sticky lg:top-24">
           <PatientSharingPanel
+            clinicalFacts={clinicalFactsQuery.data ?? []}
+            clinicalFactsReady={clinicalFactsQuery.isSuccess}
             currentUser={currentUser}
             onChanged={refreshPatient}
             patientId={patientId}
             timeline={timeline}
           />
+          {canCollaborate &&
+            (patient.today_visit_id ?? patient.active_visit_id) && (
+              <AppointmentDeliveryPanel
+                patientId={patientId}
+                visitId={(patient.today_visit_id ?? patient.active_visit_id)!}
+              />
+            )}
           <Card className="order-3 scroll-mt-24" id="structured-context">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-3">
@@ -744,6 +881,107 @@ export function ClinicalCareNote({
                     <p className="text-sm text-muted-foreground">
                       Status: {conflict.status}
                     </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg border bg-card p-2 text-xs leading-5">
+                        <p className="font-semibold">First assertion</p>
+                        <p>
+                          Source:{" "}
+                          {conflict.left_source_role ?? "role unavailable"}
+                          {conflict.left_origin
+                            ? ` · ${conflict.left_origin}`
+                            : " · origin unavailable"}
+                          {conflict.left_source_language
+                            ? ` · ${conflict.left_source_language}`
+                            : ""}
+                        </p>
+                        <p>
+                          Scope:{" "}
+                          {conflict.left_assertion_scope?.replace(/_/g, " ") ??
+                            "unknown"}
+                        </p>
+                        {conflict.fact_type === "allergy" && (
+                          <p>
+                            Category:{" "}
+                            {allergyCategoryLabel(
+                              conflict.left_allergy_category,
+                            )}
+                          </p>
+                        )}
+                        <p>
+                          Polarity: {conflict.left_polarity ?? "unknown"} ·{" "}
+                          {conflict.left_assertion_state ?? "state unavailable"}
+                        </p>
+                        <p>
+                          Effective:{" "}
+                          {conflict.left_effective_time
+                            ? formatSingaporeDateTime(
+                                conflict.left_effective_time,
+                              )
+                            : "not recorded"}
+                        </p>
+                        <p>
+                          Recorded:{" "}
+                          {conflict.left_recorded_at
+                            ? formatSingaporeDateTime(conflict.left_recorded_at)
+                            : "unavailable"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border bg-card p-2 text-xs leading-5">
+                        <p className="font-semibold">Conflicting assertion</p>
+                        <p>
+                          Source:{" "}
+                          {conflict.right_source_role ?? "role unavailable"}
+                          {conflict.right_origin
+                            ? ` · ${conflict.right_origin}`
+                            : " · origin unavailable"}
+                          {conflict.right_source_language
+                            ? ` · ${conflict.right_source_language}`
+                            : ""}
+                        </p>
+                        <p>
+                          Scope:{" "}
+                          {conflict.right_assertion_scope?.replace(/_/g, " ") ??
+                            "unknown"}
+                        </p>
+                        {conflict.fact_type === "allergy" && (
+                          <p>
+                            Category:{" "}
+                            {allergyCategoryLabel(
+                              conflict.right_allergy_category,
+                            )}
+                          </p>
+                        )}
+                        <p>
+                          Polarity: {conflict.right_polarity ?? "unknown"} ·{" "}
+                          {conflict.right_assertion_state ??
+                            "state unavailable"}
+                        </p>
+                        <p>
+                          Effective:{" "}
+                          {conflict.right_effective_time
+                            ? formatSingaporeDateTime(
+                                conflict.right_effective_time,
+                              )
+                            : "not recorded"}
+                        </p>
+                        <p>
+                          Recorded:{" "}
+                          {conflict.right_recorded_at
+                            ? formatSingaporeDateTime(
+                                conflict.right_recorded_at,
+                              )
+                            : "unavailable"}
+                        </p>
+                      </div>
+                    </div>
+                    {conflict.fact_type === "allergy" &&
+                      conflict.status === "unresolved" && (
+                        <p className="text-sm font-medium text-critical-muted-foreground">
+                          Generic NKA/NKDA does not override an active named
+                          allergy. “Not documented” remains unknown. Neither
+                          source wins automatically.
+                        </p>
+                      )}
                     <div className="flex flex-wrap gap-2">
                       {conflict.left_pointer_id && (
                         <Button
@@ -903,45 +1141,89 @@ export function ClinicalCareNote({
                   "not_invited" && (
                   <Button
                     className="w-full"
-                    onClick={() => setPortalInviteOpen(true)}
+                    onClick={() => {
+                      setPortalProvisionMode("invite")
+                      setPortalInviteResult(null)
+                      setPortalInviteOpen(true)
+                    }}
                   >
                     <Send className="size-4" /> Invite patient
                   </Button>
                 )}
                 {patientDetailQuery.data?.portal_access_state === "pending" && (
-                  <p className="text-sm text-muted-foreground">
-                    Invitation pending for up to 24 hours.
-                  </p>
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Invitation pending. Phone claims expire after seven days;
+                      email invitations retain their existing expiry policy.
+                    </p>
+                    <Button
+                      className="w-full"
+                      onClick={() => setPortalRevokeOpen(true)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      Revoke pending access
+                    </Button>
+                  </div>
                 )}
                 {patientDetailQuery.data?.portal_access_state === "active" && (
-                  <p className="text-sm text-success-muted-foreground">
-                    The patient can access approved information.
-                  </p>
+                  <div className="space-y-2">
+                    <p className="text-sm text-success-muted-foreground">
+                      The patient can access approved information.
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Button
+                        onClick={() => {
+                          setPortalProvisionMode("recover")
+                          setPortalChannel("sms")
+                          setPortalInviteResult(null)
+                          setPortalInviteOpen(true)
+                        }}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Recover or change phone
+                      </Button>
+                      <Button
+                        onClick={() => setPortalRevokeOpen(true)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        Revoke access
+                      </Button>
+                    </div>
+                  </div>
                 )}
                 {inviteMutation.isSuccess && (
                   <p className="text-sm text-success-muted-foreground">
-                    Invitation sent.
+                    Invitation queued for delivery.
                   </p>
                 )}
                 {inviteMutation.isError && (
                   <p className="text-sm text-critical-muted-foreground">
-                    Invitation was not sent. Check the email and try again.
+                    Invitation was not created. Check the destination and try
+                    again.
                   </p>
                 )}
                 <Dialog
                   open={portalInviteOpen}
-                  onOpenChange={(open) =>
-                    !inviteMutation.isPending && setPortalInviteOpen(open)
-                  }
+                  onOpenChange={(open) => {
+                    if (inviteMutation.isPending) return
+                    setPortalInviteOpen(open)
+                    if (!open) setPortalInviteResult(null)
+                  }}
                 >
                   <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                       <DialogTitle className="font-serif text-2xl">
-                        Invite patient to My Care
+                        {portalProvisionMode === "recover"
+                          ? "Recover patient access"
+                          : "Invite patient to My Care"}
                       </DialogTitle>
                       <DialogDescription>
-                        Send a secure, time-limited invitation to the patient’s
-                        email address.
+                        Phone enrollment uses a patient-specific claim code plus
+                        a one-time SMS or WhatsApp code. The existing email flow
+                        remains available.
                       </DialogDescription>
                     </DialogHeader>
                     <form
@@ -951,40 +1233,218 @@ export function ClinicalCareNote({
                         inviteMutation.mutate()
                       }}
                     >
-                      <div className="space-y-2">
-                        <Label htmlFor="patient-portal-email">
-                          Patient email
-                        </Label>
-                        <Input
-                          autoFocus
-                          id="patient-portal-email"
-                          onChange={(event) =>
-                            setPortalEmail(event.target.value)
-                          }
-                          required
-                          type="email"
-                          value={portalEmail}
-                        />
-                      </div>
+                      {!portalInviteResult && (
+                        <>
+                          <div className="space-y-2">
+                            <Label htmlFor="patient-portal-channel">
+                              Delivery channel
+                            </Label>
+                            <select
+                              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                              id="patient-portal-channel"
+                              onChange={(event) =>
+                                setPortalChannel(
+                                  event.target.value as
+                                    | "email"
+                                    | "sms"
+                                    | "whatsapp",
+                                )
+                              }
+                              value={portalChannel}
+                            >
+                              <option value="sms">SMS (recommended)</option>
+                              <option value="whatsapp">WhatsApp</option>
+                              {portalProvisionMode === "invite" && (
+                                <option value="email">
+                                  Email and password
+                                </option>
+                              )}
+                            </select>
+                          </div>
+                          {portalProvisionMode === "invite" &&
+                          portalChannel === "email" ? (
+                            <div className="space-y-2">
+                              <Label htmlFor="patient-portal-email">
+                                Patient email
+                              </Label>
+                              <Input
+                                id="patient-portal-email"
+                                onChange={(event) =>
+                                  setPortalEmail(event.target.value)
+                                }
+                                required
+                                type="email"
+                                value={portalEmail}
+                              />
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <Label htmlFor="patient-portal-phone">
+                                Patient mobile phone
+                              </Label>
+                              <Input
+                                id="patient-portal-phone"
+                                inputMode="tel"
+                                onChange={(event) =>
+                                  setPortalPhone(event.target.value)
+                                }
+                                placeholder="+65 …"
+                                required
+                                type="tel"
+                                value={portalPhone}
+                              />
+                              <p className="text-xs leading-5 text-muted-foreground">
+                                Shared and reassigned numbers are supported: the
+                                separate claim code binds the intended patient.
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {portalInviteResult && (
+                        <Alert className="border-success/40 bg-success-muted text-success-muted-foreground">
+                          <AlertTitle>
+                            {portalProvisionMode === "recover"
+                              ? "Recovery credential created"
+                              : "Invitation created"}
+                          </AlertTitle>
+                          <AlertDescription className="space-y-2">
+                            <p>
+                              Delivery:{" "}
+                              {"access" in portalInviteResult
+                                ? portalInviteResult.access.masked_phone
+                                : (portalInviteResult.email ?? portalChannel)}
+                            </p>
+                            {"access" in portalInviteResult && (
+                              <div className="space-y-1">
+                                <p>
+                                  Give this single-use claim code to the patient
+                                  through a separate channel:{" "}
+                                  <strong className="font-mono">
+                                    {portalInviteResult.claim_code}
+                                  </strong>
+                                </p>
+                                <p className="text-xs font-semibold">
+                                  Copy it now. Closing this dialog removes it
+                                  from this screen; resending a notification
+                                  does not reveal or reuse the claim code.
+                                </p>
+                              </div>
+                            )}
+                            {"access" in portalInviteResult && (
+                              <p>
+                                Portal ID:{" "}
+                                <strong className="font-mono">
+                                  {portalInviteResult.access.portal_id}
+                                </strong>
+                              </p>
+                            )}
+                            {"access" in portalInviteResult && (
+                              <div className="space-y-1 text-xs">
+                                <p>
+                                  Enrollment link (send separately from the
+                                  claim code):
+                                </p>
+                                <code className="block break-all rounded bg-background/70 p-2">
+                                  {`${window.location.origin}/patient/accept-invitation#${encodeURIComponent(
+                                    portalInviteResult.invitation_token,
+                                  )}`}
+                                </code>
+                                <Button
+                                  onClick={() =>
+                                    navigator.clipboard.writeText(
+                                      `${window.location.origin}/patient/accept-invitation#${encodeURIComponent(
+                                        portalInviteResult.invitation_token,
+                                      )}`,
+                                    )
+                                  }
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  Copy enrollment link
+                                </Button>
+                              </div>
+                            )}
+                            {"access" in portalInviteResult && (
+                              <p className="text-xs">
+                                Claim code expires{" "}
+                                {formatSingaporeDateTime(
+                                  portalInviteResult.claim_code_expires_at,
+                                )}
+                                .
+                              </p>
+                            )}
+                            {portalInviteResult.notification_state && (
+                              <p className="text-xs">
+                                Notification:{" "}
+                                {portalInviteResult.notification_state}
+                              </p>
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      )}
                       <DialogFooter>
                         <Button
                           disabled={inviteMutation.isPending}
-                          onClick={() => setPortalInviteOpen(false)}
+                          onClick={() => {
+                            setPortalInviteOpen(false)
+                            setPortalInviteResult(null)
+                          }}
                           type="button"
                           variant="outline"
                         >
-                          Cancel
+                          {portalInviteResult ? "Done" : "Cancel"}
                         </Button>
-                        <Button
-                          disabled={
-                            inviteMutation.isPending || !portalEmail.trim()
-                          }
-                          type="submit"
-                        >
-                          <Send className="size-4" /> Send invitation
-                        </Button>
+                        {!portalInviteResult && (
+                          <Button
+                            disabled={
+                              inviteMutation.isPending ||
+                              (portalChannel === "email"
+                                ? !portalEmail.trim()
+                                : !portalPhone.trim())
+                            }
+                            type="submit"
+                          >
+                            <Send className="size-4" /> Send invitation
+                          </Button>
+                        )}
                       </DialogFooter>
                     </form>
+                  </DialogContent>
+                </Dialog>
+                <Dialog
+                  onOpenChange={(open) =>
+                    !revokeAccessMutation.isPending && setPortalRevokeOpen(open)
+                  }
+                  open={portalRevokeOpen}
+                >
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle className="font-serif text-2xl">
+                        Revoke patient access?
+                      </DialogTitle>
+                      <DialogDescription>
+                        Active sessions and unused OTP challenges are revoked.
+                        The patient record and immutable sharing history remain.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <Button
+                        disabled={revokeAccessMutation.isPending}
+                        onClick={() => setPortalRevokeOpen(false)}
+                        variant="outline"
+                      >
+                        Keep access
+                      </Button>
+                      <Button
+                        disabled={revokeAccessMutation.isPending}
+                        onClick={() => revokeAccessMutation.mutate()}
+                        variant="destructive"
+                      >
+                        Revoke access
+                      </Button>
+                    </DialogFooter>
                   </DialogContent>
                 </Dialog>
               </CardContent>
@@ -996,12 +1456,21 @@ export function ClinicalCareNote({
           >
             <GlanceTopCard
               busyHighlightId={
-                highlightMutation.isPending
-                  ? (highlightMutation.variables?.card.highlight_id ?? null)
-                  : null
+                supportReviewMutation.isPending
+                  ? (supportReviewMutation.variables?.card.highlight_id ?? null)
+                  : highlightMutation.isPending
+                    ? (highlightMutation.variables?.card.highlight_id ?? null)
+                    : null
               }
               canReview={canCollaborate}
+              canResolveSupport={currentUser.role === "clinician"}
               cards={glanceQuery.data?.cards ?? []}
+              ageSeconds={hardenedGlance?.age_seconds}
+              fallbackKind={hardenedGlance?.fallback_kind}
+              freshnessState={hardenedGlance?.freshness_state}
+              importanceMode={hardenedGlance?.importance_mode}
+              outageMessage={hardenedGlance?.outage_message}
+              providerOutage={hardenedGlance?.provider_outage}
               reviewCards={glanceQuery.data?.review_cards ?? []}
               onAction={(card, action) =>
                 highlightMutation.mutate({ card, action })
@@ -1014,11 +1483,12 @@ export function ClinicalCareNote({
               }
               onImpression={
                 canCollaborate
-                  ? (card, rank, viewEventId) =>
+                  ? (card, rank, viewEventId, surface) =>
                       clinicalApi.recordImportanceImpression({
                         highlightId: card.highlight_id,
                         viewEventId,
                         rank,
+                        surface,
                         // Ranking is deterministic today. Record an honest
                         // exposure probability until a randomized exploration
                         // policy exists; telemetry must not imply that slot five
@@ -1031,6 +1501,9 @@ export function ClinicalCareNote({
               }
               onRequestReview={(card) =>
                 highlightMutation.mutate({ card, action: "request_review" })
+              }
+              onResolveSupport={(card, resolution) =>
+                supportReviewMutation.mutate({ card, resolution })
               }
               onSource={showSource}
             />
@@ -1046,6 +1519,13 @@ export function ClinicalCareNote({
               <Alert className="border-critical/40 bg-critical-muted text-critical-muted-foreground">
                 <AlertDescription>
                   {apiErrorMessage(highlightMutation.error)}
+                </AlertDescription>
+              </Alert>
+            )}
+            {supportReviewMutation.isError && (
+              <Alert className="border-critical/40 bg-critical-muted text-critical-muted-foreground">
+                <AlertDescription>
+                  {apiErrorMessage(supportReviewMutation.error)}
                 </AlertDescription>
               </Alert>
             )}
@@ -1097,33 +1577,72 @@ export function ClinicalCareNote({
           </DialogHeader>
           {evidence && (
             <div className="space-y-4">
-              <div className="rounded-xl border bg-muted/40 p-4">
-                <p className="font-semibold">{evidence.entryTitle}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {evidence.entryOrigin === "ai"
-                    ? "AI-assisted draft"
-                    : evidence.entryOrigin === "system"
-                      ? "Care service"
-                      : evidence.entrySection === "patient"
-                        ? "Patient"
-                        : (teamQuery.data?.find(
-                            (member) => member.user_id === evidence.authorId,
-                          )?.full_name ?? "Care team member")}
-                  {evidence.sourceDate
-                    ? ` · ${formatSingaporeDateTime(evidence.sourceDate)}`
-                    : ""}
-                </p>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground/90">
-                  {highlightedEvidence(evidence)}
-                </p>
+              <div
+                className={
+                  evidence.isHistorical
+                    ? "grid gap-3 md:grid-cols-2"
+                    : undefined
+                }
+              >
+                <div className="rounded-xl border bg-muted/40 p-4">
+                  {evidence.isHistorical && (
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                      Immutable supporting version
+                    </p>
+                  )}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold">{evidence.entryTitle}</p>
+                    <Badge
+                      className={
+                        evidence.supportState === "current"
+                          ? "bg-success-muted text-success-muted-foreground"
+                          : "bg-warning-muted text-warning-muted-foreground"
+                      }
+                    >
+                      Source {evidence.supportState}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {evidence.entryOrigin === "ai"
+                      ? "AI-assisted draft"
+                      : evidence.entryOrigin === "system"
+                        ? "Care service"
+                        : evidence.entrySection === "patient"
+                          ? "Patient"
+                          : (teamQuery.data?.find(
+                              (member) => member.user_id === evidence.authorId,
+                            )?.full_name ?? "Care team member")}
+                    {evidence.sourceDate
+                      ? ` · ${formatSingaporeDateTime(evidence.sourceDate)}`
+                      : ""}
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground/90">
+                    {highlightedEvidence(evidence)}
+                  </p>
+                </div>
+                {evidence.isHistorical && (
+                  <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-primary">
+                      Current note version
+                    </p>
+                    <p className="mt-2 font-semibold">
+                      {evidence.currentEntryTitle}
+                    </p>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground/90">
+                      {evidence.currentEntryContent}
+                    </p>
+                  </div>
+                )}
               </div>
               <blockquote className="rounded-xl border-l-4 border-warning bg-warning-muted p-4 text-warning-muted-foreground">
                 “{evidence.provenance.exact_quote}”
               </blockquote>
               <p className="text-xs text-muted-foreground">
-                {evidence.isHistorical
-                  ? "Source status: earlier note version"
-                  : "Source status: current note version"}
+                {evidence.supportState === "current"
+                  ? "Source status: current note version"
+                  : evidence.supportState === "superseded"
+                    ? "Source status: superseded; the original wording remains resolvable and requires support review"
+                    : "Source status: historical note version; the original wording remains resolvable"}
               </p>
             </div>
           )}

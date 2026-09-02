@@ -16,13 +16,27 @@ from app.services.voice.providers.base import (
 class OpenAIAudioTranscriptionProvider:
     provider_name = "openai"
 
-    def __init__(self, *, api_key: str, model: str, timeout_seconds: int = 600) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        timeout_seconds: float = 30.0,
+        connect_timeout_seconds: float = 5.0,
+    ) -> None:
         self.api_key = api_key
         self.model = model
-        self.timeout_seconds = timeout_seconds
+        self.timeout_seconds = max(0.01, timeout_seconds)
+        self.connect_timeout_seconds = max(0.01, connect_timeout_seconds)
 
     async def transcribe(self, audio_path: Path) -> TranscriptResult:
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+        timeout = httpx.Timeout(
+            connect=self.connect_timeout_seconds,
+            read=self.timeout_seconds,
+            write=self.timeout_seconds,
+            pool=self.timeout_seconds,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
             with audio_path.open("rb") as stream:
                 content_type = {
                     ".flac": "audio/flac",
@@ -79,15 +93,31 @@ class OpenAIAudioTranscriptionProvider:
             if confidence is not None and not 0 <= confidence <= 1:
                 confidence = None
                 warnings.add("PROVIDER_DROPPED_INVALID_CONFIDENCE")
+            source_language = (
+                str(raw["language"])
+                if raw.get("language")
+                else str(payload["language"])
+                if payload.get("language")
+                else None
+            )
+            raw_language_confidence = raw.get("language_confidence")
+            language_confidence = (
+                float(raw_language_confidence)
+                if isinstance(raw_language_confidence, (float, int))
+                and not isinstance(raw_language_confidence, bool)
+                else None
+            )
+            if language_confidence is not None and not 0 <= language_confidence <= 1:
+                language_confidence = None
+                warnings.add("PROVIDER_DROPPED_INVALID_LANGUAGE_CONFIDENCE")
+            speaker_id = str(raw["speaker"]) if raw.get("speaker") else None
             segments.append(
                 TranscriptSegmentResult(
                     text=segment_text,
                     start_ms=start_ms,
                     end_ms=end_ms,
-                    speaker_id=(str(raw["speaker"]) if raw.get("speaker") else None),
-                    detected_language=(
-                        str(raw["language"]) if raw.get("language") else None
-                    ),
+                    speaker_id=speaker_id,
+                    detected_language=source_language,
                     confidence=confidence,
                     confidence_source=(
                         "provider" if confidence is not None else "unavailable"
@@ -99,6 +129,9 @@ class OpenAIAudioTranscriptionProvider:
                     ),
                     text_start=text_start,
                     text_end=text_end,
+                    source_language=source_language,
+                    language_confidence=language_confidence,
+                    speaker_ids=((speaker_id,) if speaker_id is not None else ()),
                 )
             )
         if not segments:
@@ -136,6 +169,29 @@ class OpenAIAudioTranscriptionProvider:
             segments[current_index] = replace(
                 segments[current_index], overlap_group_id=group_id
             )
+        speakers_by_group: dict[str, tuple[str, ...]] = {}
+        for segment in segments:
+            if segment.overlap_group_id is None:
+                continue
+            speakers_by_group[segment.overlap_group_id] = tuple(
+                sorted(
+                    {
+                        *(speakers_by_group.get(segment.overlap_group_id) or ()),
+                        *((segment.speaker_id,) if segment.speaker_id else ()),
+                    }
+                )
+            )
+        segments = [
+            replace(
+                segment,
+                speaker_ids=(
+                    speakers_by_group[segment.overlap_group_id]
+                    if segment.overlap_group_id is not None
+                    else segment.speaker_ids
+                ),
+            )
+            for segment in segments
+        ]
         return validate_transcript_result(
             TranscriptResult(
                 text=text,

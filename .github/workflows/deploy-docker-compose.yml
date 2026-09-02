@@ -120,6 +120,7 @@ jobs:
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       SECRET_KEY: ${{ secrets.SECRET_KEY }}
       FIELD_ENCRYPTION_MASTER_KEY: ${{ secrets.FIELD_ENCRYPTION_MASTER_KEY }}
+      NOTIFICATION_WEBHOOK_SECRET: ${{ secrets.NOTIFICATION_WEBHOOK_SECRET }}
       SMTP_HOST: ${{ vars.SMTP_HOST }}
       SMTP_USER: ${{ vars.SMTP_USER }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
@@ -134,6 +135,13 @@ jobs:
       OPENAI_REVIEW_MODEL: ${{ vars.OPENAI_REVIEW_MODEL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+      # Required production attestation covering proxy, container, and APM
+      # retention. Settings and Compose both reject missing or >30-day windows.
+      EXTERNAL_PROXY_RETENTION_DAYS: ${{ vars.EXTERNAL_PROXY_RETENTION_DAYS }}
+      EXTERNAL_CONTAINER_RETENTION_DAYS: ${{ vars.EXTERNAL_CONTAINER_RETENTION_DAYS }}
+      EXTERNAL_APM_RETENTION_DAYS: ${{ vars.EXTERNAL_APM_RETENTION_DAYS }}
+      EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE: ${{ vars.EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE }}
+      EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID: ${{ vars.EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID }}
       NIGHTINGALE_SOURCE_COMMIT: ${{ github.sha }}
     steps:
       - name: Checkout exact candidate SHA

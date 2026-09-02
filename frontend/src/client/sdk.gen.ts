@@ -2,7 +2,7 @@
 
 import { type Client, type Options as Options2, type TDataShape, urlSearchParamsBodySerializer } from './client';
 import { client } from './client.gen';
-import type { adminAiSettingsData, adminAiSettingsErrors, adminAiSettingsResponses, adminAuditEventsData, adminAuditEventsErrors, adminAuditEventsResponses, adminCreateMembershipData, adminCreateMembershipErrors, adminCreateMembershipResponses, adminDeactivateMembershipData, adminDeactivateMembershipErrors, adminDeactivateMembershipResponses, adminMembershipsData, adminMembershipsErrors, adminMembershipsResponses, adminUpdateAiSettingsData, adminUpdateAiSettingsErrors, adminUpdateAiSettingsResponses, aiGetJobData, aiGetJobErrors, aiGetJobResponses, aiIngestData, aiIngestErrors, aiIngestResponses, aiReanalyzeData, aiReanalyzeErrors, aiReanalyzeResponses, aiRetryJobData, aiRetryJobErrors, aiRetryJobResponses, authAcceptMembershipInvitationData, authAcceptMembershipInvitationErrors, authAcceptMembershipInvitationResponses, authAcceptPatientInvitationData, authAcceptPatientInvitationErrors, authAcceptPatientInvitationResponses, authDemoLoginData, authDemoLoginErrors, authDemoLoginResponses, authLogoutData, authLogoutResponses, authMeData, authMeErrors, authMeResponses, authPasswordLoginData, authPasswordLoginErrors, authPasswordLoginResponses, authPreviewPatientInvitationData, authPreviewPatientInvitationErrors, authPreviewPatientInvitationResponses, collaborationAssignData, collaborationAssignErrors, collaborationAssignResponses, collaborationCreateCommentData, collaborationCreateCommentErrors, collaborationCreateCommentResponses, collaborationListCommentsData, collaborationListCommentsErrors, collaborationListCommentsResponses, collaborationReplyData, collaborationReplyErrors, collaborationReplyResponses, collaborationResolveData, collaborationResolveErrors, collaborationResolveResponses, collaborationUnresolveData, collaborationUnresolveErrors, collaborationUnresolveResponses, decayArchiveData, decayArchiveErrors, decayArchiveResponses, decayPreviewData, decayPreviewErrors, decayPreviewResponses, decayRehydrateData, decayRehydrateErrors, decayRehydrateResponses, entriesCreateData, entriesCreateErrors, entriesCreateResponses, entriesDiffData, entriesDiffErrors, entriesDiffResponses, entriesPatchData, entriesPatchErrors, entriesPatchResponses, entriesReadData, entriesReadErrors, entriesReadResponses, entriesRevertData, entriesRevertErrors, entriesRevertResponses, entriesVersionsData, entriesVersionsErrors, entriesVersionsResponses, eventsEventStreamData, eventsEventStreamErrors, eventsEventStreamResponses, patientsCreatePatientData, patientsCreatePatientErrors, patientsCreatePatientResponses, patientsDuplicateCheckData, patientsDuplicateCheckErrors, patientsDuplicateCheckResponses, patientsInvitePatientData, patientsInvitePatientErrors, patientsInvitePatientResponses, patientsPatientGlanceData, patientsPatientGlanceErrors, patientsPatientGlanceResponses, patientsPatientPublicationReceiptsData, patientsPatientPublicationReceiptsErrors, patientsPatientPublicationReceiptsResponses, patientsPatientsData, patientsPatientsErrors, patientsPatientsResponses, patientsPatientTimelineData, patientsPatientTimelineErrors, patientsPatientTimelineResponses, patientsReadPatientData, patientsReadPatientErrors, patientsReadPatientResponses, platformPlatformAuditLogData, platformPlatformAuditLogErrors, platformPlatformAuditLogResponses, platformPlatformClinicsData, platformPlatformClinicsErrors, platformPlatformClinicsResponses, platformPlatformLoginData, platformPlatformLoginErrors, platformPlatformLoginResponses, platformPlatformLogoutData, platformPlatformLogoutResponses, platformPlatformMeData, platformPlatformMeErrors, platformPlatformMeResponses, platformPlatformPatientsData, platformPlatformPatientsErrors, platformPlatformPatientsResponses, platformPlatformPatientTimelineData, platformPlatformPatientTimelineErrors, platformPlatformPatientTimelineResponses, teamTeamMembersData, teamTeamMembersErrors, teamTeamMembersResponses, trustAcceptData, trustAcceptErrors, trustAcceptResponses, trustApprovePatientSharingRequestData, trustApprovePatientSharingRequestErrors, trustApprovePatientSharingRequestResponses, trustClinicalFactsForPatientData, trustClinicalFactsForPatientErrors, trustClinicalFactsForPatientResponses, trustConflictsForPatientData, trustConflictsForPatientErrors, trustConflictsForPatientResponses, trustCreateHighlightData, trustCreateHighlightErrors, trustCreateHighlightResponses, trustCreatePatientSharingRequestData, trustCreatePatientSharingRequestErrors, trustCreatePatientSharingRequestResponses, trustDecisionExplanationData, trustDecisionExplanationErrors, trustDecisionExplanationResponses, trustFeedbackData, trustFeedbackErrors, trustFeedbackResponses, trustListPatientPublicationsData, trustListPatientPublicationsErrors, trustListPatientPublicationsResponses, trustListPatientSharingRequestsData, trustListPatientSharingRequestsErrors, trustListPatientSharingRequestsResponses, trustPinData, trustPinErrors, trustPinResponses, trustProvenanceResolveData, trustProvenanceResolveErrors, trustProvenanceResolveResponses, trustPublishForPatientData, trustPublishForPatientErrors, trustPublishForPatientResponses, trustRecordImportanceImpressionData, trustRecordImportanceImpressionErrors, trustRecordImportanceImpressionResponses, trustRejectData, trustRejectErrors, trustRejectResponses, trustRequestReviewData, trustRequestReviewErrors, trustRequestReviewResponses, trustResolveConflictData, trustResolveConflictErrors, trustResolveConflictResponses, trustWithdrawPatientPublicationData, trustWithdrawPatientPublicationErrors, trustWithdrawPatientPublicationResponses, utilsHealthCheckData, utilsHealthCheckResponses, voiceAbandonDeviceData, voiceAbandonDeviceErrors, voiceAbandonDeviceResponses, voiceAudioData, voiceAudioErrors, voiceAudioResponses, voiceCorrectData, voiceCorrectErrors, voiceCorrectResponses, voiceCreateSessionData, voiceCreateSessionErrors, voiceCreateSessionResponses, voiceFinalizeData, voiceFinalizeErrors, voiceFinalizeResponses, voiceGetChunkStatusData, voiceGetChunkStatusErrors, voiceGetChunkStatusResponses, voiceJoinDeviceData, voiceJoinDeviceErrors, voiceJoinDeviceResponses, voiceLiveStatusData, voiceLiveStatusErrors, voiceLiveStatusResponses, voicePublishData, voicePublishErrors, voicePublishResponses, voicePutChunkData, voicePutChunkErrors, voicePutChunkResponses, voiceReanalyzeData, voiceReanalyzeErrors, voiceReanalyzeResponses, voiceSealDeviceData, voiceSealDeviceErrors, voiceSealDeviceResponses, voiceSessionStatusData, voiceSessionStatusErrors, voiceSessionStatusResponses, voiceTranscriptData, voiceTranscriptErrors, voiceTranscriptResponses } from './types.gen';
+import type { adminAiSettingsData, adminAiSettingsErrors, adminAiSettingsResponses, adminAuditEventsData, adminAuditEventsErrors, adminAuditEventsResponses, adminCreateMembershipData, adminCreateMembershipErrors, adminCreateMembershipResponses, adminDeactivateMembershipData, adminDeactivateMembershipErrors, adminDeactivateMembershipResponses, adminFormularyActivateFormularyVersionData, adminFormularyActivateFormularyVersionErrors, adminFormularyActivateFormularyVersionResponses, adminFormularyCreateFormularyVersionData, adminFormularyCreateFormularyVersionErrors, adminFormularyCreateFormularyVersionResponses, adminFormularyListFormularyVersionsData, adminFormularyListFormularyVersionsErrors, adminFormularyListFormularyVersionsResponses, adminFormularyQualifyFormularyVersionData, adminFormularyQualifyFormularyVersionErrors, adminFormularyQualifyFormularyVersionResponses, adminFormularyReadFormularyReadinessData, adminFormularyReadFormularyReadinessErrors, adminFormularyReadFormularyReadinessResponses, adminFormularyReadFormularyVersionData, adminFormularyReadFormularyVersionErrors, adminFormularyReadFormularyVersionResponses, adminMembershipsData, adminMembershipsErrors, adminMembershipsResponses, adminUpdateAiSettingsData, adminUpdateAiSettingsErrors, adminUpdateAiSettingsResponses, aiGetJobData, aiGetJobErrors, aiGetJobResponses, aiIngestData, aiIngestErrors, aiIngestResponses, aiReanalyzeData, aiReanalyzeErrors, aiReanalyzeResponses, aiRetryJobData, aiRetryJobErrors, aiRetryJobResponses, authAcceptMembershipInvitationData, authAcceptMembershipInvitationErrors, authAcceptMembershipInvitationResponses, authAcceptPatientInvitationData, authAcceptPatientInvitationErrors, authAcceptPatientInvitationResponses, authDemoLoginData, authDemoLoginErrors, authDemoLoginResponses, authLogoutData, authLogoutResponses, authMeData, authMeErrors, authMeResponses, authPasswordLoginData, authPasswordLoginErrors, authPasswordLoginResponses, authPreviewPatientInvitationData, authPreviewPatientInvitationErrors, authPreviewPatientInvitationResponses, collaborationAssignData, collaborationAssignErrors, collaborationAssignResponses, collaborationCreateCommentData, collaborationCreateCommentErrors, collaborationCreateCommentResponses, collaborationHeartbeatEditorPresenceData, collaborationHeartbeatEditorPresenceErrors, collaborationHeartbeatEditorPresenceResponses, collaborationListCommentsData, collaborationListCommentsErrors, collaborationListCommentsResponses, collaborationReplyData, collaborationReplyErrors, collaborationReplyResponses, collaborationResolveData, collaborationResolveErrors, collaborationResolveResponses, collaborationUnresolveData, collaborationUnresolveErrors, collaborationUnresolveResponses, decayArchiveData, decayArchiveErrors, decayArchiveResponses, decayPreviewData, decayPreviewErrors, decayPreviewResponses, decayRehydrateData, decayRehydrateErrors, decayRehydrateResponses, entriesCreateData, entriesCreateErrors, entriesCreateResponses, entriesDiffData, entriesDiffErrors, entriesDiffResponses, entriesPatchData, entriesPatchErrors, entriesPatchResponses, entriesReadData, entriesReadErrors, entriesReadResponses, entriesRevertData, entriesRevertErrors, entriesRevertResponses, entriesVersionsData, entriesVersionsErrors, entriesVersionsResponses, eventsEventStreamData, eventsEventStreamErrors, eventsEventStreamResponses, notificationsAcknowledgeNotificationData, notificationsAcknowledgeNotificationErrors, notificationsAcknowledgeNotificationResponses, notificationsCreateAppointmentNotificationData, notificationsCreateAppointmentNotificationErrors, notificationsCreateAppointmentNotificationResponses, notificationsListAppointmentNotificationsData, notificationsListAppointmentNotificationsErrors, notificationsListAppointmentNotificationsResponses, notificationsNotificationDeliveryWorklistData, notificationsNotificationDeliveryWorklistErrors, notificationsNotificationDeliveryWorklistResponses, notificationsProviderCallbackData, notificationsProviderCallbackErrors, notificationsProviderCallbackResponses, notificationsReadNotificationData, notificationsReadNotificationErrors, notificationsReadNotificationResponses, notificationsResendNotificationData, notificationsResendNotificationErrors, notificationsResendNotificationResponses, notificationsRevokeNotificationData, notificationsRevokeNotificationErrors, notificationsRevokeNotificationResponses, notificationsTwilioProviderCallbackData, notificationsTwilioProviderCallbackErrors, notificationsTwilioProviderCallbackResponses, patientAccessBeginPatientEnrollmentData, patientAccessBeginPatientEnrollmentErrors, patientAccessBeginPatientEnrollmentResponses, patientAccessBeginPatientLoginData, patientAccessBeginPatientLoginErrors, patientAccessBeginPatientLoginResponses, patientAccessProvisionPatientAccessData, patientAccessProvisionPatientAccessErrors, patientAccessProvisionPatientAccessResponses, patientAccessRecoverPatientAccessData, patientAccessRecoverPatientAccessErrors, patientAccessRecoverPatientAccessResponses, patientAccessResendPatientOtpData, patientAccessResendPatientOtpErrors, patientAccessResendPatientOtpResponses, patientAccessRevokePatientAccessData, patientAccessRevokePatientAccessErrors, patientAccessRevokePatientAccessResponses, patientAccessVerifyPatientOtpData, patientAccessVerifyPatientOtpErrors, patientAccessVerifyPatientOtpResponses, patientsCreatePatientData, patientsCreatePatientErrors, patientsCreatePatientResponses, patientsDuplicateCheckData, patientsDuplicateCheckErrors, patientsDuplicateCheckResponses, patientsInvitePatientData, patientsInvitePatientErrors, patientsInvitePatientResponses, patientsPatientGlanceData, patientsPatientGlanceErrors, patientsPatientGlanceResponses, patientsPatientPublicationReceiptsData, patientsPatientPublicationReceiptsErrors, patientsPatientPublicationReceiptsResponses, patientsPatientsData, patientsPatientsErrors, patientsPatientsResponses, patientsPatientTimelineData, patientsPatientTimelineErrors, patientsPatientTimelineResponses, patientsReadPatientData, patientsReadPatientErrors, patientsReadPatientResponses, patientsSearchPatientsData, patientsSearchPatientsErrors, patientsSearchPatientsResponses, platformClinicOnboardingPreflightData, platformClinicOnboardingPreflightErrors, platformClinicOnboardingPreflightResponses, platformOnboardClinicData, platformOnboardClinicErrors, platformOnboardClinicResponses, platformPlatformAuditLogData, platformPlatformAuditLogErrors, platformPlatformAuditLogResponses, platformPlatformClinicsData, platformPlatformClinicsErrors, platformPlatformClinicsResponses, platformPlatformLoginData, platformPlatformLoginErrors, platformPlatformLoginResponses, platformPlatformLogoutData, platformPlatformLogoutResponses, platformPlatformMeData, platformPlatformMeErrors, platformPlatformMeResponses, platformPlatformPatientsData, platformPlatformPatientsErrors, platformPlatformPatientsResponses, platformPlatformPatientTimelineData, platformPlatformPatientTimelineErrors, platformPlatformPatientTimelineResponses, teamTeamMembersData, teamTeamMembersErrors, teamTeamMembersResponses, trustAcceptData, trustAcceptErrors, trustAcceptResponses, trustAcknowledgePatientPublicationData, trustAcknowledgePatientPublicationErrors, trustAcknowledgePatientPublicationResponses, trustApprovePatientSharingRequestData, trustApprovePatientSharingRequestErrors, trustApprovePatientSharingRequestResponses, trustClinicalFactsForPatientData, trustClinicalFactsForPatientErrors, trustClinicalFactsForPatientResponses, trustConflictsForPatientData, trustConflictsForPatientErrors, trustConflictsForPatientResponses, trustCorrectPatientPublicationData, trustCorrectPatientPublicationErrors, trustCorrectPatientPublicationResponses, trustCreateHighlightData, trustCreateHighlightErrors, trustCreateHighlightResponses, trustCreateImportanceExposureReportData, trustCreateImportanceExposureReportErrors, trustCreateImportanceExposureReportResponses, trustCreatePatientSharingRequestData, trustCreatePatientSharingRequestErrors, trustCreatePatientSharingRequestResponses, trustCurrentImportanceExposureReportData, trustCurrentImportanceExposureReportErrors, trustCurrentImportanceExposureReportResponses, trustDecisionExplanationData, trustDecisionExplanationErrors, trustDecisionExplanationResponses, trustFeedbackData, trustFeedbackErrors, trustFeedbackResponses, trustListHighlightSupportReviewsData, trustListHighlightSupportReviewsErrors, trustListHighlightSupportReviewsResponses, trustListPatientPortalEventsData, trustListPatientPortalEventsErrors, trustListPatientPortalEventsResponses, trustListPatientPublicationsData, trustListPatientPublicationsErrors, trustListPatientPublicationsResponses, trustListPatientSharingRequestsData, trustListPatientSharingRequestsErrors, trustListPatientSharingRequestsResponses, trustListPublicationCorrectionOutreachData, trustListPublicationCorrectionOutreachErrors, trustListPublicationCorrectionOutreachResponses, trustPinData, trustPinErrors, trustPinResponses, trustProvenanceResolveData, trustProvenanceResolveErrors, trustProvenanceResolveResponses, trustPublishForPatientData, trustPublishForPatientErrors, trustPublishForPatientResponses, trustReaffirmHighlightSupportData, trustReaffirmHighlightSupportErrors, trustReaffirmHighlightSupportResponses, trustRecordImportanceImpressionData, trustRecordImportanceImpressionErrors, trustRecordImportanceImpressionResponses, trustRejectData, trustRejectErrors, trustRejectResponses, trustRequestReviewData, trustRequestReviewErrors, trustRequestReviewResponses, trustResolveConflictData, trustResolveConflictErrors, trustResolveConflictResponses, trustStreamPatientPortalEventsData, trustStreamPatientPortalEventsErrors, trustStreamPatientPortalEventsResponses, trustSupersedeHighlightSupportData, trustSupersedeHighlightSupportErrors, trustSupersedeHighlightSupportResponses, trustWithdrawPatientPublicationData, trustWithdrawPatientPublicationErrors, trustWithdrawPatientPublicationResponses, utilsHealthCheckData, utilsHealthCheckResponses, voiceAbandonDeviceData, voiceAbandonDeviceErrors, voiceAbandonDeviceResponses, voiceAudioData, voiceAudioErrors, voiceAudioResponses, voiceConfirmLiveSafetyAlertData, voiceConfirmLiveSafetyAlertErrors, voiceConfirmLiveSafetyAlertResponses, voiceCorrectData, voiceCorrectErrors, voiceCorrectResponses, voiceCreateSessionData, voiceCreateSessionErrors, voiceCreateSessionResponses, voiceDismissLiveSafetyAlertData, voiceDismissLiveSafetyAlertErrors, voiceDismissLiveSafetyAlertResponses, voiceFinalizeData, voiceFinalizeErrors, voiceFinalizeResponses, voiceGetChunkStatusData, voiceGetChunkStatusErrors, voiceGetChunkStatusResponses, voiceJoinDeviceData, voiceJoinDeviceErrors, voiceJoinDeviceResponses, voiceListLiveSafetyAlertsData, voiceListLiveSafetyAlertsErrors, voiceListLiveSafetyAlertsResponses, voiceLiveStatusData, voiceLiveStatusErrors, voiceLiveStatusResponses, voicePublishData, voicePublishErrors, voicePublishResponses, voicePutChunkData, voicePutChunkErrors, voicePutChunkResponses, voiceReanalyzeData, voiceReanalyzeErrors, voiceReanalyzeResponses, voiceSealDeviceData, voiceSealDeviceErrors, voiceSealDeviceResponses, voiceSessionJobStatusData, voiceSessionJobStatusErrors, voiceSessionJobStatusResponses, voiceSessionStatusData, voiceSessionStatusErrors, voiceSessionStatusResponses, voiceSetRemoteAudioConsentData, voiceSetRemoteAudioConsentErrors, voiceSetRemoteAudioConsentResponses, voiceTranscriptData, voiceTranscriptErrors, voiceTranscriptResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -211,6 +211,92 @@ export class AdminService {
     }
 }
 
+export class AdminFormularyService {
+    /**
+     * List Formulary Versions
+     */
+    public static formularyListFormularyVersions<ThrowOnError extends boolean = true>(options?: Options<adminFormularyListFormularyVersionsData, ThrowOnError>) {
+        return (options?.client ?? client).get<adminFormularyListFormularyVersionsResponses, adminFormularyListFormularyVersionsErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/admin/formulary/versions',
+            ...options
+        });
+    }
+
+    /**
+     * Create Formulary Version
+     */
+    public static formularyCreateFormularyVersion<ThrowOnError extends boolean = true>(options: Options<adminFormularyCreateFormularyVersionData, ThrowOnError>) {
+        return (options.client ?? client).post<adminFormularyCreateFormularyVersionResponses, adminFormularyCreateFormularyVersionErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/admin/formulary/versions',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Read Formulary Version
+     */
+    public static formularyReadFormularyVersion<ThrowOnError extends boolean = true>(options: Options<adminFormularyReadFormularyVersionData, ThrowOnError>) {
+        return (options.client ?? client).get<adminFormularyReadFormularyVersionResponses, adminFormularyReadFormularyVersionErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/admin/formulary/versions/{version_id}',
+            ...options
+        });
+    }
+
+    /**
+     * Read Formulary Readiness
+     */
+    public static formularyReadFormularyReadiness<ThrowOnError extends boolean = true>(options?: Options<adminFormularyReadFormularyReadinessData, ThrowOnError>) {
+        return (options?.client ?? client).get<adminFormularyReadFormularyReadinessResponses, adminFormularyReadFormularyReadinessErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/admin/formulary/readiness',
+            ...options
+        });
+    }
+
+    /**
+     * Qualify Formulary Version
+     */
+    public static formularyQualifyFormularyVersion<ThrowOnError extends boolean = true>(options: Options<adminFormularyQualifyFormularyVersionData, ThrowOnError>) {
+        return (options.client ?? client).post<adminFormularyQualifyFormularyVersionResponses, adminFormularyQualifyFormularyVersionErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/admin/formulary/versions/{version_id}/qualify',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Activate Formulary Version
+     */
+    public static formularyActivateFormularyVersion<ThrowOnError extends boolean = true>(options: Options<adminFormularyActivateFormularyVersionData, ThrowOnError>) {
+        return (options.client ?? client).post<adminFormularyActivateFormularyVersionResponses, adminFormularyActivateFormularyVersionErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/admin/formulary/versions/{version_id}/activate',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+}
+
 export class AiService {
     /**
      * Ingest
@@ -356,6 +442,24 @@ export class PatientsService {
     }
 
     /**
+     * Search Patients
+     *
+     * Search identifiers in a request body so reverse proxies never log them.
+     */
+    public static searchPatients<ThrowOnError extends boolean = true>(options: Options<patientsSearchPatientsData, ThrowOnError>) {
+        return (options.client ?? client).post<patientsSearchPatientsResponses, patientsSearchPatientsErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/search',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
      * Patient Timeline
      */
     public static patientTimeline<ThrowOnError extends boolean = true>(options: Options<patientsPatientTimelineData, ThrowOnError>) {
@@ -388,6 +492,120 @@ export class PatientsService {
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/patients/{patient_id}/glance',
             ...options
+        });
+    }
+}
+
+export class PatientAccessService {
+    /**
+     * Begin Patient Enrollment
+     */
+    public static accessBeginPatientEnrollment<ThrowOnError extends boolean = true>(options: Options<patientAccessBeginPatientEnrollmentData, ThrowOnError>) {
+        return (options.client ?? client).post<patientAccessBeginPatientEnrollmentResponses, patientAccessBeginPatientEnrollmentErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/patient-access/enroll/start',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Begin Patient Login
+     */
+    public static accessBeginPatientLogin<ThrowOnError extends boolean = true>(options: Options<patientAccessBeginPatientLoginData, ThrowOnError>) {
+        return (options.client ?? client).post<patientAccessBeginPatientLoginResponses, patientAccessBeginPatientLoginErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/patient-access/login/start',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Resend Patient Otp
+     */
+    public static accessResendPatientOtp<ThrowOnError extends boolean = true>(options: Options<patientAccessResendPatientOtpData, ThrowOnError>) {
+        return (options.client ?? client).post<patientAccessResendPatientOtpResponses, patientAccessResendPatientOtpErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/patient-access/resend',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Verify Patient Otp
+     */
+    public static accessVerifyPatientOtp<ThrowOnError extends boolean = true>(options: Options<patientAccessVerifyPatientOtpData, ThrowOnError>) {
+        return (options.client ?? client).post<patientAccessVerifyPatientOtpResponses, patientAccessVerifyPatientOtpErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/patient-access/verify',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Provision Patient Access
+     *
+     * Create one revocable credential; reveal the claim code exactly once.
+     */
+    public static accessProvisionPatientAccess<ThrowOnError extends boolean = true>(options: Options<patientAccessProvisionPatientAccessData, ThrowOnError>) {
+        return (options.client ?? client).post<patientAccessProvisionPatientAccessResponses, patientAccessProvisionPatientAccessErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/patient-access',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Revoke Patient Access
+     */
+    public static accessRevokePatientAccess<ThrowOnError extends boolean = true>(options: Options<patientAccessRevokePatientAccessData, ThrowOnError>) {
+        return (options.client ?? client).post<patientAccessRevokePatientAccessResponses, patientAccessRevokePatientAccessErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/patient-access/revoke',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Recover Patient Access
+     *
+     * Revoke the old credential and atomically issue a new phone claim.
+     */
+    public static accessRecoverPatientAccess<ThrowOnError extends boolean = true>(options: Options<patientAccessRecoverPatientAccessData, ThrowOnError>) {
+        return (options.client ?? client).post<patientAccessRecoverPatientAccessResponses, patientAccessRecoverPatientAccessErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/patient-access/recover',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
         });
     }
 }
@@ -434,6 +652,38 @@ export class PlatformService {
             responseType: 'json',
             url: '/api/v1/platform/clinics',
             ...options
+        });
+    }
+
+    /**
+     * Clinic Onboarding Preflight
+     */
+    public static clinicOnboardingPreflight<ThrowOnError extends boolean = true>(options: Options<platformClinicOnboardingPreflightData, ThrowOnError>) {
+        return (options.client ?? client).post<platformClinicOnboardingPreflightResponses, platformClinicOnboardingPreflightErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/platform/clinics/preflight',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Onboard Clinic
+     *
+     * Create clinic B entirely from data and audited operational settings.
+     */
+    public static onboardClinic<ThrowOnError extends boolean = true>(options: Options<platformOnboardClinicData, ThrowOnError>) {
+        return (options.client ?? client).post<platformOnboardClinicResponses, platformOnboardClinicErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/platform/clinics/onboard',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
         });
     }
 
@@ -597,6 +847,24 @@ export class CollaborationService {
     }
 
     /**
+     * Heartbeat Editor Presence
+     *
+     * Publish a short-lived, content-free editing signal on the clinic SSE bus.
+     */
+    public static heartbeatEditorPresence<ThrowOnError extends boolean = true>(options: Options<collaborationHeartbeatEditorPresenceData, ThrowOnError>) {
+        return (options.client ?? client).post<collaborationHeartbeatEditorPresenceResponses, collaborationHeartbeatEditorPresenceErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/entries/{entry_id}/presence',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
      * Reply
      */
     public static reply<ThrowOnError extends boolean = true>(options: Options<collaborationReplyData, ThrowOnError>) {
@@ -707,6 +975,42 @@ export class TrustService {
     }
 
     /**
+     * Reaffirm Highlight Support
+     */
+    public static reaffirmHighlightSupport<ThrowOnError extends boolean = true>(options: Options<trustReaffirmHighlightSupportData, ThrowOnError>) {
+        return (options.client ?? client).post<trustReaffirmHighlightSupportResponses, trustReaffirmHighlightSupportErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/highlights/{highlight_id}/support-review/reaffirm',
+            ...options
+        });
+    }
+
+    /**
+     * Supersede Highlight Support
+     */
+    public static supersedeHighlightSupport<ThrowOnError extends boolean = true>(options: Options<trustSupersedeHighlightSupportData, ThrowOnError>) {
+        return (options.client ?? client).post<trustSupersedeHighlightSupportResponses, trustSupersedeHighlightSupportErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/highlights/{highlight_id}/support-review/supersede',
+            ...options
+        });
+    }
+
+    /**
+     * List Highlight Support Reviews
+     */
+    public static listHighlightSupportReviews<ThrowOnError extends boolean = true>(options: Options<trustListHighlightSupportReviewsData, ThrowOnError>) {
+        return (options.client ?? client).get<trustListHighlightSupportReviewsResponses, trustListHighlightSupportReviewsErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/highlight-support-reviews',
+            ...options
+        });
+    }
+
+    /**
      * Feedback
      */
     public static feedback<ThrowOnError extends boolean = true>(options: Options<trustFeedbackData, ThrowOnError>) {
@@ -762,6 +1066,34 @@ export class TrustService {
                 'Content-Type': 'application/json',
                 ...options.headers
             }
+        });
+    }
+
+    /**
+     * Create Importance Exposure Report
+     */
+    public static createImportanceExposureReport<ThrowOnError extends boolean = true>(options: Options<trustCreateImportanceExposureReportData, ThrowOnError>) {
+        return (options.client ?? client).post<trustCreateImportanceExposureReportResponses, trustCreateImportanceExposureReportErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/importance/exposure-reports',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Current Importance Exposure Report
+     */
+    public static currentImportanceExposureReport<ThrowOnError extends boolean = true>(options?: Options<trustCurrentImportanceExposureReportData, ThrowOnError>) {
+        return (options?.client ?? client).get<trustCurrentImportanceExposureReportResponses, trustCurrentImportanceExposureReportErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/importance/exposure-reports/current',
+            ...options
         });
     }
 
@@ -876,6 +1208,22 @@ export class TrustService {
     }
 
     /**
+     * Correct Patient Publication
+     */
+    public static correctPatientPublication<ThrowOnError extends boolean = true>(options: Options<trustCorrectPatientPublicationData, ThrowOnError>) {
+        return (options.client ?? client).post<trustCorrectPatientPublicationResponses, trustCorrectPatientPublicationErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patient-publications/{publication_id}/correct',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
      * Approve Patient Sharing Request
      */
     public static approvePatientSharingRequest<ThrowOnError extends boolean = true>(options: Options<trustApprovePatientSharingRequestData, ThrowOnError>) {
@@ -883,6 +1231,64 @@ export class TrustService {
             responseType: 'json',
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/patient-sharing-requests/{request_id}/approve',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Acknowledge Patient Publication
+     */
+    public static acknowledgePatientPublication<ThrowOnError extends boolean = true>(options: Options<trustAcknowledgePatientPublicationData, ThrowOnError>) {
+        return (options.client ?? client).post<trustAcknowledgePatientPublicationResponses, trustAcknowledgePatientPublicationErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patient-publications/{publication_id}/acknowledgements',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * List Patient Portal Events
+     */
+    public static listPatientPortalEvents<ThrowOnError extends boolean = true>(options: Options<trustListPatientPortalEventsData, ThrowOnError>) {
+        return (options.client ?? client).get<trustListPatientPortalEventsResponses, trustListPatientPortalEventsErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/portal-events',
+            ...options
+        });
+    }
+
+    /**
+     * Stream Patient Portal Events
+     *
+     * Keep a durable invalidation feed open until cancellation or token expiry.
+     */
+    public static streamPatientPortalEvents<ThrowOnError extends boolean = true>(options: Options<trustStreamPatientPortalEventsData, ThrowOnError>) {
+        return (options.client ?? client).get<trustStreamPatientPortalEventsResponses, trustStreamPatientPortalEventsErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/portal-events/stream',
+            ...options
+        });
+    }
+
+    /**
+     * List Publication Correction Outreach
+     */
+    public static listPublicationCorrectionOutreach<ThrowOnError extends boolean = true>(options: Options<trustListPublicationCorrectionOutreachData, ThrowOnError>) {
+        return (options.client ?? client).get<trustListPublicationCorrectionOutreachResponses, trustListPublicationCorrectionOutreachErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/publication-correction-outreach',
             ...options
         });
     }
@@ -909,6 +1315,132 @@ export class EventsService {
             responseType: 'json',
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/events/stream',
+            ...options
+        });
+    }
+}
+
+export class NotificationsService {
+    /**
+     * List Appointment Notifications
+     */
+    public static listAppointmentNotifications<ThrowOnError extends boolean = true>(options: Options<notificationsListAppointmentNotificationsData, ThrowOnError>) {
+        return (options.client ?? client).get<notificationsListAppointmentNotificationsResponses, notificationsListAppointmentNotificationsErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/visits/{visit_id}/notifications',
+            ...options
+        });
+    }
+
+    /**
+     * Create Appointment Notification
+     */
+    public static createAppointmentNotification<ThrowOnError extends boolean = true>(options: Options<notificationsCreateAppointmentNotificationData, ThrowOnError>) {
+        return (options.client ?? client).post<notificationsCreateAppointmentNotificationResponses, notificationsCreateAppointmentNotificationErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/patients/{patient_id}/visits/{visit_id}/notifications',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Notification Delivery Worklist
+     *
+     * Expose retryable and callback-silent delivery work to clinic staff.
+     */
+    public static notificationDeliveryWorklist<ThrowOnError extends boolean = true>(options?: Options<notificationsNotificationDeliveryWorklistData, ThrowOnError>) {
+        return (options?.client ?? client).get<notificationsNotificationDeliveryWorklistResponses, notificationsNotificationDeliveryWorklistErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/notifications/worklist',
+            ...options
+        });
+    }
+
+    /**
+     * Read Notification
+     */
+    public static readNotification<ThrowOnError extends boolean = true>(options: Options<notificationsReadNotificationData, ThrowOnError>) {
+        return (options.client ?? client).get<notificationsReadNotificationResponses, notificationsReadNotificationErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/notifications/{notification_id}',
+            ...options
+        });
+    }
+
+    /**
+     * Resend Notification
+     */
+    public static resendNotification<ThrowOnError extends boolean = true>(options: Options<notificationsResendNotificationData, ThrowOnError>) {
+        return (options.client ?? client).post<notificationsResendNotificationResponses, notificationsResendNotificationErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/notifications/{notification_id}/resend',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Revoke Notification
+     */
+    public static revokeNotification<ThrowOnError extends boolean = true>(options: Options<notificationsRevokeNotificationData, ThrowOnError>) {
+        return (options.client ?? client).post<notificationsRevokeNotificationResponses, notificationsRevokeNotificationErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/notifications/{notification_id}/revoke',
+            ...options
+        });
+    }
+
+    /**
+     * Acknowledge Notification
+     */
+    public static acknowledgeNotification<ThrowOnError extends boolean = true>(options: Options<notificationsAcknowledgeNotificationData, ThrowOnError>) {
+        return (options.client ?? client).post<notificationsAcknowledgeNotificationResponses, notificationsAcknowledgeNotificationErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/notifications/{notification_id}/acknowledge',
+            ...options
+        });
+    }
+
+    /**
+     * Provider Callback
+     *
+     * Advance a delivery only after verifying the provider's signed event.
+     */
+    public static providerCallback<ThrowOnError extends boolean = true>(options: Options<notificationsProviderCallbackData, ThrowOnError>) {
+        return (options.client ?? client).post<notificationsProviderCallbackResponses, notificationsProviderCallbackErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/notification-webhooks/{clinic_id}/{provider}',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Twilio Provider Callback
+     *
+     * Validate Twilio's exact signed URL/form envelope before tenant lookup.
+     */
+    public static twilioProviderCallback<ThrowOnError extends boolean = true>(options: Options<notificationsTwilioProviderCallbackData, ThrowOnError>) {
+        return (options.client ?? client).post<notificationsTwilioProviderCallbackResponses, notificationsTwilioProviderCallbackErrors, ThrowOnError>({
+            responseType: 'json',
+            url: '/api/v1/notification-webhooks/twilio/{clinic_id}/{notification_id}',
             ...options
         });
     }
@@ -981,6 +1513,34 @@ export class VoiceService {
             responseType: 'json',
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/voice/sessions/{session_id}',
+            ...options
+        });
+    }
+
+    /**
+     * Set Remote Audio Consent
+     */
+    public static setRemoteAudioConsent<ThrowOnError extends boolean = true>(options: Options<voiceSetRemoteAudioConsentData, ThrowOnError>) {
+        return (options.client ?? client).put<voiceSetRemoteAudioConsentResponses, voiceSetRemoteAudioConsentErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/remote-audio-consent',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Session Job Status
+     */
+    public static sessionJobStatus<ThrowOnError extends boolean = true>(options: Options<voiceSessionJobStatusData, ThrowOnError>) {
+        return (options.client ?? client).get<voiceSessionJobStatusResponses, voiceSessionJobStatusErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/job',
             ...options
         });
     }
@@ -1155,6 +1715,50 @@ export class VoiceService {
             security: [{ scheme: 'bearer', type: 'http' }],
             url: '/api/v1/voice/sessions/{session_id}/live',
             ...options
+        });
+    }
+
+    /**
+     * List Live Safety Alerts
+     */
+    public static listLiveSafetyAlerts<ThrowOnError extends boolean = true>(options: Options<voiceListLiveSafetyAlertsData, ThrowOnError>) {
+        return (options.client ?? client).get<voiceListLiveSafetyAlertsResponses, voiceListLiveSafetyAlertsErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/sessions/{session_id}/safety-alerts',
+            ...options
+        });
+    }
+
+    /**
+     * Confirm Live Safety Alert
+     */
+    public static confirmLiveSafetyAlert<ThrowOnError extends boolean = true>(options: Options<voiceConfirmLiveSafetyAlertData, ThrowOnError>) {
+        return (options.client ?? client).post<voiceConfirmLiveSafetyAlertResponses, voiceConfirmLiveSafetyAlertErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/safety-alerts/{alert_id}/confirm',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+    }
+
+    /**
+     * Dismiss Live Safety Alert
+     */
+    public static dismissLiveSafetyAlert<ThrowOnError extends boolean = true>(options: Options<voiceDismissLiveSafetyAlertData, ThrowOnError>) {
+        return (options.client ?? client).post<voiceDismissLiveSafetyAlertResponses, voiceDismissLiveSafetyAlertErrors, ThrowOnError>({
+            responseType: 'json',
+            security: [{ scheme: 'bearer', type: 'http' }],
+            url: '/api/v1/voice/safety-alerts/{alert_id}/dismiss',
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
         });
     }
 }

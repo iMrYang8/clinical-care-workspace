@@ -9,7 +9,12 @@ import {
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 
-import type { ClinicalGlanceCard, DecisionExplanationPublic } from "@/client"
+import type {
+  ClinicalGlanceCard,
+  DecisionExplanationPublic,
+  RiskReason,
+} from "@/client"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -20,7 +25,14 @@ type HighlightAction = "accept" | "pin"
 type GlanceTopCardProps = {
   cards: ClinicalGlanceCard[]
   reviewCards?: ClinicalGlanceCard[]
+  freshnessState?: "fresh" | "stale" | "expired" | string
+  ageSeconds?: number | null
+  providerOutage?: boolean
+  outageMessage?: string | null
+  fallbackKind?: "stored" | "rule_derived" | null | string
+  importanceMode?: "shadow" | "disabled" | "active" | string
   canReview?: boolean
+  canResolveSupport?: boolean
   onSource: (card: ClinicalGlanceCard) => void | Promise<void>
   onAction?: (
     card: ClinicalGlanceCard,
@@ -31,22 +43,39 @@ type GlanceTopCardProps = {
     reason: DismissReason,
   ) => void | Promise<void>
   onRequestReview?: (card: ClinicalGlanceCard) => void | Promise<void>
+  onResolveSupport?: (
+    card: ClinicalGlanceCard,
+    resolution: "reaffirm" | "supersede",
+  ) => void | Promise<void>
   onExplain?: (card: ClinicalGlanceCard) => Promise<DecisionExplanationPublic>
   onImpression?: (
     card: ClinicalGlanceCard,
     rank: number,
     viewEventId: string,
+    surface: "current_priorities" | "clinical_review",
   ) => void | Promise<void>
   busyHighlightId?: string | null
 }
 
-const reasonLabel: Record<string, string> = {
+const reasonLabel = {
   critical: "Critical risk",
-  pinned: "Pinned by care team",
-  clinician_accepted: "Confirmed by clinician",
-  ai_scribed_review_required: "Review required",
-  care_plan_conflict: "Conflicting care plan",
+  unresolved: "Unresolved clinical issue",
+  clinician_confirmed: "Confirmed by clinician",
+  clinical_entity: "Clinical fact requiring attention",
+  clinic_feedback: "Raised by clinic feedback",
   recency: "Recent information",
+  clinician_accepted: "Accepted by clinician",
+  care_plan_conflict: "Conflicting care plan",
+  clinician_confirmed_follow_up: "Clinician-confirmed follow-up",
+  medication_status_conflict: "Medication status conflict",
+  open_medication_reconciliation: "Medication reconciliation open",
+  scheduled_follow_up: "Scheduled follow-up",
+  synthetic_dataset_recent_encounter: "Recent imported encounter",
+  unavailable_review_required: "Reason unavailable · review required",
+} satisfies Record<RiskReason, string>
+
+export function riskReasonLabel(reason: RiskReason): string {
+  return reasonLabel[reason]
 }
 
 const dismissReasons: Array<{ value: DismissReason; label: string }> = [
@@ -84,8 +113,8 @@ function scoreLabel(value: number | null, signed = false) {
   return signed && value > 0 ? `+${formatted}` : formatted
 }
 
-function viewEventId(highlightId: string) {
-  const key = `nightingale:priority-view:${highlightId}`
+function viewEventId(highlightId: string, surface: string) {
+  const key = `nightingale:priority-view:${surface}:${highlightId}`
   try {
     const saved = window.sessionStorage.getItem(key)
     if (saved) return saved
@@ -100,11 +129,13 @@ function viewEventId(highlightId: string) {
 function ObservedPriority({
   card,
   rank,
+  surface,
   onImpression,
   children,
 }: {
   card: ClinicalGlanceCard
   rank: number
+  surface: "current_priorities" | "clinical_review"
   onImpression?: GlanceTopCardProps["onImpression"]
   children: React.ReactNode
 }) {
@@ -125,7 +156,12 @@ function ObservedPriority({
           timer = window.setTimeout(() => {
             if (recorded.current) return
             recorded.current = true
-            void onImpression(card, rank, viewEventId(card.highlight_id))
+            void onImpression(
+              card,
+              rank,
+              viewEventId(card.highlight_id, surface),
+              surface,
+            )
             observer.disconnect()
           }, 2_000)
         }
@@ -137,7 +173,7 @@ function ObservedPriority({
       observer.disconnect()
       if (timer) window.clearTimeout(timer)
     }
-  }, [card, onImpression, rank])
+  }, [card, onImpression, rank, surface])
 
   return <li ref={ref}>{children}</li>
 }
@@ -145,9 +181,11 @@ function ObservedPriority({
 function DecisionDetails({
   card,
   onExplain,
+  importanceMode,
 }: {
   card: ClinicalGlanceCard
   onExplain?: GlanceTopCardProps["onExplain"]
+  importanceMode: GlanceTopCardProps["importanceMode"]
 }) {
   const [details, setDetails] = useState<DecisionExplanationPublic | null>(null)
   const [loading, setLoading] = useState(false)
@@ -170,6 +208,11 @@ function DecisionDetails({
     finalImportance === null || learnedAdjustment === null
       ? null
       : finalImportance - learnedAdjustment
+  const currentConfidenceState =
+    details?.current_confidence_state ??
+    (recordValue(confidence, "band", "unavailable") === "unavailable"
+      ? "unavailable"
+      : "qualified")
 
   return (
     <details
@@ -197,12 +240,32 @@ function DecisionDetails({
             {recordValue(confidence, "band", "unavailable")}. Importance is{" "}
             {recordValue(importance, "score", "not scored")}.
           </p>
-          <p className="mt-1">
-            Ranking combines a rule-based score of{" "}
-            {scoreLabel(ruleBasedImportance)} with a clinic feedback adjustment
-            of {scoreLabel(learnedAdjustment, true)}. The adjustment is shared
-            across this clinic; it is not a personal profile.
-          </p>
+          {importanceMode === "shadow" ? (
+            <p className="mt-1">
+              Importance learning is in shadow mode. Candidate exposure and
+              feedback are recorded for evaluation, but ranking weights are not
+              changed. The displayed score remains rule-based and is not a
+              personal profile.
+            </p>
+          ) : importanceMode === "active" ? (
+            <p className="mt-1">
+              Ranking combines a rule-based score of{" "}
+              {scoreLabel(ruleBasedImportance)} with a clinic feedback
+              adjustment of {scoreLabel(learnedAdjustment, true)}. The
+              adjustment is shared across this clinic; it is not a personal
+              profile.
+            </p>
+          ) : importanceMode === "disabled" ? (
+            <p className="mt-1">
+              Importance learning is disabled. Ranking uses rule-based scores;
+              no feedback adjustment is applied.
+            </p>
+          ) : (
+            <p className="mt-1 font-medium text-warning-muted-foreground">
+              Importance mode is unavailable. Treat this ranking as review
+              required until the clinic configuration can be verified.
+            </p>
+          )}
         </div>
         <div>
           <p className="font-semibold text-foreground">
@@ -232,6 +295,21 @@ function DecisionDetails({
               Review reason: {card.abstention_reason.replace(/_/g, " ")}
             </p>
           )}
+          {currentConfidenceState !== "qualified" && (
+            <p className="font-medium text-warning-muted-foreground">
+              Current confidence is {currentConfidenceState.replace(/_/g, " ")}.
+              Requalification failed or is incomplete, so this item remains
+              review required.
+            </p>
+          )}
+          {(details?.confidence_qualification_reasons?.length ?? 0) > 0 && (
+            <p className="text-xs text-warning-muted-foreground">
+              Requalification:{" "}
+              {details?.confidence_qualification_reasons
+                ?.map((reason) => reason.replace(/_/g, " "))
+                .join(", ")}
+            </p>
+          )}
         </div>
         {loading && <p>Loading evaluation details…</p>}
       </div>
@@ -242,22 +320,69 @@ function DecisionDetails({
 export function GlanceTopCard({
   cards,
   reviewCards = [],
+  freshnessState = "fresh",
+  ageSeconds = null,
+  providerOutage = false,
+  outageMessage = null,
+  fallbackKind = null,
+  importanceMode,
   canReview = false,
+  canResolveSupport = false,
   onSource,
   onAction,
   onDismiss,
   onRequestReview,
+  onResolveSupport,
   onExplain,
   onImpression,
   busyHighlightId,
 }: GlanceTopCardProps) {
-  const visibleCards = cards.slice(0, 5)
+  const needsProtectedReview = (card: ClinicalGlanceCard) =>
+    card.critical ||
+    card.review_state !== "ready" ||
+    card.support_review_required === true ||
+    card.current_priority_eligible === false ||
+    (card.importance as Record<string, unknown> | undefined)?.protected === true
+  const visibleCards = [
+    ...new Map(
+      cards
+        .filter((card) => !needsProtectedReview(card))
+        .map((card) => [card.highlight_id, card]),
+    ).values(),
+  ].slice(0, 5)
+  const protectedReviewCards = [
+    ...new Map(
+      [...reviewCards, ...cards.filter(needsProtectedReview)].map((card) => [
+        card.highlight_id,
+        card,
+      ]),
+    ).values(),
+  ]
   const [dismissFor, setDismissFor] = useState<string | null>(null)
   const [dismissReason, setDismissReason] =
     useState<DismissReason>("not_relevant")
 
   return (
     <div className="space-y-4">
+      {(freshnessState !== "fresh" || providerOutage || fallbackKind) && (
+        <Alert className="border-warning/40 bg-warning-muted text-warning-muted-foreground">
+          <AlertTriangle className="size-4" />
+          <AlertDescription>
+            {providerOutage
+              ? (outageMessage ??
+                "AI processing is unavailable. Stored priorities remain visible with their age.")
+              : freshnessState === "expired" || freshnessState === "unavailable"
+                ? "This overview is unavailable and must not be used without clinical review."
+                : "This overview is stale; verify it against the current care record."}
+            {typeof ageSeconds === "number"
+              ? ` Last generated ${Math.max(0, Math.round(ageSeconds / 60))} minutes ago.`
+              : ""}
+            {fallbackKind === "rule_derived"
+              ? " New suggestions are rule-derived, clearly marked, and cannot be auto-published."
+              : ""}
+          </AlertDescription>
+        </Alert>
+      )}
       <Card className="gap-0 overflow-hidden border-border bg-gradient-to-b from-primary/10 via-card to-card py-0 shadow-sm shadow-primary/5">
         <CardHeader className="px-6 py-6">
           <div className="flex items-start justify-between gap-3">
@@ -297,6 +422,7 @@ export function GlanceTopCard({
                     key={card.highlight_id}
                     onImpression={onImpression}
                     rank={index + 1}
+                    surface="current_priorities"
                   >
                     <div className="space-y-3 p-4">
                       <div className="flex items-start gap-3">
@@ -318,8 +444,7 @@ export function GlanceTopCard({
                               {card.critical && (
                                 <AlertTriangle className="mr-1 size-3" />
                               )}
-                              {reasonLabel[card.risk_reason] ??
-                                "Needs attention"}
+                              {riskReasonLabel(card.risk_reason)}
                             </Badge>
                             <Badge className="bg-primary/10 text-primary">
                               {recordValue(
@@ -328,10 +453,28 @@ export function GlanceTopCard({
                                 "not applicable",
                               )}
                             </Badge>
+                            <Badge variant="outline">
+                              Source {card.support_state ?? "current"}
+                            </Badge>
+                            {(card.fallback_kind ?? fallbackKind) ===
+                              "rule_derived" && (
+                              <Badge className="bg-warning-muted text-warning-muted-foreground">
+                                Rule-derived · review required
+                              </Badge>
+                            )}
+                            {card.support_review_required && (
+                              <Badge className="bg-review-required-muted text-review-required-muted-foreground">
+                                Source changed · reaffirm support
+                              </Badge>
+                            )}
                           </div>
                         </div>
                       </div>
-                      <DecisionDetails card={card} onExplain={onExplain} />
+                      <DecisionDetails
+                        card={card}
+                        importanceMode={importanceMode}
+                        onExplain={onExplain}
+                      />
                       <div className="flex flex-wrap gap-2">
                         <Button
                           onClick={() => onSource(card)}
@@ -416,6 +559,12 @@ export function GlanceTopCard({
                               Cancel
                             </Button>
                           </div>
+                          {dismissReason === "too_busy_to_review" && (
+                            <p className="text-xs text-muted-foreground">
+                              This fatigue event is operational telemetry only;
+                              it changes no learned counters or ranking weights.
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -427,7 +576,7 @@ export function GlanceTopCard({
         </CardContent>
       </Card>
 
-      {reviewCards.length > 0 && (
+      {protectedReviewCards.length > 0 && (
         <Card className="border-warning/40 bg-warning-muted/20">
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -437,51 +586,100 @@ export function GlanceTopCard({
               </CardTitle>
             </div>
             <p className="text-sm text-muted-foreground">
-              Unverified items remain visible here but cannot be shared with the
-              patient.
+              Critical, unresolved, pending-safety, clinician-confirmed, and
+              source-changed items remain visible in this protected queue. It is
+              not limited to five and cannot be shared with the patient until
+              review passes.
             </p>
           </CardHeader>
           <CardContent>
             <ol className="space-y-3">
-              {reviewCards.map((card) => (
-                <li
-                  className="space-y-3 rounded-xl border bg-card p-4"
+              {protectedReviewCards.map((card, index) => (
+                <ObservedPriority
+                  card={card}
                   key={card.highlight_id}
+                  onImpression={onImpression}
+                  rank={index + 1}
+                  surface="clinical_review"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="font-medium">{card.label}</p>
-                    <Badge
-                      className={
-                        card.critical
-                          ? "bg-critical-muted text-critical-muted-foreground"
-                          : "bg-warning-muted text-warning-muted-foreground"
-                      }
-                    >
-                      {card.critical
-                        ? "Critical · unverified"
-                        : "Review required"}
-                    </Badge>
-                  </div>
-                  <DecisionDetails card={card} onExplain={onExplain} />
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      onClick={() => onSource(card)}
-                      size="sm"
-                      variant="outline"
-                    >
-                      <Link2 /> View source
-                    </Button>
-                    {canReview && onRequestReview && (
+                  <div className="space-y-3 rounded-xl border bg-card p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-medium">{card.label}</p>
+                      <Badge
+                        className={
+                          card.critical
+                            ? "bg-critical-muted text-critical-muted-foreground"
+                            : "bg-warning-muted text-warning-muted-foreground"
+                        }
+                      >
+                        {card.critical
+                          ? "Critical · unverified"
+                          : "Review required"}
+                      </Badge>
+                      <Badge variant="outline">
+                        Source {card.support_state ?? "current"}
+                      </Badge>
+                      {card.fallback_kind === "rule_derived" && (
+                        <Badge className="bg-warning-muted text-warning-muted-foreground">
+                          Rule-derived · review required
+                        </Badge>
+                      )}
+                    </div>
+                    <DecisionDetails
+                      card={card}
+                      importanceMode={importanceMode}
+                      onExplain={onExplain}
+                    />
+                    <div className="flex flex-wrap gap-2">
                       <Button
-                        onClick={() => onRequestReview(card)}
+                        onClick={() => onSource(card)}
                         size="sm"
                         variant="outline"
                       >
-                        Request clinician review
+                        <Link2 /> View source
                       </Button>
+                      {canReview && onRequestReview && (
+                        <Button
+                          onClick={() => onRequestReview(card)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          Request clinician review
+                        </Button>
+                      )}
+                      {canResolveSupport &&
+                        card.support_review_required &&
+                        onResolveSupport && (
+                          <>
+                            <Button
+                              disabled={busyHighlightId === card.highlight_id}
+                              onClick={() => onResolveSupport(card, "reaffirm")}
+                              size="sm"
+                            >
+                              Reaffirm historical support
+                            </Button>
+                            <Button
+                              disabled={busyHighlightId === card.highlight_id}
+                              onClick={() =>
+                                onResolveSupport(card, "supersede")
+                              }
+                              size="sm"
+                              variant="outline"
+                            >
+                              Supersede this support
+                            </Button>
+                          </>
+                        )}
+                    </div>
+                    {card.support_review_required && (
+                      <p className="text-xs font-medium text-warning-muted-foreground">
+                        The source entry changed. Compare the immutable original
+                        wording with the current note before choosing either
+                        action.
+                      </p>
                     )}
                   </div>
-                </li>
+                </ObservedPriority>
               ))}
             </ol>
           </CardContent>

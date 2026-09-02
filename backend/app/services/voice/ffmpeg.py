@@ -121,6 +121,11 @@ def _pcm_signals(
         silence_count = 0
         clipping_count = 0
         square_sum = 0
+        signed_sum = 0
+        peak = 0
+        zero_crossings = 0
+        previous_value: int | None = None
+        magnitude_histogram = [0] * 256
         while payload := stream.readframes(_PCM_ANALYSIS_FRAMES):
             samples = array.array("h")
             samples.frombytes(payload)
@@ -132,18 +137,45 @@ def _pcm_signals(
                 silence_count += magnitude < 500
                 clipping_count += magnitude >= 32_700
                 square_sum += value * value
+                signed_sum += value
+                peak = max(peak, magnitude)
+                magnitude_histogram[min(255, magnitude // 128)] += 1
+                if previous_value is not None and (
+                    (previous_value < 0 <= value) or (previous_value >= 0 > value)
+                ):
+                    zero_crossings += 1
+                previous_value = value
     duration_ms = int(round(frame_count * 1_000 / sample_rate))
     count = max(1, sample_count)
     silence_ratio = silence_count / count
     clipping_ratio = clipping_count / count
     rms = math.sqrt(square_sum / count)
+    percentile_target = max(1, round(count * 0.2))
+    cumulative = 0
+    noise_floor = 0.0
+    for bucket, bucket_count in enumerate(magnitude_histogram):
+        cumulative += bucket_count
+        if cumulative >= percentile_target:
+            noise_floor = float(bucket * 128)
+            break
+    peak_dbfs = 20 * math.log10(max(1.0, peak) / 32_768)
+    noise_floor_dbfs = 20 * math.log10(max(1.0, noise_floor) / 32_768)
+    snr_db = 20 * math.log10(max(1.0, rms) / max(1.0, noise_floor))
     signals: dict[str, object] = {
+        "schema_version": "nightingale-audio-quality-v1",
         "silence_ratio": round(silence_ratio, 6),
         "clipping_ratio": round(clipping_ratio, 6),
         "rms": round(rms, 2),
+        "peak_amplitude": peak,
+        "peak_dbfs": round(peak_dbfs, 2),
+        "dc_offset": round(signed_sum / count, 2),
+        "zero_crossing_rate": round(zero_crossings / count, 6),
+        "noise_floor_dbfs": round(noise_floor_dbfs, 2),
+        "estimated_snr_db": round(snr_db, 2),
         "silence_review": silence_ratio > 0.85,
         "clipping_review": clipping_ratio > 0.001,
-        "noise_review": 0 < rms < 150,
+        "low_signal_review": 0 < rms < 150,
+        "noise_review": rms > 0 and snr_db < 12 and silence_ratio < 0.98,
         # This is a review signal for concurrent device tracks, not blind-source
         # separation or proof that two people spoke simultaneously.
         "overlap_review": multi_device,
@@ -274,8 +306,13 @@ def preprocess_audio(
         command = [ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
         for device, path in zip(devices, inputs, strict=True):
             command.extend(_input_args(device.media_type, path))
+        # The encrypted source chunks remain immutable. Only this derived
+        # working copy receives a fixed, reproducible denoise/normalization
+        # chain; no adaptive model or network dependency participates.
+        denoise_filter = "afftdn=nr=12:nf=-35"
         base_filter = (
-            "aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono,highpass=f=80"
+            "aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono,"
+            f"highpass=f=80,{denoise_filter}"
         )
         if len(inputs) == 1:
             command.extend(
@@ -319,6 +356,25 @@ def preprocess_audio(
                 _numeric_signal(item, "clipping_ratio") for item in raw_signals
             ),
             "rms": min(_numeric_signal(item, "rms") for item in raw_signals),
+            "peak_amplitude": max(
+                _numeric_signal(item, "peak_amplitude") for item in raw_signals
+            ),
+            "peak_dbfs": max(
+                _numeric_signal(item, "peak_dbfs") for item in raw_signals
+            ),
+            "dc_offset": max(
+                raw_signals,
+                key=lambda item: abs(_numeric_signal(item, "dc_offset")),
+            )["dc_offset"],
+            "zero_crossing_rate": max(
+                _numeric_signal(item, "zero_crossing_rate") for item in raw_signals
+            ),
+            "noise_floor_dbfs": max(
+                _numeric_signal(item, "noise_floor_dbfs") for item in raw_signals
+            ),
+            "estimated_snr_db": min(
+                _numeric_signal(item, "estimated_snr_db") for item in raw_signals
+            ),
             "silence_review": any(
                 item["silence_review"] is True for item in raw_signals
             ),
@@ -326,9 +382,16 @@ def preprocess_audio(
                 item["clipping_review"] is True for item in raw_signals
             ),
             "noise_review": any(item["noise_review"] is True for item in raw_signals),
+            "low_signal_review": any(
+                item["low_signal_review"] is True for item in raw_signals
+            ),
             "overlap_review": len(inputs) > 1,
             "alignment": "track-start-only" if len(inputs) > 1 else "single-device",
             "measurement_stage": "decoded-pre-normalization",
+            "working_copy": True,
+            "denoise_applied": True,
+            "denoise_filter": denoise_filter,
+            "processing_chain_version": "nightingale-voice-working-copy-v1",
             "device_signals": raw_signals,
             "normalized_output_signals": normalized_signals,
         }

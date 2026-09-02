@@ -13,6 +13,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react"
 import type {
   ClinicalFactPublic,
+  JobPublic,
   MePublic,
   TranscriptRevisionPublic,
   TranscriptSegmentPublic,
@@ -24,8 +25,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import type { MedicationAssertion, MedicationReviewInput } from "@/features/api"
 import {
   loadAuthorizedAudio,
+  publishReviewedVoice,
+  voiceJob,
   voiceSession,
   voiceTranscript,
 } from "@/features/voice/voiceApi"
@@ -50,8 +54,9 @@ const sessionStatusLabels: Record<string, string> = {
   assembling: "Preparing audio",
   preprocessing: "Preparing audio",
   transcribing: "Creating transcript",
-  redacting: "Protecting patient information",
   extracting: "Preparing clinical review",
+  delayed: "Provider delayed · manual review available",
+  retrying: "Retry scheduled · manual review available",
   ready: "Ready for review",
   needs_review: "Review required",
   published: "Published",
@@ -74,6 +79,69 @@ function speakerLabel(speakerId: string | null): string {
   if (!speakerId) return "Speaker not identified"
   const match = speakerId.match(/(?:SPEAKER[_ -]?)?(\d+)$/i)
   return match ? `Speaker ${Number(match[1]) + 1}` : "Speaker"
+}
+
+export function voiceJobPollInterval(job: JobPublic | undefined): 2000 | false {
+  if (!job) return 2000
+  if (
+    ["queued", "running", "delayed"].includes(job.visible_state ?? "") ||
+    (job.next_run_at !== null && job.attempt_count < job.max_attempts)
+  ) {
+    return 2000
+  }
+  return false
+}
+
+function segmentSpeakerLabel(segment: TranscriptSegmentPublic): string {
+  const speakerIds = (
+    segment as TranscriptSegmentPublic & { speaker_ids?: string[] }
+  ).speaker_ids
+  if (!speakerIds || speakerIds.length < 2)
+    return speakerLabel(segment.speaker_id)
+  return speakerIds.map((speakerId) => speakerLabel(speakerId)).join(" + ")
+}
+
+const supportedLanguageLabel: Record<string, string> = {
+  en: "English",
+  ms: "Malay",
+  nan: "Hokkien / Southern Min",
+  zh: "Chinese",
+  cmn: "Mandarin Chinese",
+}
+
+export function sourceLanguageLabel(code: string | null): string | null {
+  if (!code) return null
+  return supportedLanguageLabel[code]
+    ? `${supportedLanguageLabel[code]} (${code})`
+    : `${code} · review required`
+}
+
+type AddressableLanguageSpan = {
+  start_offset: number
+  end_offset: number
+  language_code: "en" | "ms" | "nan" | "zh" | "cmn" | "und"
+  confidence: number | null
+  detection_source: string
+  review_required: boolean
+}
+
+function segmentLanguageSpans(
+  segment: TranscriptSegmentPublic,
+): AddressableLanguageSpan[] {
+  return (
+    (
+      segment as TranscriptSegmentPublic & {
+        language_spans?: AddressableLanguageSpan[]
+      }
+    ).language_spans ?? []
+  )
+}
+
+function sourceLanguage(segment: TranscriptSegmentPublic): string | null {
+  const code =
+    (segment as TranscriptSegmentPublic & { source_language?: string })
+      .source_language ?? segment.detected_language
+  return sourceLanguageLabel(code)
 }
 
 export function segmentForFact(
@@ -109,7 +177,7 @@ function StatusBadges({
       )}
       {transcript?.fallback && (
         <Badge className="bg-ai-muted text-ai-muted-foreground">
-          Limited processing
+          Rule-derived fallback · review required
         </Badge>
       )}
       {session.state === "ready" && (
@@ -161,7 +229,7 @@ function TranscriptPanel({
           className="scroll-mt-24 rounded-lg border bg-card p-3 focus-within:ring-2 focus-within:ring-primary"
         >
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-            <Badge variant="outline">{speakerLabel(segment.speaker_id)}</Badge>
+            <Badge variant="outline">{segmentSpeakerLabel(segment)}</Badge>
             <button
               type="button"
               className="min-h-11 rounded px-2 font-mono text-primary"
@@ -170,8 +238,8 @@ function TranscriptPanel({
             >
               {time(segment.start_ms)}–{time(segment.end_ms)}
             </button>
-            {segment.detected_language && (
-              <Badge variant="outline">{segment.detected_language}</Badge>
+            {sourceLanguage(segment) && (
+              <Badge variant="outline">{sourceLanguage(segment)}</Badge>
             )}
             {calibratedConfidence(segment) !== null && (
               <Badge
@@ -198,6 +266,27 @@ function TranscriptPanel({
             )}
           </div>
           <p className="leading-7 text-foreground">{segment.text}</p>
+          {segmentLanguageSpans(segment).length > 0 && (
+            <ul
+              aria-label={`Addressable language spans for segment ${segment.ordinal + 1}`}
+              className="mt-2 space-y-1 text-xs text-muted-foreground"
+            >
+              {segmentLanguageSpans(segment).map((span) => (
+                <li
+                  className="rounded border border-dashed px-2 py-1"
+                  key={`${span.start_offset}-${span.end_offset}-${span.language_code}`}
+                >
+                  {sourceLanguageLabel(span.language_code)} · characters{" "}
+                  {span.start_offset}–{span.end_offset} ·{" "}
+                  {span.detection_source.replace(/_/g, " ")}
+                  {span.confidence === null
+                    ? " · confidence unavailable"
+                    : ` · ${Math.round(span.confidence * 100)}% confidence`}
+                  {span.review_required ? " · review required" : ""}
+                </li>
+              ))}
+            </ul>
+          )}
         </article>
       ))}
       {segments.length === 0 && (
@@ -214,6 +303,28 @@ function SummaryPanel({
 }: {
   transcript: TranscriptRevisionPublic
 }) {
+  const warningLabels: Record<string, string> = {
+    CLIPPING_REVIEW: "Clipped audio may have hidden words.",
+    CLINICAL_LANGUAGE_OR_CONCEPT_REVIEW_REQUIRED:
+      "A clinical term or language span needs manual review.",
+    CONFIDENCE_UNAVAILABLE: "Current calibrated confidence is unavailable.",
+    DOWNSTREAM_RESULTS_STALE:
+      "Derived results are stale after a transcript edit.",
+    INVALID_FACT_EVIDENCE:
+      "A proposed fact is not fully supported by its source span.",
+    LOW_CONFIDENCE_REVIEW:
+      "Transcription confidence is below the qualified threshold.",
+    LOW_SIGNAL_REVIEW:
+      "The recording signal is too quiet for reliable interpretation.",
+    MULTI_DEVICE_OVERLAP_REVIEW:
+      "Overlapping capture sources need manual review.",
+    NOISE_REVIEW:
+      "Low signal-to-noise audio was denoised and still needs review.",
+    NO_STRUCTURED_FACTS: "No publishable structured facts were extracted.",
+    OVERLAP_REVIEW: "Overlapping speakers need manual attribution.",
+    SILENCE_REVIEW: "The recording contains substantial silence.",
+    TRANSCRIPT_PENDING: "The transcript is still pending.",
+  }
   return (
     <div className="space-y-3" data-testid="summary-panel">
       <p className="leading-7 text-foreground">
@@ -221,13 +332,16 @@ function SummaryPanel({
       </p>
       {transcript.warning_codes.length > 0 && (
         <div className="space-y-2">
-          {transcript.warning_codes.slice(0, 1).map((warning) => (
+          {[...new Set(transcript.warning_codes)].map((warning) => (
             <div
               className="flex gap-2 rounded bg-review-required-muted p-2 text-xs text-review-required-muted-foreground"
               key={warning}
             >
-              <AlertTriangle className="size-4 shrink-0" /> Review the
-              transcript carefully before publishing.
+              <AlertTriangle className="size-4 shrink-0" />
+              <span>
+                {warningLabels[warning] ??
+                  `Review required (${warning.toLowerCase().replace(/_/g, " ")}).`}
+              </span>
             </div>
           ))}
         </div>
@@ -278,6 +392,33 @@ function FactsPanel({
   )
 }
 
+export function voiceMedicationAssertions(
+  facts: ClinicalFactPublic[],
+): MedicationAssertion[] {
+  return facts.flatMap((fact) => {
+    if (
+      fact.fact_type !== "medication" ||
+      !fact.medication ||
+      fact.dose_value === null ||
+      fact.dose_value === undefined ||
+      !fact.dose_unit ||
+      !fact.route ||
+      !fact.frequency
+    )
+      return []
+    return [
+      {
+        assertion_id: fact.id,
+        medication: fact.medication,
+        dose_value: fact.dose_value,
+        dose_unit: fact.dose_unit,
+        route: fact.route,
+        frequency: fact.frequency,
+      },
+    ]
+  })
+}
+
 export function VoiceReviewMode({
   sessionId,
   membershipRole,
@@ -293,6 +434,9 @@ export function VoiceReviewMode({
   const [editing, setEditing] = useState(false)
   const [correction, setCorrection] = useState("")
   const [message, setMessage] = useState<string>()
+  const [confirmedMedicationIds, setConfirmedMedicationIds] = useState(
+    new Set<string>(),
+  )
   const sessionQuery = useQuery({
     queryKey: ["voice-session", sessionId],
     queryFn: () => voiceSession(sessionId),
@@ -311,7 +455,28 @@ export function VoiceReviewMode({
     ),
     retry: false,
   })
+  const jobQuery = useQuery({
+    queryKey: ["voice-session", sessionId, "job"],
+    queryFn: () => voiceJob(sessionId),
+    enabled: !["created", "recording"].includes(
+      sessionQuery.data?.state ?? "created",
+    ),
+    refetchInterval: (query) => voiceJobPollInterval(query.state.data),
+    retry: false,
+  })
   const transcript = transcriptQuery.data
+  const medicationAssertions = transcript
+    ? voiceMedicationAssertions(transcript.facts)
+    : []
+  const hasIncompleteMedicationAssertion = Boolean(
+    transcript?.facts.some((fact) => fact.fact_type === "medication") &&
+      medicationAssertions.length !==
+        transcript?.facts.filter((fact) => fact.fact_type === "medication")
+          .length,
+  )
+  const medicationReviews: MedicationReviewInput[] = medicationAssertions
+    .filter((assertion) => confirmedMedicationIds.has(assertion.assertion_id))
+    .map((assertion) => ({ ...assertion, confirmed: true as const }))
   const captionsUrl = useMemo(() => {
     if (!transcript) return undefined
     const cues = transcript.segments
@@ -334,7 +499,6 @@ export function VoiceReviewMode({
     if (
       ![
         "transcribing",
-        "redacting",
         "extracting",
         "ready",
         "needs_review",
@@ -422,12 +586,7 @@ export function VoiceReviewMode({
   const publishMutation = useMutation({
     mutationFn: async () => {
       if (!transcript) throw new Error("Transcript is not loaded")
-      return (
-        await VoiceService.publish({
-          path: { session_id: sessionId },
-          body: { expected_revision_id: transcript.id },
-        })
-      ).data
+      return publishReviewedVoice(sessionId, transcript.id, medicationReviews)
     },
     onSuccess: async () => {
       setMessage("The reviewed visit note was added to the care record.")
@@ -471,8 +630,17 @@ export function VoiceReviewMode({
       !transcript ||
       transcript.stale ||
       transcript.facts.length === 0 ||
+      medicationReviews.length !== medicationAssertions.length ||
+      hasIncompleteMedicationAssertion ||
       !["ready", "needs_review"].includes(sessionQuery.data?.state ?? ""),
-    [membershipRole, sessionQuery.data?.state, transcript],
+    [
+      membershipRole,
+      medicationAssertions.length,
+      medicationReviews.length,
+      hasIncompleteMedicationAssertion,
+      sessionQuery.data?.state,
+      transcript,
+    ],
   )
   const reviewMutationDisabled =
     membershipRole !== "clinician" ||
@@ -490,6 +658,8 @@ export function VoiceReviewMode({
     )
   }
   const session = sessionQuery.data
+  const reliableJob = jobQuery.data
+  const ruleFallback = reliableJob?.ai_run?.status === "fallback"
 
   return (
     <div className="space-y-5" data-testid="voice-review-mode">
@@ -508,6 +678,71 @@ export function VoiceReviewMode({
         </div>
         <StatusBadges session={session} transcript={transcript} />
       </header>
+
+      {(reliableJob?.delayed_at ||
+        reliableJob?.next_run_at ||
+        reliableJob?.provider_outage ||
+        reliableJob?.timed_out_at ||
+        ruleFallback) && (
+        <div className="rounded-xl border border-warning/40 bg-warning-muted p-4 text-sm leading-6 text-warning-muted-foreground">
+          <p className="font-semibold">Remote processing is delayed</p>
+          <p>
+            {reliableJob?.error_class
+              ? `Classified as ${reliableJob.error_class.replace(/_/g, " ")}. `
+              : ""}
+            The recording and manual clinical workflow remain available. A
+            delayed provider never blocks manual documentation.
+          </p>
+          {reliableJob?.next_run_at && (
+            <p>
+              Retry attempt {reliableJob.attempt_count + 1} of{" "}
+              {reliableJob.max_attempts} is scheduled for{" "}
+              {new Date(reliableJob.next_run_at).toLocaleString()}.
+            </p>
+          )}
+          {reliableJob?.timed_out_at && (
+            <p>
+              The bounded request timed out at{" "}
+              {new Date(reliableJob.timed_out_at).toLocaleString()}.
+            </p>
+          )}
+          {reliableJob?.provider_outage && (
+            <p>
+              Provider outage recorded. Stored results remain available with
+              their age; new output must pass independent review.
+            </p>
+          )}
+          {ruleFallback && (
+            <p>
+              Rule-derived review suggestion
+              {reliableJob?.ai_run?.fallback_reason
+                ? ` (${reliableJob.ai_run.fallback_reason.replace(/_/g, " ")})`
+                : ""}
+              . It is never auto-published.
+            </p>
+          )}
+          {(reliableJob?.retry_history?.length ?? 0) > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer font-medium">
+                {reliableJob?.retry_history?.length} recorded attempt
+                {reliableJob?.retry_history?.length === 1 ? "" : "s"}
+              </summary>
+              <ol className="mt-1 list-decimal pl-5 text-xs">
+                {reliableJob?.retry_history?.map((attempt, index) => (
+                  <li
+                    key={`${String(attempt.attempted_at ?? attempt.attempt ?? index)}`}
+                  >
+                    {String(attempt.error_class ?? attempt.status ?? "attempt")}
+                    {attempt.next_retry_at
+                      ? ` · retry ${new Date(String(attempt.next_retry_at)).toLocaleString()}`
+                      : ""}
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+        </div>
+      )}
 
       <Card>
         <CardContent className="flex flex-wrap items-center gap-3 pt-6">
@@ -623,6 +858,56 @@ export function VoiceReviewMode({
                   aria-label="Correct transcript"
                 />
               ) : null}
+              {medicationAssertions.length > 0 ? (
+                <fieldset className="space-y-2 rounded-xl border border-warning/40 bg-warning-muted/20 p-3">
+                  <legend className="px-1 text-sm font-semibold">
+                    Medication safety review
+                  </legend>
+                  {medicationAssertions.map((assertion) => (
+                    <label
+                      className="flex items-start gap-3 rounded-lg border bg-card p-3 text-sm"
+                      key={assertion.assertion_id}
+                    >
+                      <input
+                        checked={confirmedMedicationIds.has(
+                          assertion.assertion_id,
+                        )}
+                        className="mt-1 size-4"
+                        onChange={(event) => {
+                          const next = new Set(confirmedMedicationIds)
+                          if (event.target.checked)
+                            next.add(assertion.assertion_id)
+                          else next.delete(assertion.assertion_id)
+                          setConfirmedMedicationIds(next)
+                        }}
+                        type="checkbox"
+                      />
+                      <span>
+                        <strong>{assertion.medication}</strong>
+                        <span className="mt-1 block leading-6 text-muted-foreground">
+                          {assertion.dose_value} {assertion.dose_unit} ·{" "}
+                          {assertion.route} · {assertion.frequency}
+                        </span>
+                        <span className="mt-1 block text-xs text-warning-muted-foreground">
+                          Confirm medication, dose, unit, route, and frequency
+                          against the source audio and transcript.
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              ) : hasIncompleteMedicationAssertion ? (
+                <p className="rounded-xl border border-critical/40 bg-critical-muted p-3 text-sm text-critical-muted-foreground">
+                  A medication assertion is missing dose, unit, route, or
+                  frequency. Publishing remains blocked until structured review
+                  data is complete.
+                </p>
+              ) : (
+                <p className="rounded-xl border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  No structured medication assertions were reported for this
+                  transcript; an empty medication review is valid.
+                </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 {membershipRole === "clinician" && (
                   <Button
@@ -663,6 +948,17 @@ export function VoiceReviewMode({
               {transcript.stale && (
                 <p className="text-sm font-medium text-critical-muted-foreground">
                   Update the summary and clinical findings before publishing.
+                </p>
+              )}
+              {medicationReviews.length !== medicationAssertions.length && (
+                <p className="text-sm font-medium text-critical-muted-foreground">
+                  Confirm every structured medication field before publishing.
+                </p>
+              )}
+              {hasIncompleteMedicationAssertion && (
+                <p className="text-sm font-medium text-critical-muted-foreground">
+                  Incomplete structured medication review data blocks
+                  publication.
                 </p>
               )}
             </CardContent>

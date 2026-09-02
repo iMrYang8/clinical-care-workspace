@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +13,13 @@ from app.api.deps import RequestContext
 from app.api.routes import voice_live
 from app.core.config import settings
 from app.core.db import engine
-from app.models import ClinicMembership, User, VoiceSession
+from app.models import (
+    ClinicMembership,
+    ClinicOperationalSetting,
+    User,
+    VoiceSession,
+    get_datetime_utc,
+)
 from app.seed import demo_id
 from app.services.voice.live import configured_live_provider
 from app.services.voice.live_limits import (
@@ -59,6 +65,7 @@ class _BlockingConfigureTransport(_FakeRealtimeTransport):
 class _NeverCompletesConnection:
     provider_name = "mock-never-completes"
     model = "mock-transport-only"
+    remote_audio_egress_required = False
 
     def __init__(self) -> None:
         self._ready = True
@@ -152,7 +159,7 @@ def test_openai_live_adapter_maps_official_realtime_protocol() -> None:
     transcription = session_update["session"]["audio"]["input"]["transcription"]
     assert transcription == {
         "model": "gpt-live-transcribe",
-        "languages": ["en", "zh", "cmn"],
+        "languages": ["en", "ms", "nan", "zh", "cmn"],
         "delay": "low",
     }
     assert transport.sent[1] == {
@@ -195,10 +202,51 @@ def test_openai_live_provider_requires_every_audio_egress_gate(
     monkeypatch.setattr(settings, "OPENAI_LIVE_TRANSCRIBE_MODEL", "wrong-model")
     provider, reason, _, _ = configured_live_provider(voice_session)
     assert provider is None
+    assert reason == "CLINIC_AUDIO_EGRESS_POLICY_REQUIRED"
+
+    class _SettingResult:
+        def __init__(self, value: ClinicOperationalSetting) -> None:
+            self.value = value
+
+        def first(self) -> ClinicOperationalSetting:
+            return self.value
+
+    class _SettingDB:
+        def __init__(self, value: ClinicOperationalSetting) -> None:
+            self.value = value
+
+        def exec(self, _statement: object) -> _SettingResult:
+            return _SettingResult(self.value)
+
+    operational = ClinicOperationalSetting(
+        clinic_id=voice_session.clinic_id,
+        remote_audio_egress_enabled=False,
+    )
+    policy_db = _SettingDB(operational)
+    provider, reason, _, _ = configured_live_provider(
+        voice_session, db=cast(Session, policy_db)
+    )
+    assert provider is None
+    assert reason == "CLINIC_REMOTE_AUDIO_EGRESS_DISABLED"
+
+    operational.remote_audio_egress_enabled = True
+    provider, reason, _, _ = configured_live_provider(
+        voice_session, db=cast(Session, policy_db)
+    )
+    assert provider is None
+    assert reason == "REMOTE_AUDIO_EGRESS_CONSENT_REQUIRED"
+
+    voice_session.remote_audio_consent_at = get_datetime_utc()
+    provider, reason, _, _ = configured_live_provider(
+        voice_session, db=cast(Session, policy_db)
+    )
+    assert provider is None
     assert reason == "OPENAI_LIVE_TRANSCRIPT_MODEL_UNSUPPORTED"
 
     monkeypatch.setattr(settings, "OPENAI_LIVE_TRANSCRIBE_MODEL", "gpt-live-transcribe")
-    provider, reason, provider_name, model = configured_live_provider(voice_session)
+    provider, reason, provider_name, model = configured_live_provider(
+        voice_session, db=cast(Session, policy_db)
+    )
     assert provider is not None
     assert reason is None
     assert provider_name == "openai-realtime"
@@ -439,13 +487,22 @@ def test_live_frame_bound_persists_needs_review_without_audio_detail(
         time.sleep(0.01)
     assert session["live_transcript_status"] == "needs_review"
     assert session["live_transcript_reason_code"] == "LIVE_TRANSCRIPT_FRAME_INVALID"
-    assert "audio" not in json.dumps(session).lower()
+    serialized = json.dumps(session).lower()
+    # Public consent metadata may legitimately contain the word "audio"; the
+    # rejected frame bytes and provider detail must never be persisted or echoed.
+    assert "\\u0000" not in serialized
+    assert "synthetic patient text" not in serialized
+    assert "provider_error" not in serialized
 
 
 def test_live_stream_enforces_total_bytes_and_accelerated_replay_rate(
     client: TestClient, auth_headers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _enable_deterministic_live(monkeypatch)
+    # Freeze only the limiter's injected clock. Provider/result deadlines keep
+    # using the real monotonic clock, while this stream deterministically models
+    # replayed audio arriving faster than wall-clock capture.
+    monkeypatch.setattr(voice_live, "_rate_limit_clock", lambda: 1_000.0)
     monkeypatch.setattr(settings, "LIVE_TRANSCRIPT_MAX_FRAME_BYTES", 4)
     monkeypatch.setattr(settings, "LIVE_TRANSCRIPT_MAX_SESSION_BYTES", 32)
     monkeypatch.setattr(settings, "LIVE_TRANSCRIPT_MAX_BYTES_PER_SECOND", 4)
@@ -458,9 +515,11 @@ def test_live_stream_enforces_total_bytes_and_accelerated_replay_rate(
     ) as socket:
         assert socket.receive_json()["status"] == "available"
         socket.send_bytes(b"\x00\x00" * 2)
-        assert socket.receive_json()["type"] == "transcript.delta"
+        first_turn = {socket.receive_json()["type"] for _ in range(2)}
+        assert first_turn == {"transcript.delta", "transcript.completed"}
         socket.send_bytes(b"\x00\x00" * 2)
-        assert socket.receive_json()["type"] == "transcript.delta"
+        second_turn = {socket.receive_json()["type"] for _ in range(2)}
+        assert second_turn == {"transcript.delta", "transcript.completed"}
         socket.send_bytes(b"\x00\x00" * 2)
         limited = socket.receive_json()
         assert limited["status"] == "needs_review"
@@ -477,7 +536,8 @@ def test_live_stream_enforces_total_bytes_and_accelerated_replay_rate(
     ) as socket:
         assert socket.receive_json()["status"] == "available"
         socket.send_bytes(b"\x00\x00" * 2)
-        assert socket.receive_json()["type"] == "transcript.delta"
+        first_turn = {socket.receive_json()["type"] for _ in range(2)}
+        assert first_turn == {"transcript.delta", "transcript.completed"}
         socket.send_bytes(b"\x00\x00" * 2)
         limited = socket.receive_json()
         assert limited["reason_code"] == "LIVE_TRANSCRIPT_SESSION_LIMIT_REACHED"
@@ -492,7 +552,7 @@ def test_disconnect_after_commit_before_provider_completion_requires_review(
     monkeypatch.setattr(
         voice_live,
         "configured_live_provider",
-        lambda _voice_session: (
+        lambda _voice_session, *, db=None: (
             provider,
             None,
             provider.provider_name,

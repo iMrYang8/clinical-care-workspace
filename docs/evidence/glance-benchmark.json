@@ -1,16 +1,16 @@
 {
   "schema_version": 2,
-  "measured_at": "2026-08-26T00:03:50.823427+00:00",
-  "commit": "2e59a9b89e65c81ac030d943e9f9e7c51cbfcab3",
+  "measured_at": "2026-08-28T08:44:41.691677+00:00",
+  "commit": "0c437fe15f6a68ce511f87a5f07dd46685a813cd",
   "dirty": false,
   "hardware": {
-    "platform": "macOS-26.4.1-arm64-arm-64bit",
-    "machine": "arm64",
-    "processor": "arm",
-    "logical_cpu_count": 10
+    "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "processor": "x86_64",
+    "logical_cpu_count": 4
   },
   "config": {
-    "base_url": "https://localhost:63892",
+    "base_url": "https://localhost:35825",
     "endpoint": "/api/v1/patients/{synthetic_patient_id}/glance",
     "auth_transport": "bearer (benchmark/API compatibility only)",
     "warmup": 20,
@@ -20,7 +20,7 @@
   },
   "target": {
     "patient_id": "c5f06c6d-7ded-55cd-b5b0-23beac7f7765",
-    "patient_display_name": "Alex Synthetic",
+    "patient_display_name": "Alex Tan",
     "card_count": 4,
     "expected_card_count": 4
   },
@@ -30,33 +30,38 @@
         "cards",
         "generated_at",
         "patient_id",
+        "review_cards",
         "source"
       ],
       "card_keys": [
+        "confidence",
         "critical",
         "highlight_id",
+        "importance",
         "label",
         "pinned",
         "provenance_pointer_id",
+        "review_state",
+        "risk",
         "risk_reason",
         "score_components"
       ]
     },
-    "schema_sha256": "04a2bf4000854b8f0fdaaab8e991f8c697fe352c317abc72e046daa4d8c180a5",
-    "body_sha256": "ce20c7a11883df29982ecd1ad2d93a7496d8dcd0e12dcfcc05a654b5490d03b5"
+    "schema_sha256": "8b808d0333b40c2374a15828cb484caa375fa4529aa35482422de248a700876e",
+    "body_sha256": "c9250ab71ff6a904c74f00c07dbf1cb683aaffd2fec0be1d49b0d09de68a8b7f"
   },
   "compose": {
-    "project": "nightingale-release-520d3ceb074c-33b608202f78bbb0",
-    "config_sha256": "191339f3cb866158a24aa71d1e95fadcdaa8054e904c803aca077f44cf390666",
-    "backend_image_digest": "sha256:96252cf9d76d89c69884ce0a9c7849d5be28190dd4b82b2603f077b07fba8c6b",
-    "backend_image_revision": "2e59a9b89e65c81ac030d943e9f9e7c51cbfcab3"
+    "project": "nightingale-release-f1d02a328af4-2d47aa83d72afa70",
+    "config_sha256": "913e7f4cceece5182f8d348dadc850cd3ed3f85716eeec160d2eabd83c9e4d0e",
+    "backend_image_digest": "sha256:3370e248f67bb105675eabd2bb8015d53748f4a85618fe32edb064a00311958f",
+    "backend_image_revision": "0c437fe15f6a68ce511f87a5f07dd46685a813cd"
   },
   "latency_ms": {
-    "median": 3.667,
-    "p95": 4.077,
-    "p99": 4.275,
-    "min": 3.19,
-    "max": 4.473
+    "median": 4.64,
+    "p95": 4.9,
+    "p99": 4.941,
+    "min": 4.361,
+    "max": 5.095
   },
   "gate": {
     "p95_lte_300ms": true

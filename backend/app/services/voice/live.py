@@ -2,18 +2,25 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import uuid
+from datetime import datetime
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api.deps import RequestContext
 from app.core.config import settings
+from app.core.field_crypto import field_codec
 from app.models import (
     LiveTranscriptAvailability,
     LiveTranscriptStatus,
+    ProvisionalSafetyAlert,
     VoiceSession,
     get_datetime_utc,
 )
+from app.services.conflicts import extract_normalized_facts, normalize_language_code
 from app.services.nightingale import emit_change
+from app.services.voice.egress_policy import remote_audio_egress_denial
+from app.services.voice.language import clinic_supported_language_codes
 from app.services.voice.live_providers import (
     DeterministicLiveTranscriptionProvider,
     LiveTranscriptionProvider,
@@ -25,6 +32,8 @@ _CAPTURE_STATES = {"recording"}
 
 def configured_live_provider(
     voice_session: VoiceSession,
+    *,
+    db: Session | None = None,
 ) -> tuple[LiveTranscriptionProvider | None, str | None, str | None, str | None]:
     provider: LiveTranscriptionProvider
     if voice_session.live_transcript_status == "replaced":
@@ -57,6 +66,9 @@ def configured_live_provider(
             return None, "STRICT_NO_AUDIO_EGRESS", None, None
         if not settings.REMOTE_AUDIO_EGRESS_ENABLED:
             return None, "REMOTE_AUDIO_EGRESS_DISABLED", None, None
+        policy_denial = remote_audio_egress_denial(db, voice_session)
+        if policy_denial is not None:
+            return None, policy_denial, None, None
         if not settings.OPENAI_API_KEY or not settings.OPENAI_LIVE_TRANSCRIBE_MODEL:
             return None, "OPENAI_LIVE_TRANSCRIPT_NOT_CONFIGURED", None, None
         if not settings.OPENAI_LIVE_TRANSCRIBE_MODEL.startswith("gpt-live-transcribe"):
@@ -71,8 +83,12 @@ def configured_live_provider(
     return None, "LIVE_TRANSCRIPT_PROVIDER_UNAVAILABLE", None, None
 
 
-def live_availability(voice_session: VoiceSession) -> LiveTranscriptAvailability:
-    provider, reason, provider_name, model = configured_live_provider(voice_session)
+def live_availability(
+    voice_session: VoiceSession, *, db: Session | None = None
+) -> LiveTranscriptAvailability:
+    provider, reason, provider_name, model = configured_live_provider(
+        voice_session, db=db
+    )
     if voice_session.live_transcript_status == "replaced":
         return LiveTranscriptAvailability(
             available=False,
@@ -138,3 +154,123 @@ def safety_identifier(context: RequestContext) -> str:
     # a user, patient, membership, or clinic UUID.
     value = f"{context.clinic_id}:{context.user_id}".encode()
     return hmac.new(settings.SECRET_KEY.encode(), value, hashlib.sha256).hexdigest()
+
+
+def persist_completed_safety_alerts(
+    db: Session,
+    context: RequestContext,
+    voice_session: VoiceSession,
+    *,
+    source_event_id: str | None,
+    text: str,
+    source_language: str | None,
+    completed_segment_at: datetime | None = None,
+) -> list[ProvisionalSafetyAlert]:
+    """Persist deduplicated provisional alerts from a completed live segment."""
+
+    if voice_session.clinic_id != context.clinic_id:
+        raise ValueError("Voice session tenant mismatch")
+    normalized_text = text
+    if not normalized_text.strip():
+        return []
+    detected_at = get_datetime_utc()
+    completed_at = completed_segment_at or detected_at
+    language = normalize_language_code(source_language)
+    aggregate_language_hint = (
+        source_language is None
+        or source_language.strip().casefold()
+        in {
+            "auto",
+            "multilingual",
+            "mixed",
+        }
+    )
+    language_hint = None if aggregate_language_hint else source_language
+    supported_languages = clinic_supported_language_codes(db, context.clinic_id)
+    explicit_language_disallowed = not aggregate_language_hint and (
+        language == "und" or language not in supported_languages
+    )
+    facts = extract_normalized_facts(
+        normalized_text,
+        source_language=language_hint,
+    )
+    created: list[ProvisionalSafetyAlert] = []
+    for fact in facts:
+        if fact.fact_type != "allergy":
+            continue
+        fact_language = normalize_language_code(fact.source_language)
+        policy_review_required = (
+            fact.review_required
+            or explicit_language_disallowed
+            or fact_language == "und"
+            or fact_language not in supported_languages
+        )
+        concept_code = (
+            f"allergy:{fact.key}"
+            if not policy_review_required
+            else "allergy:review_required"
+        )
+        polarity = "unknown" if policy_review_required else fact.polarity
+        deduplication_key = hashlib.sha256(
+            (
+                f"{voice_session.id}:{concept_code}:{fact.assertion_scope}:"
+                f"{polarity}:{fact.key if policy_review_required else ''}"
+            ).encode()
+        ).hexdigest()
+        existing = db.exec(
+            select(ProvisionalSafetyAlert).where(
+                ProvisionalSafetyAlert.clinic_id == context.clinic_id,
+                ProvisionalSafetyAlert.session_id == voice_session.id,
+                ProvisionalSafetyAlert.deduplication_key == deduplication_key,
+            )
+        ).first()
+        if existing is not None:
+            continue
+        alert_id = uuid.uuid4()
+        quote = normalized_text[fact.start : fact.end]
+        alert = ProvisionalSafetyAlert(
+            id=alert_id,
+            clinic_id=context.clinic_id,
+            patient_id=voice_session.patient_id,
+            session_id=voice_session.id,
+            source_event_id=(
+                source_event_id[:160]
+                if source_event_id
+                else f"completed:{hashlib.sha256(normalized_text.encode()).hexdigest()[:24]}"
+            ),
+            source_text_ciphertext=field_codec.encrypt_text(
+                context.clinic_id,
+                "provisional_safety_alert.source_text",
+                alert_id,
+                quote,
+            ),
+            source_text_sha256=hashlib.sha256(quote.encode()).hexdigest(),
+            source_start_offset=fact.start,
+            source_end_offset=fact.end,
+            source_language=(fact_language if fact_language != "und" else language),
+            concept_code=concept_code,
+            assertion_scope=fact.assertion_scope,
+            polarity=polarity,
+            deduplication_key=deduplication_key,
+            severity="critical" if not policy_review_required else "high",
+            state="pending",
+            completed_segment_at=completed_at,
+            detected_at=detected_at,
+        )
+        db.add(alert)
+        created.append(alert)
+    if created:
+        db.flush()
+        for alert in created:
+            emit_change(
+                db,
+                context,
+                action="voice.provisional_safety_alert_detected",
+                resource_type="provisional_safety_alert",
+                resource_id=alert.id,
+                metadata={
+                    "concept_code": alert.concept_code,
+                    "severity": alert.severity,
+                },
+            )
+    return created

@@ -1,38 +1,26 @@
-export type PlatformMe = {
-  user_id: string
-  platform_admin_id: string
-  email: string
-  full_name: string | null
-  role: "platform_admin"
-}
+import type {
+  ClinicOnboardingCreate,
+  ClinicPreflightPublic,
+  PatientDetailPublic,
+  PatientTimelineEntry,
+  PlatformClinicPublic,
+  PlatformMePublic,
+} from "@/client"
 
-export type PlatformClinic = {
-  id: string
-  code: string
-  name: string
-  member_count: number
-  patient_count: number
-}
+export type PlatformMe = PlatformMePublic
 
-export type PlatformPatient = {
-  id: string
-  display_name: string
-  date_of_birth: string | null
-  medical_record_number: string | null
-  masked_identity_document: string | null
-  portal_access_state: string
-  status: string
-}
+export type PlatformClinic = PlatformClinicPublic
 
-export type PlatformTimelineEntry = {
-  id: string
-  title: string
-  content: string
-  section: string
-  entry_type: string
-  occurred_at: string
-  version_no: number
-}
+export type PlatformPatient = PatientDetailPublic
+
+export type PlatformTimelineEntry = PatientTimelineEntry
+
+/** UI form requires every server-defaulted choice to be made explicitly. */
+export type ClinicOnboardingInput = Required<
+  Omit<ClinicOnboardingCreate, "formulary_template">
+>
+
+export type ClinicPreflight = ClinicPreflightPublic
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/v1/platform${path}`, {
@@ -66,4 +54,19 @@ export const platformApi = {
         `/clinics/${encodeURIComponent(clinicCode)}/patients/${encodeURIComponent(patientId)}/timeline`,
       )
     ).data,
+  preflightClinic: (body: ClinicOnboardingInput) =>
+    request<ClinicPreflight>("/clinics/preflight", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  onboardClinic: (body: ClinicOnboardingInput) =>
+    request<PlatformClinic>("/clinics/onboard", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify(body),
+    }),
 }

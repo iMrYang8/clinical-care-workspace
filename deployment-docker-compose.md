@@ -34,6 +34,25 @@ You can also configure these environment variables as needed:
 * `EMAILS_FROM_EMAIL`: The email account used to send emails.
 * `SENTRY_DSN`: The DSN for Sentry.
 
+Production startup and Clinic onboarding also require a qualified retention
+attestation for every observability sink outside the application-owned event
+repository. Set each verified window to 1–30 days and point the evidence ID at
+the operator policy or provider contract that proves the setting:
+
+```bash
+export EXTERNAL_PROXY_RETENTION_DAYS=30
+export EXTERNAL_CONTAINER_RETENTION_DAYS=30
+export EXTERNAL_APM_RETENTION_DAYS=30
+export EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE=deployment_policy
+export EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID="policy:YOUR_CHANGE_OR_POLICY_ID"
+```
+
+`provider_contract` is also accepted for a contract covering all three sinks.
+The development-only `deterministic_fixture` value is rejected in production.
+Compose additionally rotates the local container-log cache by size/file count;
+the attestation remains the time-based deletion contract for the external
+proxy, container collector, and APM provider.
+
 ### Secrets
 
 Generate and set secure values for the database passwords, token signing key,
@@ -44,6 +63,7 @@ export POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsa
 export POSTGRES_APP_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export FIELD_ENCRYPTION_MASTER_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+export NOTIFICATION_WEBHOOK_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ```
 
 `FIELD_ENCRYPTION_MASTER_KEY` is an independent persisted 32-byte key. Back it
@@ -175,6 +195,11 @@ In the repository, go to **Settings** > **Secrets and variables** > **Actions** 
 
 * `DOMAIN`
 * `PROJECT_NAME`
+* `EXTERNAL_PROXY_RETENTION_DAYS` (1–30)
+* `EXTERNAL_CONTAINER_RETENTION_DAYS` (1–30)
+* `EXTERNAL_APM_RETENTION_DAYS` (1–30)
+* `EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE` (`deployment_policy` or `provider_contract`)
+* `EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID` (inspectable policy/contract reference)
 
 To enable emails, add these optional repository variables:
 
@@ -197,6 +222,7 @@ Add these repository secrets:
 * `POSTGRES_APP_PASSWORD` (an independent runtime-role password)
 * `SECRET_KEY`
 * `FIELD_ENCRYPTION_MASTER_KEY` (an independent persisted 32-byte hex key)
+* `NOTIFICATION_WEBHOOK_SECRET` (independent from `SECRET_KEY`)
 * `OPENAI_API_KEY` (only when remote text egress is enabled)
 
 To use an authenticated email provider, add the optional `SMTP_PASSWORD` repository secret.

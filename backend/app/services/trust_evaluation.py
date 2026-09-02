@@ -36,7 +36,13 @@ from app.services.decisioning import (
     REDACTOR_VERSION,
     request_parameters_sha256,
 )
-from app.services.providers.base import validate_evidence
+from app.services.egress import TextModelEgressGateway
+from app.services.providers.base import (
+    ClinicalFact,
+    ClinicalNoteDraft,
+    ExtractionContext,
+    validate_evidence,
+)
 from app.services.providers.openai_text import OpenAITextProvider
 from app.services.redaction import RedactionService
 from app.services.voice.providers.openai_audio import OpenAIAudioTranscriptionProvider
@@ -151,9 +157,13 @@ def _persist_report(
     holdout_outcomes: list[bool],
     metrics: dict[str, object],
 ) -> CalibrationReport:
-    estimated = sum(calibration_outcomes) / max(1, len(calibration_outcomes))
-    lower = _wilson_lower(sum(holdout_outcomes), len(holdout_outcomes))
-    band = _band(lower, len(holdout_outcomes), len(holdout_ids))
+    now = get_datetime_utc()
+    calibration_sample_count = len(calibration_outcomes)
+    holdout_sample_count = len(holdout_outcomes)
+    total_sample_count = calibration_sample_count + holdout_sample_count
+    estimated = sum(calibration_outcomes) / max(1, calibration_sample_count)
+    lower = _wilson_lower(sum(holdout_outcomes), holdout_sample_count)
+    band = _band(lower, holdout_sample_count, len(holdout_ids))
     request_hash = request_parameters_sha256(request_parameters)
     calibration_split = hashlib.sha256("\n".join(calibration_ids).encode()).hexdigest()
     holdout_split = hashlib.sha256("\n".join(holdout_ids).encode()).hexdigest()
@@ -174,7 +184,14 @@ def _persist_report(
             CalibrationReport.code_commit == code_commit,
             EvaluationRun.calibration_split == calibration_split,
             EvaluationRun.holdout_split == holdout_split,
+            EvaluationRun.total_sample_count == total_sample_count,
+            EvaluationRun.calibration_sample_count == calibration_sample_count,
+            EvaluationRun.holdout_sample_count == holdout_sample_count,
+            CalibrationReport.total_sample_count == total_sample_count,
+            CalibrationReport.calibration_sample_count == calibration_sample_count,
+            CalibrationReport.holdout_sample_count == holdout_sample_count,
             EvaluationRun.status == "completed",
+            CalibrationReport.expires_at > now,
         )
         .order_by(col(CalibrationReport.created_at).desc())
     ).first()
@@ -190,13 +207,23 @@ def _persist_report(
         code_commit=code_commit,
         calibration_split=calibration_split,
         holdout_split=holdout_split,
-        sample_count=len(calibration_outcomes) + len(holdout_outcomes),
+        total_sample_count=total_sample_count,
+        calibration_sample_count=calibration_sample_count,
+        holdout_sample_count=holdout_sample_count,
+        # ``sample_count`` remains a compatibility projection of the untouched
+        # holdout. The explicit fields prevent total/calibration accounting from
+        # being inferred from metrics JSON at decision time.
+        sample_count=holdout_sample_count,
         status="completed",
-        metrics_json=metrics,
+        metrics_json={
+            **metrics,
+            "calibration_sample_count": calibration_sample_count,
+            "holdout_sample_count": holdout_sample_count,
+            "total_sample_count": total_sample_count,
+        },
     )
     session.add(run)
     session.flush()
-    now = get_datetime_utc()
     report = CalibrationReport(
         clinic_id=context.clinic_id,
         evaluation_run_id=run.id,
@@ -206,7 +233,10 @@ def _persist_report(
         request_parameters_sha256=request_hash,
         dataset_manifest_sha256=manifest_sha256,
         code_commit=code_commit,
-        sample_count=len(holdout_outcomes),
+        total_sample_count=total_sample_count,
+        calibration_sample_count=calibration_sample_count,
+        holdout_sample_count=holdout_sample_count,
+        sample_count=holdout_sample_count,
         consultation_count=len(holdout_ids),
         confidence_band=band,
         accuracy_lower_bound=lower,
@@ -220,7 +250,7 @@ def _persist_report(
             clinic_id=context.clinic_id,
             calibration_report_id=report.id,
             bucket_key="overall",
-            sample_count=len(holdout_outcomes),
+            sample_count=holdout_sample_count,
             consultation_count=len(holdout_ids),
             estimated_accuracy=estimated,
             accuracy_lower_bound=lower,
@@ -653,6 +683,9 @@ async def run_voice_evaluation(
             "task": report.task,
             "dataset_manifest_sha256": report.dataset_manifest_sha256,
             "sample_count": report.sample_count,
+            "total_sample_count": report.total_sample_count,
+            "calibration_sample_count": report.calibration_sample_count,
+            "holdout_sample_count": report.holdout_sample_count,
             "consultation_count": report.consultation_count,
             "confidence_band": report.confidence_band,
             "accuracy_lower_bound": report.accuracy_lower_bound,
@@ -667,30 +700,95 @@ async def _fact_case(
     provider: OpenAITextProvider,
     row: dict[str, str],
     cache_dir: Path,
+    *,
+    redaction_service: RedactionService | None = None,
 ) -> tuple[list[bool], dict[str, int]]:
     dialogue = row["dialogue"]
+    evaluation_clinic_id = uuid.uuid5(
+        uuid.NAMESPACE_URL, "nightingale:trust-evaluation"
+    )
+    source_version_id = uuid.uuid5(
+        evaluation_clinic_id, f"fact-case:{row['encounter_id']}"
+    )
+    known_names = [
+        row[key].strip()
+        for key in ("patient_name", "patient")
+        if row.get(key, "").strip()
+    ]
+    report = (redaction_service or RedactionService(require_presidio=True)).redact(
+        dialogue,
+        clinic_id=evaluation_clinic_id,
+        record_id=source_version_id,
+        known_names=known_names,
+    )
+    context = ExtractionContext(
+        clinic_id=evaluation_clinic_id,
+        patient_id=uuid.uuid5(evaluation_clinic_id, row["encounter_id"]),
+        source_version_id=source_version_id,
+        interaction_type="doctor_consult",
+    )
     cache_key = hashlib.sha256(
-        f"{provider.extract_model}\0{row['encounter_id']}\0{dialogue}".encode()
+        (
+            f"qualified-redacted-draft-v1\0{provider.extract_model}\0"
+            f"{row['encounter_id']}\0{report.redacted_sha256}"
+        ).encode()
     ).hexdigest()
     cache_path = cache_dir / f"{cache_key}.json"
-    raw: dict[str, Any]
+    draft: ClinicalNoteDraft | None = None
+    error_code: str | None = None
     if cache_path.exists():
         loaded = json.loads(cache_path.read_text(encoding="utf-8"))
-        raw = (
-            loaded
-            if isinstance(loaded, dict)
-            else {"_evaluation_error": "INVALID_CACHE_PAYLOAD"}
-        )
-    else:
-        raw = {}
+        if (
+            isinstance(loaded, dict)
+            and loaded.get("schema") == "qualified-redacted-draft-v1"
+            and loaded.get("redacted_sha256") == report.redacted_sha256
+        ):
+            if isinstance(loaded.get("error_code"), str):
+                error_code = str(loaded["error_code"])
+            else:
+                raw_draft = loaded.get("draft")
+                if isinstance(raw_draft, dict):
+                    raw_facts = raw_draft.get("facts", [])
+                    if isinstance(raw_facts, list):
+                        try:
+                            draft = ClinicalNoteDraft(
+                                summary=str(raw_draft.get("summary", "")),
+                                facts=[
+                                    ClinicalFact(
+                                        fact_type=str(item["fact_type"]),
+                                        value=str(item["value"]),
+                                        evidence_start=int(item["evidence_start"]),
+                                        evidence_end=int(item["evidence_end"]),
+                                        evidence_quote=str(item["evidence_quote"]),
+                                        feature_keys=[
+                                            str(value)
+                                            for value in item.get("feature_keys", [])
+                                        ],
+                                        critical=bool(item.get("critical", False)),
+                                    )
+                                    for item in raw_facts
+                                    if isinstance(item, dict)
+                                ],
+                                provider=str(raw_draft.get("provider", "openai")),
+                                model=str(
+                                    raw_draft.get("model", provider.extract_model)
+                                ),
+                                warnings=[
+                                    str(item) for item in raw_draft.get("warnings", [])
+                                ],
+                                needs_review=bool(raw_draft.get("needs_review", False)),
+                            )
+                        except (KeyError, TypeError, ValueError):
+                            draft = None
+    if draft is None and error_code is None:
         error_code = "PROVIDER_REQUEST_FAILED"
         for attempt in range(5):
             try:
-                raw = await provider.transport(
-                    provider.extract_model,
-                    dialogue,
-                    "doctor_consult",
+                draft = validate_evidence(
+                    await TextModelEgressGateway(provider).extract(report, context),
+                    report.redacted_text,
                 )
+                error_code = None
                 break
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
@@ -699,14 +797,23 @@ async def _fact_case(
                     break
             except (httpx.TimeoutException, httpx.TransportError):
                 error_code = "PROVIDER_TRANSIENT_TRANSPORT_ERROR"
+            except ValueError:
+                error_code = "REDACTION_EGRESS_NOT_QUALIFIED"
+                break
             if attempt < 4:
                 await asyncio.sleep(2**attempt)
-        if not raw:
+        cache_payload: dict[str, object] = {
+            "schema": "qualified-redacted-draft-v1",
+            "redacted_sha256": report.redacted_sha256,
+        }
+        if draft is None:
             # Keep only a fixed taxonomy code. Provider error bodies can echo
             # submitted text and therefore never belong in logs or reports.
-            raw = {"_evaluation_error": error_code}
-        _write_json(cache_path, raw)
-    if raw.get("_evaluation_error"):
+            cache_payload["error_code"] = error_code
+        else:
+            cache_payload["draft"] = asdict(draft)
+        _write_json(cache_path, cache_payload)
+    if draft is None:
         return [False], {
             "true_positive": 0,
             "false_positive": 0,
@@ -714,22 +821,13 @@ async def _fact_case(
             "exact_evidence_fact_count": 0,
             "provider_error": 1,
         }
-    draft = validate_evidence(
-        provider._draft_from_raw(
-            raw,
-            model=provider.extract_model,
-            source_text=dialogue,
-        ),
-        dialogue,
-    )
     reference = {
         (item.fact_type, item.key, item.value)
         for item in extract_normalized_facts(row["note"])
     }
     predicted: set[tuple[str, str, str]] = set()
     for fact in draft.facts:
-        quote = dialogue[fact.evidence_start : fact.evidence_end]
-        normalized = extract_normalized_facts(quote)
+        normalized = extract_normalized_facts(fact.evidence_quote)
         predicted.update((item.fact_type, item.key, item.value) for item in normalized)
     outcomes = [item in reference for item in predicted]
     outcomes.extend(False for _ in reference - predicted)
@@ -842,6 +940,9 @@ async def run_fact_evaluation(
             "task": report.task,
             "dataset_manifest_sha256": report.dataset_manifest_sha256,
             "sample_count": report.sample_count,
+            "total_sample_count": report.total_sample_count,
+            "calibration_sample_count": report.calibration_sample_count,
+            "holdout_sample_count": report.holdout_sample_count,
             "consultation_count": report.consultation_count,
             "confidence_band": report.confidence_band,
             "accuracy_lower_bound": report.accuracy_lower_bound,

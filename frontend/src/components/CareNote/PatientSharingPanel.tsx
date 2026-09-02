@@ -23,8 +23,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  type ClinicalFactAssertion,
   type ClinicalTimelineEntry,
   clinicalApi,
+  type MedicationAssertion,
+  type MedicationReviewInput,
   type PatientPublication,
   type PatientSharingRequest,
   patientSharingErrorMessage,
@@ -35,6 +38,8 @@ type PatientSharingPanelProps = {
   patientId: string
   currentUser: MePublic
   timeline: ClinicalTimelineEntry[]
+  clinicalFacts: ClinicalFactAssertion[]
+  clinicalFactsReady: boolean
   onChanged: () => void | Promise<void>
 }
 
@@ -57,10 +62,136 @@ function statusBadge(status: string) {
   )
 }
 
+function medicationReviewPreview(
+  facts: ClinicalFactAssertion[],
+  versionId?: string,
+): { assertions: MedicationAssertion[]; incomplete: boolean } {
+  if (!versionId) return { assertions: [], incomplete: false }
+  const regimenFacts = facts.filter(
+    (fact) =>
+      fact.source_entry_version_id === versionId &&
+      fact.assertion_state !== "superseded" &&
+      ["medication", "dose", "route", "frequency"].includes(fact.fact_type),
+  )
+  if (regimenFacts.length === 0) return { assertions: [], incomplete: false }
+  const grouped = new Map<
+    string,
+    Partial<MedicationAssertion> & { assertion_id: string }
+  >()
+  let incomplete = false
+  for (const fact of regimenFacts) {
+    const medication = fact.medication?.trim()
+    if (!medication) {
+      incomplete = true
+      continue
+    }
+    const key = medication.toLocaleLowerCase()
+    const current = grouped.get(key) ?? {
+      assertion_id: fact.id,
+      medication,
+    }
+    if (fact.fact_type === "medication") current.assertion_id = fact.id
+    if (fact.dose_value !== null && fact.dose_value !== undefined)
+      current.dose_value = fact.dose_value
+    if (fact.dose_unit) current.dose_unit = fact.dose_unit
+    if (fact.route) current.route = fact.route
+    if (fact.frequency) current.frequency = fact.frequency
+    grouped.set(key, current)
+  }
+  const assertions: MedicationAssertion[] = []
+  for (const regimen of grouped.values()) {
+    if (
+      !regimen.medication ||
+      regimen.dose_value === null ||
+      regimen.dose_value === undefined ||
+      !regimen.dose_unit ||
+      !regimen.route ||
+      !regimen.frequency
+    ) {
+      incomplete = true
+      continue
+    }
+    assertions.push(regimen as MedicationAssertion)
+  }
+  return { assertions, incomplete }
+}
+
+function confirmedReviews(
+  assertions: MedicationAssertion[],
+  confirmed: Set<string>,
+): MedicationReviewInput[] {
+  return assertions
+    .filter((assertion) => confirmed.has(assertion.assertion_id))
+    .map((assertion) => ({ ...assertion, confirmed: true as const }))
+}
+
+function MedicationReviewChecklist({
+  assertions,
+  confirmed,
+  onChange,
+  idPrefix,
+}: {
+  assertions: MedicationAssertion[]
+  confirmed: Set<string>
+  onChange: (next: Set<string>) => void
+  idPrefix: string
+}) {
+  if (assertions.length === 0)
+    return (
+      <p className="rounded-xl border bg-muted/30 p-3 text-sm text-muted-foreground">
+        The backend reports no structured medication assertions for this exact
+        version. An empty medication review is valid only in this case.
+      </p>
+    )
+  return (
+    <fieldset className="space-y-3 rounded-xl border border-warning/40 bg-warning-muted/20 p-3">
+      <legend className="px-1 text-sm font-semibold">
+        Confirm every medication field
+      </legend>
+      {assertions.map((assertion) => {
+        const id = `${idPrefix}-${assertion.assertion_id}`
+        return (
+          <label
+            className="flex items-start gap-3 rounded-lg border bg-card p-3 text-sm"
+            htmlFor={id}
+            key={assertion.assertion_id}
+          >
+            <input
+              checked={confirmed.has(assertion.assertion_id)}
+              className="mt-1 size-4"
+              id={id}
+              onChange={(event) => {
+                const next = new Set(confirmed)
+                if (event.target.checked) next.add(assertion.assertion_id)
+                else next.delete(assertion.assertion_id)
+                onChange(next)
+              }}
+              type="checkbox"
+            />
+            <span>
+              <strong>{assertion.medication}</strong>
+              <span className="mt-1 block leading-6 text-muted-foreground">
+                Dose {assertion.dose_value} {assertion.dose_unit} · route{" "}
+                {assertion.route} · frequency {assertion.frequency}
+              </span>
+              <span className="mt-1 block text-xs text-warning-muted-foreground">
+                I reviewed medication, dose, unit, route, and frequency against
+                the exact source.
+              </span>
+            </span>
+          </label>
+        )
+      })}
+    </fieldset>
+  )
+}
+
 export function PatientSharingPanel({
   patientId,
   currentUser,
   timeline,
+  clinicalFacts,
+  clinicalFactsReady,
   onChanged,
 }: PatientSharingPanelProps) {
   const queryClient = useQueryClient()
@@ -69,7 +200,14 @@ export function PatientSharingPanel({
   const [withdrawing, setWithdrawing] = useState<PatientPublication | null>(
     null,
   )
+  const [correcting, setCorrecting] = useState<PatientPublication | null>(null)
+  const [correctionIdempotencyKey, setCorrectionIdempotencyKey] = useState("")
+  const [replacementVersionId, setReplacementVersionId] = useState("")
+  const [confirmedMedicationIds, setConfirmedMedicationIds] = useState(
+    new Set<string>(),
+  )
   const [error, setError] = useState<string | null>(null)
+  const [correctionNotice, setCorrectionNotice] = useState<string | null>(null)
 
   const requestsQuery = useQuery({
     queryKey: ["patients", patientId, "patient-sharing-requests"],
@@ -123,6 +261,27 @@ export function PatientSharingPanel({
   const requestIsCurrent =
     reviewing !== null &&
     currentEntry?.version_id === reviewing.entry_version_id
+  const reviewMedicationPreview = medicationReviewPreview(
+    clinicalFacts,
+    reviewing?.entry_version_id,
+  )
+  const reviewMedicationAssertions = reviewMedicationPreview.assertions
+  const reviewMedicationIncomplete =
+    !clinicalFactsReady || reviewMedicationPreview.incomplete
+  const correctionMedicationPreview = medicationReviewPreview(
+    clinicalFacts,
+    replacementVersionId,
+  )
+  const correctionMedicationAssertions = correctionMedicationPreview.assertions
+  const correctionMedicationIncomplete =
+    !clinicalFactsReady || correctionMedicationPreview.incomplete
+  const replacementCandidates = correcting
+    ? timeline.filter(
+        (entry) =>
+          entry.id === correcting.entry_id &&
+          entry.version_id !== correcting.entry_version_id,
+      )
+    : []
   const sharingStateReady =
     requestsQuery.isSuccess && publicationsQuery.isSuccess
   const sharingStateLoading =
@@ -155,9 +314,13 @@ export function PatientSharingPanel({
   })
   const approveMutation = useMutation({
     mutationFn: (requestId: string) =>
-      clinicalApi.approvePatientSharing(requestId),
+      clinicalApi.approvePatientSharing(
+        requestId,
+        confirmedReviews(reviewMedicationAssertions, confirmedMedicationIds),
+      ),
     onSuccess: async () => {
       setReviewing(null)
+      setConfirmedMedicationIds(new Set())
       await refresh()
     },
     onError: (caught) => setError(patientSharingErrorMessage(caught)),
@@ -167,6 +330,51 @@ export function PatientSharingPanel({
       clinicalApi.withdrawPatientPublication(publicationId),
     onSuccess: async () => {
       setWithdrawing(null)
+      await refresh()
+    },
+    onError: (caught) => setError(patientSharingErrorMessage(caught)),
+  })
+  const correctionMutation = useMutation({
+    mutationFn: () => {
+      if (!correcting || !replacementVersionId || !correctionIdempotencyKey)
+        throw new Error("Correction selection is incomplete")
+      return clinicalApi.correctPatientPublication(
+        correcting.id,
+        {
+          replacement_entry_version_id: replacementVersionId,
+          medication_reviews: confirmedReviews(
+            correctionMedicationAssertions,
+            confirmedMedicationIds,
+          ),
+          outreach_required: true,
+        },
+        correctionIdempotencyKey,
+      )
+    },
+    onSuccess: async (publication) => {
+      if (publication.delivery_warning === "notification_queue_failed") {
+        setCorrectionNotice(
+          "Correction published, but outreach could not be queued. The outreach work item remains pending for follow-up.",
+        )
+      } else if (
+        publication.delivery_warning === "notification_delivery_failed"
+      ) {
+        setCorrectionNotice(
+          "Correction published, but delivery failed. The notification remains visible for retry and outreach follow-up.",
+        )
+      } else if (publication.delivery_warning === "notification_revoked") {
+        setCorrectionNotice(
+          "Correction published, but the notification was revoked. Direct outreach remains required.",
+        )
+      } else {
+        setCorrectionNotice(
+          `Correction published. Outreach is ${publication.notification_state ?? "pending"}.`,
+        )
+      }
+      setCorrecting(null)
+      setCorrectionIdempotencyKey("")
+      setReplacementVersionId("")
+      setConfirmedMedicationIds(new Set())
       await refresh()
     },
     onError: (caught) => setError(patientSharingErrorMessage(caught)),
@@ -286,6 +494,7 @@ export function PatientSharingPanel({
                     className="w-full"
                     onClick={() => {
                       setError(null)
+                      setConfirmedMedicationIds(new Set())
                       setReviewing(request)
                     }}
                     size="sm"
@@ -319,17 +528,37 @@ export function PatientSharingPanel({
                     {formatSingaporeDateTime(publication.approved_at)}
                   </p>
                   {currentUser.role === "clinician" && (
-                    <Button
-                      className="mt-2"
-                      onClick={() => {
-                        setError(null)
-                        setWithdrawing(publication)
-                      }}
-                      size="sm"
-                      variant="outline"
-                    >
-                      <Undo2 /> Withdraw from patient portal
-                    </Button>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {timeline.some(
+                        (entry) =>
+                          entry.id === publication.entry_id &&
+                          entry.version_id !== publication.entry_version_id,
+                      ) && (
+                        <Button
+                          onClick={() => {
+                            setError(null)
+                            setCorrectionNotice(null)
+                            setConfirmedMedicationIds(new Set())
+                            setReplacementVersionId("")
+                            setCorrectionIdempotencyKey(crypto.randomUUID())
+                            setCorrecting(publication)
+                          }}
+                          size="sm"
+                        >
+                          Publish linked correction
+                        </Button>
+                      )}
+                      <Button
+                        onClick={() => {
+                          setError(null)
+                          setWithdrawing(publication)
+                        }}
+                        size="sm"
+                        variant="outline"
+                      >
+                        <Undo2 /> Withdraw from patient portal
+                      </Button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -339,6 +568,14 @@ export function PatientSharingPanel({
           {error && (
             <Alert className="border-critical/40 bg-critical-muted text-critical-muted-foreground">
               <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          {correctionNotice && (
+            <Alert
+              aria-live="polite"
+              className="border-warning/40 bg-warning-muted text-warning-muted-foreground"
+            >
+              <AlertDescription>{correctionNotice}</AlertDescription>
             </Alert>
           )}
         </CardContent>
@@ -394,6 +631,20 @@ export function PatientSharingPanel({
                 and unresolved high-risk conflicts. A failed safety gate keeps
                 the note internal.
               </p>
+              <MedicationReviewChecklist
+                assertions={reviewMedicationAssertions}
+                confirmed={confirmedMedicationIds}
+                idPrefix="sharing-medication"
+                onChange={setConfirmedMedicationIds}
+              />
+              {reviewMedicationIncomplete && (
+                <Alert className="border-critical/40 bg-critical-muted text-critical-muted-foreground">
+                  <AlertDescription>
+                    Structured medication review data for this exact version is
+                    missing or incomplete. Publication remains blocked.
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
           )}
           <DialogFooter>
@@ -410,6 +661,9 @@ export function PatientSharingPanel({
                 !reviewing ||
                 !requestedVersion ||
                 !requestIsCurrent ||
+                confirmedMedicationIds.size !==
+                  reviewMedicationAssertions.length ||
+                reviewMedicationIncomplete ||
                 approveMutation.isPending
               }
               onClick={() => reviewing && approveMutation.mutate(reviewing.id)}
@@ -420,6 +674,101 @@ export function PatientSharingPanel({
                 <CheckCircle2 />
               )}
               Approve and publish
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={correcting !== null}
+        onOpenChange={(open) => {
+          if (!open && !correctionMutation.isPending) {
+            setCorrecting(null)
+            setCorrectionIdempotencyKey("")
+            setReplacementVersionId("")
+            setConfirmedMedicationIds(new Set())
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-2xl">
+              Publish linked correction
+            </DialogTitle>
+            <DialogDescription>
+              This atomically withdraws the incorrect publication, publishes the
+              selected same-entry replacement, clears open patient views, and
+              queues correction outreach. The original receipt remains.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label
+                className="text-sm font-medium"
+                htmlFor="replacement-version"
+              >
+                Replacement version
+              </label>
+              <select
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                id="replacement-version"
+                onChange={(event) =>
+                  setReplacementVersionId(event.target.value)
+                }
+                value={replacementVersionId}
+              >
+                <option value="">Select reviewed replacement</option>
+                {replacementCandidates.map((entry) => (
+                  <option key={entry.version_id} value={entry.version_id}>
+                    v{entry.version_no} · {entry.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <MedicationReviewChecklist
+              assertions={correctionMedicationAssertions}
+              confirmed={confirmedMedicationIds}
+              idPrefix="correction-medication"
+              onChange={setConfirmedMedicationIds}
+            />
+            {correctionMedicationIncomplete && replacementVersionId && (
+              <Alert className="border-critical/40 bg-critical-muted text-critical-muted-foreground">
+                <AlertDescription>
+                  The replacement version has incomplete structured medication
+                  data. This correction remains blocked until it can be reviewed
+                  exactly.
+                </AlertDescription>
+              </Alert>
+            )}
+            <Alert className="border-warning/40 bg-warning-muted text-warning-muted-foreground">
+              <AlertDescription>
+                Direct outreach is required for this correction. The patient
+                will be asked to acknowledge the replacement.
+              </AlertDescription>
+            </Alert>
+          </div>
+          <DialogFooter>
+            <Button
+              disabled={correctionMutation.isPending}
+              onClick={() => setCorrecting(null)}
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                !replacementVersionId ||
+                confirmedMedicationIds.size !==
+                  correctionMedicationAssertions.length ||
+                correctionMedicationIncomplete ||
+                correctionMutation.isPending
+              }
+              onClick={() => correctionMutation.mutate()}
+            >
+              {correctionMutation.isPending && (
+                <LoaderCircle className="animate-spin" />
+              )}
+              Withdraw, replace, and notify
             </Button>
           </DialogFooter>
         </DialogContent>

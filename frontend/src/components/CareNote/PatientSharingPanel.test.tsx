@@ -6,6 +6,7 @@ import type { MePublic } from "@/client"
 import {
   type ClinicalTimelineEntry,
   clinicalApi,
+  type PatientPublication,
   type PatientSharingRequest,
 } from "@/features/api"
 import { PatientSharingPanel } from "./PatientSharingPanel"
@@ -42,7 +43,12 @@ const request: PatientSharingRequest = {
   publication_id: null,
 }
 
-function renderPanel(role: "staff" | "clinician") {
+function renderPanel(
+  role: "staff" | "clinician",
+  clinicalFacts: React.ComponentProps<
+    typeof PatientSharingPanel
+  >["clinicalFacts"] = [],
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -53,6 +59,8 @@ function renderPanel(role: "staff" | "clinician") {
   render(
     <QueryClientProvider client={queryClient}>
       <PatientSharingPanel
+        clinicalFacts={clinicalFacts}
+        clinicalFactsReady
         currentUser={currentUser}
         onChanged={vi.fn()}
         patientId={entry.patient_id}
@@ -126,7 +134,7 @@ describe("patient sharing workbench", () => {
     expect(await screen.findByText(entry.content)).toBeInTheDocument()
     fireEvent.click(screen.getByTestId("approve-patient-sharing"))
 
-    await waitFor(() => expect(approve).toHaveBeenCalledWith(request.id))
+    await waitFor(() => expect(approve).toHaveBeenCalledWith(request.id, []))
   })
 
   it("requires confirmation before withdrawing an active publication", async () => {
@@ -168,6 +176,114 @@ describe("patient sharing workbench", () => {
     fireEvent.click(screen.getByTestId("withdraw-patient-sharing"))
 
     await waitFor(() => expect(withdraw).toHaveBeenCalledWith(publication.id))
+  })
+
+  it("reuses the correction key after a lost response and surfaces delivery failure", async () => {
+    vi.spyOn(clinicalApi, "patientSharingRequests").mockResolvedValue([])
+    const publication = {
+      id: "77777777-7777-4777-8777-777777777777",
+      patient_id: entry.patient_id,
+      entry_id: entry.id,
+      entry_version_id: "88888888-8888-4888-8888-888888888888",
+      supersedes_publication_id: null,
+      entry_title: entry.title,
+      approved_by_name: "Clinician",
+      approval_policy_version: "patient-sharing-v1",
+      approved_at: "2026-08-28T02:00:00Z",
+      withdrawn_at: null,
+      items: [],
+      medication_review_complete: false,
+      medication_reviews: [],
+      correction_reason_code: null,
+      replacement_publication_id: null,
+      acknowledgement_state: "not_required",
+      outreach_required: false,
+      notification_id: null,
+      notification_state: null,
+      delivery_warning: null,
+    } satisfies PatientPublication
+    vi.spyOn(clinicalApi, "patientPublications").mockResolvedValue([
+      publication,
+    ])
+    const correct = vi
+      .spyOn(clinicalApi, "correctPatientPublication")
+      .mockRejectedValueOnce(new Error("Network response lost"))
+      .mockResolvedValueOnce({
+        ...publication,
+        id: "99999999-9999-4999-8999-999999999999",
+        supersedes_publication_id: publication.id,
+        outreach_required: true,
+        notification_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        notification_state: "failed",
+        delivery_warning: "notification_delivery_failed",
+      })
+    renderPanel("clinician")
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Publish linked correction" }),
+    )
+    fireEvent.change(screen.getByLabelText("Replacement version"), {
+      target: { value: entry.version_id },
+    })
+    const submit = screen.getByRole("button", {
+      name: "Withdraw, replace, and notify",
+    })
+    fireEvent.click(submit)
+    await screen.findByText(
+      "Patient sharing could not be completed. Review the note and try again.",
+    )
+    fireEvent.click(submit)
+
+    await waitFor(() => expect(correct).toHaveBeenCalledTimes(2))
+    expect(correct.mock.calls[0]?.[2]).toBeTruthy()
+    expect(correct.mock.calls[1]?.[2]).toBe(correct.mock.calls[0]?.[2])
+    expect(
+      await screen.findByText(/Correction published, but delivery failed/),
+    ).toBeInTheDocument()
+  })
+
+  it("fails closed when exact-version medication regimen data is incomplete", async () => {
+    vi.spyOn(clinicalApi, "patientSharingRequests").mockResolvedValue([request])
+    vi.spyOn(clinicalApi, "patientPublications").mockResolvedValue([])
+    vi.spyOn(clinicalApi, "versions").mockResolvedValue([
+      {
+        id: entry.version_id,
+        entry_id: entry.id,
+        version_no: 1,
+        title: entry.title,
+        content: entry.content,
+        content_sha256: "a".repeat(64),
+        author_id: entry.author_id!,
+        reverted_from_version_id: null,
+        created_at: entry.created_at,
+      },
+    ])
+    renderPanel("clinician", [
+      {
+        id: "assertion-1",
+        fact_type: "medication",
+        subject: "amoxicillin",
+        normalized_value: "amoxicillin",
+        clinical_status: "active",
+        effective_time: null,
+        origin: "human",
+        source_entry_version_id: entry.version_id,
+        provenance_pointer_id: "pointer-1",
+        medication: "amoxicillin",
+        dose_value: 500,
+        dose_unit: "mg",
+        route: "oral",
+        frequency: null,
+      },
+    ])
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review exact version" }),
+    )
+    expect(
+      await screen.findByText(/Structured medication review data.*incomplete/),
+    ).toBeInTheDocument()
+    expect(screen.getByTestId("approve-patient-sharing")).toBeDisabled()
   })
 
   it("shows every sharing request instead of silently truncating the queue", async () => {

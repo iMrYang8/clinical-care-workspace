@@ -172,7 +172,7 @@ a production EHR, medical device, or compliance certification.
 ## Provider capability states
 
 The default values are `AI_PROVIDER=deterministic`,
-`VOICE_TRANSCRIPTION_PROVIDER=disabled`, and both remote-egress flags `false`.
+`VOICE_TRANSCRIPTION_PROVIDER=local`, and both remote-egress flags `false`.
 Provider/model IDs are configuration, never hard-coded promises.
 
 - Remote text requires `AI_PROVIDER=openai`,

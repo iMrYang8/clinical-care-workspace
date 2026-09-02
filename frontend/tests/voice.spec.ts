@@ -327,8 +327,18 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
         detected_language: string | null
         end_ms: number
         id: string
+        language_confidence: number | null
+        language_spans: Array<{
+          confidence: number | null
+          detection_source: string
+          end_offset: number
+          language_code: "en" | "ms" | "nan" | "zh" | "cmn" | "und"
+          review_required: boolean
+          start_offset: number
+        }>
         overlap_group_id: string | null
         speaker_id: string | null
+        source_language: string
         start_ms: number
         text: string
         text_end: number
@@ -344,16 +354,40 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
       confidence: null,
       detected_language: "en",
       end_ms: 5200,
+      language_confidence: 1,
+      language_spans: [
+        {
+          confidence: 1,
+          detection_source: "lexicon_and_provider",
+          end_offset: 73,
+          language_code: "en",
+          review_required: false,
+          start_offset: 0,
+        },
+      ],
       overlap_group_id: null,
       speaker_id: "SPEAKER_00",
+      source_language: "en",
       start_ms: 0,
     },
     {
       confidence: null,
       detected_language: "zh",
       end_ms: 10200,
+      language_confidence: 1,
+      language_spans: [
+        {
+          confidence: 1,
+          detection_source: "lexicon_and_provider",
+          end_offset: 42,
+          language_code: "zh",
+          review_required: false,
+          start_offset: 0,
+        },
+      ],
       overlap_group_id: "overlap-1",
       speaker_id: "SPEAKER_01",
+      source_language: "zh",
       start_ms: 4800,
     },
   ])
@@ -373,8 +407,22 @@ test("[Scenario F] two-device recovery proves review evidence and clinician publ
   const desktopTranscript = page.getByTestId("transcript-panel-desktop")
   await expect(desktopTranscript.getByText("Speaker 1")).toBeVisible()
   await expect(desktopTranscript.getByText("Speaker 2")).toBeVisible()
-  await expect(desktopTranscript.getByText("en", { exact: true })).toBeVisible()
-  await expect(desktopTranscript.getByText("zh", { exact: true })).toBeVisible()
+  await expect(
+    desktopTranscript.getByText("English (en)", { exact: true }),
+  ).toBeVisible()
+  await expect(
+    desktopTranscript.getByText("Chinese (zh)", { exact: true }),
+  ).toBeVisible()
+  await expect(
+    desktopTranscript.getByText(
+      /English \(en\) · characters 0–73 · lexicon and provider · 100% confidence/,
+    ),
+  ).toBeVisible()
+  await expect(
+    desktopTranscript.getByText(
+      /Chinese \(zh\) · characters 0–42 · lexicon and provider · 100% confidence/,
+    ),
+  ).toBeVisible()
   await expect(
     desktopTranscript.getByText("Confidence unavailable", { exact: true }),
   ).toHaveCount(2)

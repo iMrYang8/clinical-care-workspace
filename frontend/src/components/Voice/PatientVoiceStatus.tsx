@@ -22,7 +22,10 @@ const PATIENT_STATUS: Record<string, string> = {
   assembling: "Preparing audio",
   preprocessing: "Preparing audio",
   transcribing: "Creating transcript",
-  redacting: "Protecting your information",
+  // Legacy workers may briefly report the old state name. Do not claim that
+  // this transition itself performs redaction; egress safety is enforced by
+  // the typed gateway before any remote call.
+  redacting: "Preparing care-team review",
   extracting: "Preparing care-team review",
   ready: "Care-team review",
   needs_review: "Care-team review required",

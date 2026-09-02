@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import uuid
+from typing import Any
+
 from fastapi.testclient import TestClient
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.field_crypto import field_codec
 from app.models import (
     ConflictCase,
+    NotificationOutbox,
     PatientIdentifier,
     PatientUserLink,
     PlatformAuditEvent,
@@ -98,35 +103,49 @@ def test_possible_duplicate_requires_bound_confirmation_token(
 
 
 def test_patient_invitation_creates_membership_and_patient_link(
-    client: TestClient, auth_headers, monkeypatch, owner_session
-) -> None:  # type: ignore[no-untyped-def]
+    client: TestClient, auth_headers: Any, owner_session: Session
+) -> None:
     staff = auth_headers("staff")
     patient = client.post("/api/v1/patients", headers=staff, json=_identity()).json()
-    delivered: dict[str, str] = {}
-
-    def capture(*, recipient: str, token: str, clinic_name: str) -> None:
-        delivered.update(recipient=recipient, token=token, clinic_name=clinic_name)
-
-    monkeypatch.setattr(
-        "app.api.routes.patient_registry.deliver_patient_portal_invitation", capture
-    )
     invited = client.post(
         f"/api/v1/patients/{patient['id']}/portal-invitations",
         headers=staff,
         json={"email": "new.patient@example.com"},
     )
     assert invited.status_code == 201, invited.text
+    assert invited.json()["notification_state"] == "submitted"
+    owner_session.expire_all()
+    notification = owner_session.get(
+        NotificationOutbox, uuid.UUID(invited.json()["notification_id"])
+    )
+    assert notification is not None
+    delivered = field_codec.decrypt_json(
+        notification.clinic_id,
+        "notification.payload",
+        notification.id,
+        notification.payload_ciphertext,
+    )
+    recipient = field_codec.decrypt_text(
+        notification.clinic_id,
+        "notification.destination",
+        notification.id,
+        notification.destination_ciphertext,
+    )
+    assert isinstance(delivered, dict)
+    assert recipient == "new.patient@example.com"
+    token = delivered["enrollment_token"]
+    assert isinstance(token, str)
     preview = client.post(
         "/api/v1/auth/patient-invitations/preview",
-        json={"token": delivered["token"], "email": delivered["recipient"]},
+        json={"token": token, "email": recipient},
     )
     assert preview.status_code == 200
     assert preview.json()["account_exists"] is False
     accepted = client.post(
         "/api/v1/auth/patient-invitations/accept",
         json={
-            "token": delivered["token"],
-            "email": delivered["recipient"],
+            "token": token,
+            "email": recipient,
             "password": "patient-portal-passphrase",
             "full_name": "Morgan Lim",
         },
@@ -139,8 +158,8 @@ def test_patient_invitation_creates_membership_and_patient_link(
     replay = client.post(
         "/api/v1/auth/patient-invitations/accept",
         json={
-            "token": delivered["token"],
-            "email": delivered["recipient"],
+            "token": token,
+            "email": recipient,
             "password": "patient-portal-passphrase",
         },
     )

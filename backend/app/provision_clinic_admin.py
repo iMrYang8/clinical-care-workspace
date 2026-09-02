@@ -104,7 +104,9 @@ def provision_clinic_admin(
         session.add(admin)
         session.flush()
     else:
-        password_matches, _ = verify_password(admin_password, admin.hashed_password)
+        password_matches = False
+        if admin.account_kind == "staff" and admin.hashed_password is not None:
+            password_matches, _ = verify_password(admin_password, admin.hashed_password)
         if not password_matches or not admin.is_active:
             raise RuntimeError("PROVISION_ADMIN_IDENTITY_CONFLICT")
     admin_membership = _require_matching_membership(session, clinic, admin, "admin")
@@ -118,10 +120,11 @@ def provision_clinic_admin(
             full_name=f"Nightingale Worker ({slug})",
             # Worker identity is server-owned and never password-authenticated.
             hashed_password=get_password_hash(secrets.token_urlsafe(48)),
+            account_kind="service",
         )
         session.add(worker)
         session.flush()
-    elif not worker.is_active:
+    elif not worker.is_active or worker.account_kind != "service":
         raise RuntimeError("PROVISION_WORKER_IDENTITY_CONFLICT")
     worker_membership = _require_matching_membership(session, clinic, worker, "worker")
     session.commit()

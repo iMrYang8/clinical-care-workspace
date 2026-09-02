@@ -81,3 +81,12 @@ checked-in diagrams; librsvg is a build prerequisite and is not bundled here.
 THIRD_PARTY_NOTICES.md records direct dependencies, planned integrations, and
 design references. Entries marked planned, optional, or design reference are
 not bundled dependencies, vendored source, or shipped assets in this baseline.
+
+The primary demonstration artifact is
+output/demo/Nightingale_Final_Demo_EN_Samantha.mp4: a 12:00 English,
+1920x1080 H.264/AAC video with output/demo/Nightingale_Final_Demo_EN.srt as its
+English subtitle sidecar. Narration was generated locally with the
+operating-system-provided macOS `say` voice Samantha. This repository does not
+bundle or redistribute the Samantha voice or macOS speech engine. The final
+MP4, SRT, metadata, and SHA-256 manifest are independently hashed in the
+Technical Brief release binding.

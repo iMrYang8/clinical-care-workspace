@@ -70,7 +70,12 @@ def test_ai_scribed_highlight_is_promoted_and_resolves_to_exact_ai_version(
         f"/api/v1/patients/{patient_id}/glance", headers=clinician_headers
     )
     assert glance.status_code == 200, glance.text
-    assert created["id"] in {card["highlight_id"] for card in glance.json()["cards"]}
+    assert created["id"] not in {
+        card["highlight_id"] for card in glance.json()["cards"]
+    }
+    assert created["id"] in {
+        card["highlight_id"] for card in glance.json()["review_cards"]
+    }
 
     resolved = client.get(
         f"/api/v1/provenance/{created['provenance_pointer_id']}/resolve",
@@ -309,7 +314,7 @@ def test_patient_only_resolves_reviewed_patient_facing_provenance(
 
     accepted = client.post(
         f"/api/v1/highlights/{created.json()['id']}/accept",
-        headers=clinician_headers,
+        headers=auth_headers("staff"),
     )
     assert accepted.status_code == 200, accepted.text
     visible = client.get(
@@ -345,7 +350,7 @@ def test_withdrawing_entry_removes_accepted_highlight_from_patient_glance(
     pointer_id = created.json()["provenance_pointer_id"]
     accepted = client.post(
         f"/api/v1/highlights/{created.json()['id']}/accept",
-        headers=clinician_headers,
+        headers=auth_headers("staff"),
     )
     assert accepted.status_code == 200, accepted.text
 
@@ -405,6 +410,7 @@ def test_accept_and_pin_rebuild_precomputed_glance_with_max_five_cards(
     client: TestClient, auth_headers
 ) -> None:
     headers = auth_headers("clinician")
+    staff_headers = auth_headers("staff")
     entry = _entry(client, headers)
     patient_id = entry["patient_id"]
     created: list[str] = []
@@ -427,7 +433,7 @@ def test_accept_and_pin_rebuild_precomputed_glance_with_max_five_cards(
         assert response.status_code == 201, response.text
         created.append(response.json()["id"])
         accepted = client.post(
-            f"/api/v1/highlights/{created[-1]}/accept", headers=headers
+            f"/api/v1/highlights/{created[-1]}/accept", headers=staff_headers
         )
         assert accepted.status_code == 200
     pinned = client.post(f"/api/v1/highlights/{created[-1]}/pin", headers=headers)
@@ -443,6 +449,7 @@ def test_internal_top_five_cannot_crowd_out_patient_eligible_cards(
     client: TestClient, auth_headers
 ) -> None:
     clinician_headers = auth_headers("clinician")
+    staff_headers = auth_headers("staff")
     patient_headers = auth_headers("patient")
     patient_id = client.get("/api/v1/patients", headers=clinician_headers).json()[
         "data"
@@ -463,7 +470,7 @@ def test_internal_top_five_cannot_crowd_out_patient_eligible_cards(
         assert response.status_code == 201, response.text
         return response.json()
 
-    def create_pinned(entry: dict, label: str, *, patient_facing: bool) -> None:
+    def create_accepted(entry: dict, label: str, *, patient_facing: bool) -> None:
         created = client.post(
             f"/api/v1/entries/{entry['id']}/highlights",
             headers=clinician_headers,
@@ -475,23 +482,22 @@ def test_internal_top_five_cannot_crowd_out_patient_eligible_cards(
                 "prefix": "prefix ",
                 "suffix": " suffix",
                 "label": label,
-                "critical": True,
                 "patient_facing": patient_facing,
             },
         )
         assert created.status_code == 201, created.text
-        pinned = client.post(
-            f"/api/v1/highlights/{created.json()['id']}/pin",
-            headers=clinician_headers,
+        accepted = client.post(
+            f"/api/v1/highlights/{created.json()['id']}/accept",
+            headers=staff_headers,
         )
-        assert pinned.status_code == 200, pinned.text
+        assert accepted.status_code == 200, accepted.text
 
     public_entry = create_entry("Public source", patient_facing=True)
     for index in range(5):
-        create_pinned(public_entry, f"PUBLIC-CARD-{index}", patient_facing=True)
+        create_accepted(public_entry, f"PUBLIC-CARD-{index}", patient_facing=True)
     internal_entry = create_entry("Internal source", patient_facing=False)
     for index in range(5):
-        create_pinned(internal_entry, f"INTERNAL-CARD-{index}", patient_facing=False)
+        create_accepted(internal_entry, f"INTERNAL-CARD-{index}", patient_facing=False)
 
     clinical = client.get(
         f"/api/v1/patients/{patient_id}/glance", headers=clinician_headers
@@ -513,4 +519,7 @@ def test_internal_top_five_cannot_crowd_out_patient_eligible_cards(
             "highlight_id",
             "label",
             "provenance_pointer_id",
+            "support_state",
+            "support_review_required",
+            "current_priority_eligible",
         }

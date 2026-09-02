@@ -9,12 +9,12 @@ from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core import security
 from app.core.config import settings
-from app.core.db import engine, set_rls_clinic
-from app.models import ClinicMembership, Role, TokenPayload, User
+from app.core.db import engine, set_rls_actor, set_rls_clinic
+from app.models import ClinicMembership, PatientUserLink, Role, TokenPayload, User
 
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/auth/login", auto_error=False
@@ -48,6 +48,7 @@ class RequestContext:
     # Ordinary request dependencies finish before this matters, while SSE must
     # stop authorizing reads when the token that opened the stream expires.
     token_expires_at_epoch: float | None = None
+    linked_patient_id: uuid.UUID | None = None
 
     @property
     def user_id(self) -> uuid.UUID:
@@ -91,6 +92,7 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
     # Bootstrap RLS from a signed server-issued claim, then verify it against the
     # live membership row. A moved/revoked membership therefore invalidates the JWT.
     set_rls_clinic(session, token_clinic_id)
+    set_rls_actor(session, user_id)
     user = session.get(User, user_id)
     membership = session.get(ClinicMembership, membership_id)
     if (
@@ -121,11 +123,39 @@ def _resolve_request_context(session: Session, token: str) -> RequestContext:
             headers=SESSION_INVALID_HEADERS,
         )
 
+    # The membership is now verified, so bind its live role before any
+    # role-dependent projection is queried.  PatientUserLink has a narrow
+    # self-bootstrap RLS branch keyed to this actor and role; the patient id is
+    # bound immediately after that one relationship is resolved.
+    set_rls_actor(session, user_id, role=membership.role)
+    linked_patient_id: uuid.UUID | None = None
+    if membership.role == "patient":
+        link = session.exec(
+            select(PatientUserLink).where(
+                PatientUserLink.clinic_id == token_clinic_id,
+                PatientUserLink.user_id == user_id,
+            )
+        ).first()
+        if link is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Patient account is not linked",
+                headers=SESSION_INVALID_HEADERS,
+            )
+        linked_patient_id = link.patient_id
+    set_rls_actor(
+        session,
+        user_id,
+        role=membership.role,
+        patient_id=linked_patient_id,
+    )
+
     return RequestContext(
         user=user,
         membership=membership,
         job_id=job_id,
         token_expires_at_epoch=token_expires_at_epoch,
+        linked_patient_id=linked_patient_id,
     )
 
 

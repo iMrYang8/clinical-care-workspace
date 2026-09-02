@@ -6,9 +6,10 @@ PostgreSQL RLS migration are independent tenant boundaries.
 
 import uuid
 from datetime import UTC, date, datetime
-from typing import Literal
+from enum import StrEnum
+from typing import Annotated, Literal
 
-from pydantic import EmailStr
+from pydantic import EmailStr, StringConstraints
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
@@ -31,6 +32,14 @@ def get_datetime_utc() -> datetime:
 
 
 Role = Literal["patient", "staff", "clinician", "admin", "worker"]
+ReasonCodeInput = Annotated[
+    str,
+    StringConstraints(
+        min_length=3,
+        max_length=80,
+        pattern=r"^[a-z][a-z0-9_]{2,79}$",
+    ),
+]
 LiveTranscriptStatus = Literal[
     "not_started", "available", "unavailable", "needs_review", "replaced"
 ]
@@ -63,6 +72,34 @@ EntryType = Literal[
 ]
 
 
+class RiskReason(StrEnum):
+    """Exhaustive, PHI-free reason codes exposed by ranking projections."""
+
+    CRITICAL = "critical"
+    UNRESOLVED = "unresolved"
+    CLINICIAN_CONFIRMED = "clinician_confirmed"
+    CLINICAL_ENTITY = "clinical_entity"
+    CLINIC_FEEDBACK = "clinic_feedback"
+    RECENCY = "recency"
+    CLINICIAN_ACCEPTED = "clinician_accepted"
+    CARE_PLAN_CONFLICT = "care_plan_conflict"
+    CLINICIAN_CONFIRMED_FOLLOW_UP = "clinician_confirmed_follow_up"
+    MEDICATION_STATUS_CONFLICT = "medication_status_conflict"
+    OPEN_MEDICATION_RECONCILIATION = "open_medication_reconciliation"
+    SCHEDULED_FOLLOW_UP = "scheduled_follow_up"
+    SYNTHETIC_DATASET_RECENT_ENCOUNTER = "synthetic_dataset_recent_encounter"
+    UNAVAILABLE_REVIEW_REQUIRED = "unavailable_review_required"
+
+
+def normalize_risk_reason(value: str) -> RiskReason:
+    """Fail closed when legacy or malformed persisted reason codes are read."""
+
+    try:
+        return RiskReason(value)
+    except ValueError:
+        return RiskReason.UNAVAILABLE_REVIEW_REQUIRED
+
+
 class TenantRow(SQLModel):
     clinic_id: uuid.UUID = Field(foreign_key="clinics.id", ondelete="CASCADE")
 
@@ -92,13 +129,25 @@ class Clinic(SQLModel, table=True):
 class User(SQLModel, table=True):
     __tablename__ = "users"
     __table_args__ = (
+        CheckConstraint(
+            "account_kind IN ('staff','patient','service')",
+            name="ck_users_account_kind",
+        ),
+        CheckConstraint(
+            "account_kind = 'patient' OR "
+            "(email IS NOT NULL AND hashed_password IS NOT NULL)",
+            name="ck_users_staff_credentials",
+        ),
         UniqueConstraint("email", name="users_email_key"),
         Index("ix_users_email", "email"),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    email: EmailStr = Field(max_length=255)
+    # Patient portal identities may be phone/OTP-only.  Human clinic and
+    # service accounts remain subject to the database credential check above.
+    email: EmailStr | None = Field(default=None, max_length=255)
     full_name: str | None = Field(default=None, max_length=255)
-    hashed_password: str
+    hashed_password: str | None = None
+    account_kind: str = Field(default="staff", max_length=20, index=True)
     is_active: bool = True
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
@@ -153,6 +202,11 @@ class ClinicAISetting(TenantRow, table=True):
 class ClinicInvitation(TenantRow, table=True):
     __tablename__ = "clinic_invitations"
     __table_args__ = (
+        CheckConstraint(
+            "(created_by_membership_id IS NOT NULL)::int + "
+            "(created_by_platform_admin_id IS NOT NULL)::int = 1",
+            name="ck_clinic_invitation_exactly_one_creator",
+        ),
         UniqueConstraint("token_hash", name="clinic_invitations_token_hash_key"),
         Index(
             "ix_clinic_invitations_pending_email",
@@ -165,13 +219,19 @@ class ClinicInvitation(TenantRow, table=True):
             ["clinic_memberships.clinic_id", "clinic_memberships.id"],
             name="fk_clinic_invitation_creator_tenant",
         ),
+        ForeignKeyConstraint(
+            ["created_by_platform_admin_id"],
+            ["platform_administrators.id"],
+            name="fk_clinic_invitation_platform_creator",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     email: EmailStr = Field(max_length=255)
     invited_full_name: str | None = Field(default=None, max_length=255)
     role: str = Field(max_length=20)
     token_hash: str = Field(max_length=64)
-    created_by_membership_id: uuid.UUID
+    created_by_membership_id: uuid.UUID | None = None
+    created_by_platform_admin_id: uuid.UUID | None = None
     expires_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False)
     )
@@ -312,6 +372,9 @@ class PatientPortalInvitation(TenantRow, table=True):
     __tablename__ = "patient_portal_invitations"
     __table_args__ = (
         UniqueConstraint("token_hash", name="patient_portal_invitation_token_key"),
+        UniqueConstraint(
+            "clinic_id", "id", name="uq_patient_portal_invitation_clinic_id"
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -332,7 +395,9 @@ class PatientPortalInvitation(TenantRow, table=True):
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     patient_id: uuid.UUID
-    email: EmailStr = Field(max_length=255)
+    # Legacy email invitations remain valid; phone/OTP enrollment intentionally
+    # carries no invented email address.
+    email: EmailStr | None = Field(default=None, max_length=255)
     token_hash: str = Field(max_length=64)
     created_by_membership_id: uuid.UUID
     expires_at: datetime = Field(
@@ -348,6 +413,330 @@ class PatientPortalInvitation(TenantRow, table=True):
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+
+
+class PatientAccessCredential(TenantRow, table=True):
+    """Revocable patient portal identity independent of an email address.
+
+    Phone values are encrypted for display and HMACed only for controlled
+    matching.  ``phone_hmac`` is deliberately not unique: households may share
+    a number, and number reassignment creates a new credential while preserving
+    the revoked historical record.
+    """
+
+    __tablename__ = "patient_access_credentials"
+    __table_args__ = (
+        CheckConstraint(
+            "preferred_channel IN ('sms','whatsapp')",
+            name="ck_patient_access_preferred_channel",
+        ),
+        UniqueConstraint("clinic_id", "id", name="uq_patient_access_credential_id"),
+        UniqueConstraint("portal_id", name="patient_access_portal_id_key"),
+        UniqueConstraint("claim_code_hash", name="patient_access_claim_code_key"),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_patient_access_patient",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "invitation_id"],
+            ["patient_portal_invitations.clinic_id", "patient_portal_invitations.id"],
+            name="fk_patient_access_invitation",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "created_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_patient_access_creator",
+        ),
+        Index("ix_patient_access_phone_hmac", "clinic_id", "phone_hmac"),
+        Index(
+            "uq_patient_access_active_patient",
+            "clinic_id",
+            "patient_id",
+            unique=True,
+            postgresql_where=text("is_active AND revoked_at IS NULL"),
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    user_id: uuid.UUID | None = Field(
+        default=None, foreign_key="users.id", ondelete="SET NULL"
+    )
+    invitation_id: uuid.UUID | None = None
+    portal_id: str = Field(max_length=80)
+    phone_ciphertext: bytes | None = Field(
+        default=None, sa_column=Column(LargeBinary, nullable=True)
+    )
+    phone_hmac: str | None = Field(default=None, max_length=64)
+    masked_phone: str | None = Field(default=None, max_length=32)
+    preferred_channel: str = Field(default="sms", max_length=20)
+    claim_code_hash: str = Field(max_length=64)
+    claim_code_expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    claim_code_used_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_by_membership_id: uuid.UUID | None = None
+    is_active: bool = True
+    revoked_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    recovery_version: int = Field(default=1, ge=1)
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PatientOTPChallenge(TenantRow, table=True):
+    __tablename__ = "patient_otp_challenges"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('enrollment','login','recovery','phone_change')",
+            name="ck_patient_otp_purpose",
+        ),
+        UniqueConstraint("challenge_token_hash", name="patient_otp_token_hash_key"),
+        ForeignKeyConstraint(
+            ["clinic_id", "credential_id"],
+            ["patient_access_credentials.clinic_id", "patient_access_credentials.id"],
+            name="fk_patient_otp_credential",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_patient_otp_active",
+            "clinic_id",
+            "credential_id",
+            "expires_at",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    credential_id: uuid.UUID
+    purpose: str = Field(max_length=20)
+    challenge_token_hash: str = Field(max_length=64)
+    otp_hash: str = Field(max_length=255)
+    attempts_remaining: int = Field(default=5, ge=0)
+    resend_available_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    consumed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    revoked_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class ClinicOperationalSetting(TenantRow, table=True):
+    __tablename__ = "clinic_operational_settings"
+    __table_args__ = (
+        UniqueConstraint("clinic_id", name="uq_clinic_operational_setting"),
+        CheckConstraint(
+            "onboarding_status IN ('draft','ready','blocked')",
+            name="ck_clinic_operational_onboarding",
+        ),
+        CheckConstraint(
+            "external_proxy_retention_days BETWEEN 1 AND 30",
+            name="ck_clinic_external_proxy_retention",
+        ),
+        CheckConstraint(
+            "external_container_retention_days BETWEEN 1 AND 30",
+            name="ck_clinic_external_container_retention",
+        ),
+        CheckConstraint(
+            "external_apm_retention_days BETWEEN 1 AND 30",
+            name="ck_clinic_external_apm_retention",
+        ),
+        CheckConstraint(
+            "external_observability_retention_evidence IN "
+            "('unqualified','deterministic_fixture','deployment_policy','provider_contract')",
+            name="ck_clinic_external_retention_evidence",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    timezone: str = Field(default="Asia/Singapore", max_length=80)
+    worker_enabled: bool = False
+    supported_languages_json: list[str] = Field(
+        default_factory=lambda: ["en", "ms", "nan", "zh"],
+        sa_column=Column(JSONB, nullable=False),
+    )
+    messaging_channels_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    remote_text_egress_enabled: bool = False
+    remote_audio_egress_enabled: bool = False
+    calibration_required: bool = True
+    external_proxy_retention_days: int = 30
+    external_container_retention_days: int = 30
+    external_apm_retention_days: int = 30
+    external_observability_retention_evidence: str = Field(
+        default="deterministic_fixture", max_length=40
+    )
+    external_observability_retention_evidence_id: str = Field(
+        default="fixture:nightingale:external-observability-30d", max_length=200
+    )
+    formulary_template: str = Field(
+        default="nightingale-clinic-formulary-v1", max_length=80
+    )
+    onboarding_status: str = Field(default="draft", max_length=20)
+    updated_by_platform_admin_id: uuid.UUID | None = Field(
+        default=None, foreign_key="platform_administrators.id"
+    )
+    updated_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class WorkerHeartbeat(SQLModel, table=True):
+    """Deployment capability signal shared by platform onboarding checks."""
+
+    __tablename__ = "worker_heartbeats"
+    __table_args__ = (UniqueConstraint("worker_kind", name="uq_worker_heartbeat_kind"),)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    worker_kind: str = Field(max_length=40)
+    worker_version: str = Field(max_length=80)
+    source_commit: str = Field(default="unknown", max_length=64)
+    updated_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class ClinicFormularyVersion(TenantRow, table=True):
+    """Immutable clinic-approved medication screening configuration."""
+
+    __tablename__ = "clinic_formulary_versions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft','active','retired')",
+            name="ck_clinic_formulary_version_status",
+        ),
+        UniqueConstraint("clinic_id", "id", name="uq_clinic_formulary_version_id"),
+        UniqueConstraint(
+            "clinic_id", "version_code", name="uq_clinic_formulary_version_code"
+        ),
+        Index("ix_clinic_formulary_active", "clinic_id", "status", "effective_at"),
+        Index(
+            "uq_clinic_formulary_one_active",
+            "clinic_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+        CheckConstraint(
+            "status != 'active' OR qualified_at IS NOT NULL",
+            name="ck_clinic_formulary_active_qualified",
+        ),
+        CheckConstraint(
+            "qualification_source IS NULL OR "
+            "qualification_source IN ('clinic_admin','platform_template')",
+            name="ck_clinic_formulary_qualification_source",
+        ),
+        CheckConstraint(
+            "(qualified_at IS NULL AND qualified_by_membership_id IS NULL "
+            "AND qualification_source IS NULL) OR "
+            "(qualified_at IS NOT NULL AND qualification_source = 'clinic_admin' "
+            "AND qualified_by_membership_id IS NOT NULL) OR "
+            "(qualified_at IS NOT NULL AND qualification_source = 'platform_template' "
+            "AND qualified_by_membership_id IS NULL)",
+            name="ck_clinic_formulary_qualification_actor",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "created_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_clinic_formulary_creator",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "qualified_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_clinic_formulary_qualifier",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "activated_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_clinic_formulary_activator",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    version_code: str = Field(max_length=80)
+    status: str = Field(default="draft", max_length=20)
+    content_sha256: str = Field(max_length=64)
+    effective_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    created_by_membership_id: uuid.UUID | None = None
+    content_locked_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    qualified_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    qualified_by_membership_id: uuid.UUID | None = None
+    qualification_source: str | None = Field(default=None, max_length=30)
+    activated_by_membership_id: uuid.UUID | None = None
+    retired_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class ClinicFormularyConcept(TenantRow, table=True):
+    __tablename__ = "clinic_formulary_concepts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "formulary_version_id"],
+            ["clinic_formulary_versions.clinic_id", "clinic_formulary_versions.id"],
+            name="fk_clinic_formulary_concept_version",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "clinic_id",
+            "formulary_version_id",
+            "concept_code",
+            name="uq_clinic_formulary_concept",
+        ),
+        Index(
+            "ix_clinic_formulary_concept_version",
+            "clinic_id",
+            "formulary_version_id",
+        ),
+        CheckConstraint(
+            "minimum_single_dose > 0 AND maximum_single_dose >= minimum_single_dose",
+            name="ck_clinic_formulary_dose_range",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    formulary_version_id: uuid.UUID
+    concept_code: str = Field(max_length=100)
+    canonical_name: str = Field(max_length=255)
+    multilingual_aliases_json: dict[str, list[str]] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
+    )
+    dose_unit: str = Field(max_length=20)
+    minimum_single_dose: float
+    maximum_single_dose: float
+    permitted_routes_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    contraindicated_allergy_concepts_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    active: bool = True
 
 
 class PlatformAdministrator(SQLModel, table=True):
@@ -378,9 +767,298 @@ class PlatformAuditEvent(SQLModel, table=True):
     target_clinic_id: uuid.UUID | None = Field(default=None, foreign_key="clinics.id")
     target_patient_id: uuid.UUID | None = None
     request_id: str = Field(max_length=100)
+    reason_code: str = Field(default="not_specified", max_length=80)
+    clinical_rationale_ciphertext: bytes | None = Field(
+        default=None, sa_column=Column(LargeBinary, nullable=True)
+    )
     metadata_json: dict[str, object] = Field(
         default_factory=dict, sa_column=Column(JSONB, nullable=False)
     )
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class NotificationOutbox(TenantRow, table=True):
+    """Transactional intent for invitation, appointment, and correction delivery."""
+
+    __tablename__ = "notification_outbox"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('queued','submitted','delivered','failed',"
+            "'acknowledged','revoked')",
+            name="ck_notification_outbox_state",
+        ),
+        CheckConstraint(
+            "channel IN ('email','sms','whatsapp','portal')",
+            name="ck_notification_outbox_channel",
+        ),
+        UniqueConstraint("clinic_id", "id", name="uq_notification_outbox_id"),
+        UniqueConstraint(
+            "clinic_id", "idempotency_key", name="uq_notification_idempotency"
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_notification_patient",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "visit_id"],
+            ["patient_visits.clinic_id", "patient_visits.id"],
+            name="fk_notification_visit",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "publication_id"],
+            ["patient_publications.clinic_id", "patient_publications.id"],
+            name="fk_notification_publication",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "portal_invitation_id"],
+            ["patient_portal_invitations.clinic_id", "patient_portal_invitations.id"],
+            name="fk_notification_portal_invitation",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "created_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_notification_creator",
+        ),
+        Index(
+            "ix_notification_dispatch",
+            "clinic_id",
+            "state",
+            "available_at",
+        ),
+        Index("ix_notification_patient", "clinic_id", "patient_id", "created_at"),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID | None = None
+    visit_id: uuid.UUID | None = None
+    publication_id: uuid.UUID | None = None
+    portal_invitation_id: uuid.UUID | None = None
+    purpose: str = Field(max_length=40)
+    channel: str = Field(max_length=20)
+    destination_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    destination_masked: str = Field(max_length=120)
+    template_key: str = Field(max_length=80)
+    payload_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    idempotency_key: str = Field(max_length=200)
+    state: str = Field(default="queued", max_length=20)
+    created_by_membership_id: uuid.UUID | None = None
+    available_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    submitted_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    delivered_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    failed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    acknowledged_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    revoked_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class NotificationAttempt(TenantRow, table=True):
+    __tablename__ = "notification_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "clinic_id", "notification_id", "attempt_no", name="uq_notification_attempt"
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "notification_id"],
+            ["notification_outbox.clinic_id", "notification_outbox.id"],
+            name="fk_notification_attempt_outbox",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_notification_attempt_message",
+            "clinic_id",
+            "provider",
+            "provider_message_id",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    notification_id: uuid.UUID
+    attempt_no: int = Field(ge=1)
+    provider: str = Field(max_length=60)
+    provider_message_id: str | None = Field(default=None, max_length=200)
+    request_sha256: str = Field(max_length=64)
+    status: str = Field(default="started", max_length=30)
+    error_class: str | None = Field(default=None, max_length=80)
+    error_code: str | None = Field(default=None, max_length=80)
+    started_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    completed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
+
+class NotificationReceipt(TenantRow, table=True):
+    __tablename__ = "notification_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "clinic_id",
+            "provider",
+            "provider_event_id",
+            name="uq_notification_receipt_event",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "notification_id"],
+            ["notification_outbox.clinic_id", "notification_outbox.id"],
+            name="fk_notification_receipt_outbox",
+            ondelete="CASCADE",
+        ),
+        Index("ix_notification_receipt_outbox", "clinic_id", "notification_id"),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    notification_id: uuid.UUID
+    provider: str = Field(max_length=60)
+    provider_event_id: str = Field(max_length=200)
+    provider_message_id: str = Field(max_length=200)
+    event_type: str = Field(max_length=40)
+    signature_verified: bool = False
+    payload_sha256: str = Field(max_length=64)
+    occurred_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    received_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PatientPublicationAcknowledgement(TenantRow, table=True):
+    __tablename__ = "patient_publication_acknowledgements"
+    __table_args__ = (
+        UniqueConstraint(
+            "clinic_id",
+            "publication_id",
+            "acknowledged_by_user_id",
+            "event_type",
+            name="uq_patient_publication_ack",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_publication_ack_patient",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "publication_id"],
+            ["patient_publications.clinic_id", "patient_publications.id"],
+            name="fk_publication_ack_publication",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "notification_id"],
+            ["notification_outbox.clinic_id", "notification_outbox.id"],
+            name="fk_publication_ack_notification",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    publication_id: uuid.UUID
+    notification_id: uuid.UUID | None = None
+    acknowledged_by_user_id: uuid.UUID = Field(foreign_key="users.id")
+    channel: str = Field(default="portal", max_length=20)
+    event_type: str = Field(default="acknowledged", max_length=40)
+    acknowledged_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PublicationCorrectionOutreach(TenantRow, table=True):
+    __tablename__ = "publication_correction_outreaches"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_correction_outreach_patient",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "withdrawn_publication_id"],
+            ["patient_publications.clinic_id", "patient_publications.id"],
+            name="fk_correction_outreach_withdrawn",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "replacement_publication_id"],
+            ["patient_publications.clinic_id", "patient_publications.id"],
+            name="fk_correction_outreach_replacement",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "notification_id"],
+            ["notification_outbox.clinic_id", "notification_outbox.id"],
+            name="fk_correction_outreach_notification",
+        ),
+        UniqueConstraint(
+            "clinic_id",
+            "withdrawn_publication_id",
+            "replacement_publication_id",
+            "notification_id",
+            name="uq_correction_outreach_delivery",
+        ),
+        Index("ix_correction_outreach_status", "clinic_id", "status", "due_at"),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    withdrawn_publication_id: uuid.UUID
+    replacement_publication_id: uuid.UUID | None = None
+    notification_id: uuid.UUID | None = None
+    status: str = Field(default="pending", max_length=30)
+    due_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    completed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class PatientPortalEvent(TenantRow, table=True):
+    """Durable, encrypted invalidation event used by SSE and polling clients."""
+
+    __tablename__ = "patient_portal_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_patient_portal_event_patient",
+            ondelete="CASCADE",
+        ),
+        Index(
+            "ix_patient_portal_event_cursor", "clinic_id", "patient_id", "created_at"
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    event_type: str = Field(max_length=80)
+    aggregate_type: str = Field(max_length=40)
+    aggregate_id: uuid.UUID
+    payload_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -519,6 +1197,7 @@ class EntryRelation(TenantRow, table=True):
 class Comment(TenantRow, table=True):
     __tablename__ = "comments"
     __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_comment_revision_positive"),
         UniqueConstraint("clinic_id", "id", name="uq_comment_clinic_id"),
         Index("ix_comment_entry_status", "entry_id", "resolved_at"),
         ForeignKeyConstraint(
@@ -564,6 +1243,7 @@ class Comment(TenantRow, table=True):
     anchor_state: str = Field(default="resolved", max_length=20)
     review_required: bool = False
     assigned_membership_id: uuid.UUID | None = Field(default=None)
+    revision: int = Field(default=1, ge=1)
     resolved_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
@@ -631,6 +1311,33 @@ class Highlight(TenantRow, table=True):
     __tablename__ = "highlights"
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_highlight_clinic_id"),
+        UniqueConstraint(
+            "clinic_id",
+            "candidate_fingerprint",
+            name="uq_highlight_candidate_fingerprint",
+        ),
+        CheckConstraint(
+            "candidate_fingerprint IS NULL OR candidate_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="ck_highlight_candidate_fingerprint_sha256",
+        ),
+        Index(
+            "ix_highlight_candidate_fingerprint",
+            "clinic_id",
+            "candidate_fingerprint",
+        ),
+        CheckConstraint(
+            "support_state IN ('current','historical','superseded')",
+            name="ck_highlight_support_state_value",
+        ),
+        CheckConstraint(
+            "NOT support_review_required OR NOT current_priority_eligible",
+            name="ck_highlight_review_removes_priority",
+        ),
+        CheckConstraint(
+            "NOT (feature_keys_json @> '[\"entity:allergy\"]'::jsonb) "
+            "OR learned_score >= 0",
+            name="ck_highlight_allergy_learning_floor",
+        ),
         Index("ix_highlight_patient_status", "patient_id", "status", "pinned"),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
@@ -654,6 +1361,10 @@ class Highlight(TenantRow, table=True):
     patient_id: uuid.UUID
     entry_id: uuid.UUID
     source_entry_version_id: uuid.UUID
+    # Stable, non-PHI identity for one model candidate on one immutable source
+    # span. Human-authored highlights remain NULL and are never coalesced into
+    # an AI candidate merely because their wording happens to match.
+    candidate_fingerprint: str | None = Field(default=None, max_length=64)
     label_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     status: str = Field(default="pending", max_length=20)
     pinned: bool = Field(default=False)
@@ -672,7 +1383,80 @@ class Highlight(TenantRow, table=True):
     risk_reason: str = Field(default="recency", max_length=100)
     unresolved: bool = False
     clinician_confirmed: bool = False
+    support_state: str = Field(default="current", max_length=20)
+    support_review_required: bool = False
+    current_priority_eligible: bool = True
     created_by_id: uuid.UUID = Field(foreign_key="users.id")
+    created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class HighlightSupportReview(TenantRow, table=True):
+    """Addressable review created whenever a highlight's source entry changes."""
+
+    __tablename__ = "highlight_support_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "support_state IN ('current','historical','superseded')",
+            name="ck_highlight_support_state",
+        ),
+        CheckConstraint(
+            "review_status IN ('pending','reaffirmed','superseded')",
+            name="ck_highlight_support_review_status",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_highlight_support_patient",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "highlight_id"],
+            ["highlights.clinic_id", "highlights.id"],
+            name="fk_highlight_support_highlight",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "source_entry_version_id"],
+            ["entry_versions.clinic_id", "entry_versions.id"],
+            name="fk_highlight_support_source",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "observed_current_version_id"],
+            ["entry_versions.clinic_id", "entry_versions.id"],
+            name="fk_highlight_support_current",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "reviewed_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_highlight_support_reviewer",
+        ),
+        UniqueConstraint(
+            "clinic_id",
+            "highlight_id",
+            "observed_current_version_id",
+            name="uq_highlight_support_observation",
+        ),
+        Index(
+            "ix_highlight_support_pending",
+            "clinic_id",
+            "patient_id",
+            "review_status",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    highlight_id: uuid.UUID
+    source_entry_version_id: uuid.UUID
+    observed_current_version_id: uuid.UUID
+    support_state: str = Field(default="historical", max_length=20)
+    review_status: str = Field(default="pending", max_length=20)
+    reviewed_by_membership_id: uuid.UUID | None = None
+    reviewed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -833,6 +1617,12 @@ class AuditEvent(TenantRow, table=True):
     action: str = Field(max_length=80)
     resource_type: str = Field(max_length=40)
     resource_id: uuid.UUID
+    reason_code: str = Field(default="not_specified", max_length=80)
+    clinical_rationale_ciphertext: bytes | None = Field(
+        default=None, sa_column=Column(LargeBinary, nullable=True)
+    )
+    # Retained as a compatibility envelope for non-clinical, allowlisted
+    # machine metadata only.  Human rationale belongs in the encrypted column.
     metadata_json: dict[str, object] = Field(
         default_factory=dict, sa_column=Column(JSONB, nullable=False)
     )
@@ -845,6 +1635,10 @@ class AuditEvent(TenantRow, table=True):
 class PatientGlanceSnapshot(TenantRow, table=True):
     __tablename__ = "patient_glance_snapshots"
     __table_args__ = (
+        CheckConstraint(
+            "importance_mode IN ('disabled','shadow','active')",
+            name="ck_patient_glance_importance_mode",
+        ),
         UniqueConstraint("clinic_id", "patient_id", name="uq_glance_patient"),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
@@ -862,6 +1656,20 @@ class PatientGlanceSnapshot(TenantRow, table=True):
     generated_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    freshness_state: str = Field(default="fresh", max_length=20)
+    provider_outage: bool = False
+    outage_started_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    fallback_kind: str | None = Field(default=None, max_length=30)
+    importance_mode: str = Field(default="shadow", max_length=20)
+    importance_qualification_report_id: uuid.UUID | None = None
+    importance_qualification_report_version: str | None = Field(
+        default=None, max_length=80
+    )
+    importance_qualification_expires_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
 
 
@@ -883,6 +1691,39 @@ class DomainEvent(TenantRow, table=True):
         default_factory=dict, sa_column=Column(JSONB, nullable=False)
     )
     created_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class ProviderCircuitState(TenantRow, table=True):
+    __tablename__ = "provider_circuit_states"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('closed','open','half_open')",
+            name="ck_provider_circuit_state",
+        ),
+        UniqueConstraint(
+            "clinic_id", "provider", "capability", name="uq_provider_circuit"
+        ),
+        Index("ix_provider_circuit_probe", "clinic_id", "state", "next_probe_at"),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    provider: str = Field(max_length=80)
+    capability: str = Field(max_length=80)
+    state: str = Field(default="closed", max_length=20)
+    consecutive_failures: int = Field(default=0, ge=0)
+    last_error_class: str | None = Field(default=None, max_length=80)
+    opened_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    next_probe_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    last_success_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    updated_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
@@ -923,6 +1764,20 @@ class Job(TenantRow, table=True):
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
     error_code: str | None = Field(default=None, max_length=80)
+    error_class: str | None = Field(default=None, max_length=80)
+    provider_outage: bool = False
+    retry_history_json: list[dict[str, object]] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    delayed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    timed_out_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    last_attempt_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_by_id: uuid.UUID = Field(foreign_key="users.id")
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
@@ -960,6 +1815,11 @@ class JobAttempt(TenantRow, table=True):
     attempt_no: int = Field(ge=1)
     status: str = Field(default="started", max_length=30)
     error_code: str | None = Field(default=None, max_length=80)
+    error_class: str | None = Field(default=None, max_length=80)
+    retry_scheduled_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    duration_ms: int | None = Field(default=None, ge=0)
     started_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -1125,6 +1985,10 @@ class ImportanceFeatureStat(TenantRow, table=True):
     __table_args__ = (
         UniqueConstraint("clinic_id", "feature_key", name="uq_importance_feature_stat"),
         Index("ix_importance_feature_clinic", "clinic_id", "feature_key"),
+        CheckConstraint(
+            "weight >= -0.20 AND weight <= 0.20",
+            name="ck_importance_feature_weight_bound",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     feature_key: str = Field(max_length=120)
@@ -1141,6 +2005,7 @@ class ImportanceFeatureStat(TenantRow, table=True):
 class ImportanceImpression(TenantRow, table=True):
     __tablename__ = "importance_impressions"
     __table_args__ = (
+        CheckConstraint("rank >= 1", name="ck_importance_impression_rank"),
         UniqueConstraint(
             "clinic_id", "view_event_id", name="uq_importance_impression_view_event"
         ),
@@ -1161,7 +2026,9 @@ class ImportanceImpression(TenantRow, table=True):
     patient_id: uuid.UUID
     highlight_id: uuid.UUID
     viewer_membership_id: uuid.UUID
-    rank: int = Field(ge=1, le=5)
+    # The safety-review surface is intentionally uncapped, so its truthful
+    # impression rank may be greater than five.
+    rank: int = Field(ge=1)
     surface: str = Field(default="current_priorities", max_length=60)
     view_event_id: str = Field(
         default_factory=lambda: f"server:{uuid.uuid4()}", max_length=120
@@ -1172,6 +2039,239 @@ class ImportanceImpression(TenantRow, table=True):
     visible_ratio: float = Field(default=0.5, sa_column=Column(Float, nullable=False))
     visible_duration_ms: int = Field(default=2_000, ge=2_000)
     shown_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class ImportanceCandidateExposure(TenantRow, table=True):
+    """Complete candidate-set telemetry, including candidates not displayed."""
+
+    __tablename__ = "importance_candidate_exposures"
+    __table_args__ = (
+        UniqueConstraint(
+            "clinic_id",
+            "candidate_set_id",
+            "highlight_id",
+            name="uq_importance_candidate_exposure",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_importance_candidate_patient",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "highlight_id"],
+            ["highlights.clinic_id", "highlights.id"],
+            name="fk_importance_candidate_highlight",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "viewer_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_importance_candidate_viewer",
+        ),
+        Index(
+            "ix_importance_candidate_observed",
+            "clinic_id",
+            "patient_id",
+            "observed_at",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    highlight_id: uuid.UUID
+    viewer_membership_id: uuid.UUID
+    view_event_id: str = Field(max_length=120)
+    candidate_set_id: str = Field(max_length=120)
+    rank: int = Field(ge=1)
+    surface: str = Field(default="current_priorities", max_length=60)
+    feature_keys_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    shadow_score: float = Field(default=0.0, sa_column=Column(Float, nullable=False))
+    protected: bool = False
+    displayed: bool = False
+    exposure_probability: float = Field(
+        default=0.0, sa_column=Column(Float, nullable=False)
+    )
+    observed_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class ImportanceCandidateSet(TenantRow, table=True):
+    """Declared per-surface totals used to audit candidate telemetry recall."""
+
+    __tablename__ = "importance_candidate_sets"
+    __table_args__ = (
+        UniqueConstraint(
+            "clinic_id", "candidate_set_id", name="uq_importance_candidate_set"
+        ),
+        CheckConstraint(
+            "total_candidate_count >= 0 "
+            "AND current_priorities_candidate_count >= 0 "
+            "AND clinical_review_candidate_count >= 0 "
+            "AND current_priorities_protected_candidate_count >= 0 "
+            "AND current_priorities_ordinary_candidate_count >= 0 "
+            "AND clinical_review_protected_candidate_count >= 0 "
+            "AND clinical_review_ordinary_candidate_count >= 0 "
+            "AND protected_candidate_count >= 0 "
+            "AND ordinary_candidate_count >= 0 "
+            "AND current_priorities_displayed_count >= 0 "
+            "AND clinical_review_displayed_count >= 0 "
+            "AND displayed_count >= 0",
+            name="ck_importance_candidate_set_counts_nonnegative",
+        ),
+        CheckConstraint(
+            "total_candidate_count = current_priorities_candidate_count "
+            "+ clinical_review_candidate_count "
+            "AND total_candidate_count = protected_candidate_count "
+            "+ ordinary_candidate_count "
+            "AND current_priorities_candidate_count = "
+            "current_priorities_protected_candidate_count "
+            "+ current_priorities_ordinary_candidate_count "
+            "AND clinical_review_candidate_count = "
+            "clinical_review_protected_candidate_count "
+            "+ clinical_review_ordinary_candidate_count "
+            "AND protected_candidate_count = "
+            "current_priorities_protected_candidate_count "
+            "+ clinical_review_protected_candidate_count "
+            "AND ordinary_candidate_count = "
+            "current_priorities_ordinary_candidate_count "
+            "+ clinical_review_ordinary_candidate_count "
+            "AND displayed_count = current_priorities_displayed_count "
+            "+ clinical_review_displayed_count "
+            "AND current_priorities_displayed_count "
+            "<= current_priorities_candidate_count "
+            "AND clinical_review_displayed_count "
+            "<= clinical_review_candidate_count",
+            name="ck_importance_candidate_set_count_totals",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_importance_candidate_set_patient",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "viewer_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_importance_candidate_set_viewer",
+        ),
+        Index(
+            "ix_importance_candidate_set_observed",
+            "clinic_id",
+            "observed_at",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    viewer_membership_id: uuid.UUID
+    candidate_set_id: str = Field(max_length=120)
+    total_candidate_count: int = Field(ge=0)
+    current_priorities_candidate_count: int = Field(ge=0)
+    clinical_review_candidate_count: int = Field(ge=0)
+    current_priorities_protected_candidate_count: int = Field(ge=0)
+    current_priorities_ordinary_candidate_count: int = Field(ge=0)
+    clinical_review_protected_candidate_count: int = Field(ge=0)
+    clinical_review_ordinary_candidate_count: int = Field(ge=0)
+    protected_candidate_count: int = Field(ge=0)
+    ordinary_candidate_count: int = Field(ge=0)
+    current_priorities_displayed_count: int = Field(ge=0)
+    clinical_review_displayed_count: int = Field(ge=0)
+    displayed_count: int = Field(ge=0)
+    observed_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class ImportanceExposureQualificationReport(TenantRow, table=True):
+    """Persisted recall audit that gates active importance learning."""
+
+    __tablename__ = "importance_exposure_qualification_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "window_end >= window_start AND expires_at > created_at",
+            name="ck_importance_exposure_report_window",
+        ),
+        CheckConstraint(
+            "source_candidate_set_count >= 0 "
+            "AND candidate_count >= 0 "
+            "AND telemetry_count >= 0 "
+            "AND displayed_count >= 0 "
+            "AND protected_candidate_count >= 0 "
+            "AND protected_displayed_count >= 0 "
+            "AND ordinary_candidate_count >= 0 "
+            "AND ordinary_displayed_count >= 0 "
+            "AND missing_telemetry_count >= 0 "
+            "AND duplicate_telemetry_count >= 0",
+            name="ck_importance_exposure_report_counts_nonnegative",
+        ),
+        CheckConstraint(
+            "protected_recall >= 0 AND protected_recall <= 1 "
+            "AND ordinary_recall >= 0 AND ordinary_recall <= 1 "
+            "AND ordinary_exposure_rate >= 0 AND ordinary_exposure_rate <= 1",
+            name="ck_importance_exposure_report_rates",
+        ),
+        CheckConstraint(
+            "NOT qualified OR (missing_telemetry_count = 0 "
+            "AND duplicate_telemetry_count = 0 "
+            "AND protected_candidate_count > 0 "
+            "AND ordinary_candidate_count > 0 "
+            "AND protected_recall = 1 "
+            "AND ordinary_recall = 1 "
+            "AND jsonb_array_length(qualification_reasons_json) = 0)",
+            name="ck_importance_exposure_report_qualified",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "generated_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_importance_exposure_report_generator",
+        ),
+        Index(
+            "ix_importance_exposure_report_current",
+            "clinic_id",
+            "created_at",
+            "expires_at",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    report_version: str = Field(max_length=80)
+    window_start: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    window_end: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    source_candidate_set_count: int = Field(ge=0)
+    candidate_count: int = Field(ge=0)
+    telemetry_count: int = Field(ge=0)
+    displayed_count: int = Field(ge=0)
+    protected_candidate_count: int = Field(ge=0)
+    protected_displayed_count: int = Field(ge=0)
+    ordinary_candidate_count: int = Field(ge=0)
+    ordinary_displayed_count: int = Field(ge=0)
+    protected_recall: float = Field(sa_column=Column(Float, nullable=False))
+    ordinary_recall: float = Field(sa_column=Column(Float, nullable=False))
+    ordinary_exposure_rate: float = Field(sa_column=Column(Float, nullable=False))
+    missing_telemetry_count: int = Field(ge=0)
+    duplicate_telemetry_count: int = Field(ge=0)
+    surface_metrics_json: dict[str, dict[str, int | float]] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
+    )
+    qualified: bool = False
+    qualification_reasons_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    generated_by_membership_id: uuid.UUID
+    expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
@@ -1233,6 +2333,20 @@ class ClinicalFactAssertion(TenantRow, table=True):
     __tablename__ = "clinical_fact_assertions"
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_fact_assertion_clinic_id"),
+        CheckConstraint(
+            "assertion_scope IN ('specific_substance','drug_allergies','all_allergies')",
+            name="ck_fact_assertion_scope",
+        ),
+        CheckConstraint(
+            "assertion_state IN ('active','superseded')",
+            name="ck_fact_assertion_state",
+        ),
+        CheckConstraint(
+            "allergy_category IS NULL OR "
+            "(fact_type = 'allergy' AND "
+            "allergy_category IN ('drug','food','environmental'))",
+            name="ck_fact_assertion_allergy_category",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -1254,6 +2368,15 @@ class ClinicalFactAssertion(TenantRow, table=True):
             ["clinic_id", "provenance_pointer_id"],
             ["provenance_pointers.clinic_id", "provenance_pointers.id"],
             name="fk_fact_assertion_pointer",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "superseded_by_assertion_id"],
+            ["clinical_fact_assertions.clinic_id", "clinical_fact_assertions.id"],
+            name="fk_fact_assertion_superseded_by",
+        ),
+        CheckConstraint(
+            "superseded_by_assertion_id IS NULL OR superseded_by_assertion_id <> id",
+            name="ck_fact_assertion_not_self_superseding",
         ),
         Index(
             "ix_fact_assertion_patient_type",
@@ -1279,6 +2402,16 @@ class ClinicalFactAssertion(TenantRow, table=True):
     )
     normalized_key_hash: str = Field(max_length=64)
     polarity: str = Field(default="present", max_length=20)
+    assertion_scope: str = Field(default="specific_substance", max_length=40)
+    allergy_category: str | None = Field(default=None, max_length=20)
+    source_language: str = Field(default="und", max_length=20)
+    source_role: str | None = Field(default=None, max_length=20)
+    source_section: str | None = Field(default=None, max_length=20)
+    assertion_state: str = Field(default="active", max_length=20)
+    superseded_by_assertion_id: uuid.UUID | None = None
+    superseded_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     clinical_status: str = Field(default="active", max_length=30)
     effective_time: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
@@ -1297,11 +2430,96 @@ class ClinicalFactAssertion(TenantRow, table=True):
     )
 
 
+class ProvisionalSafetyAlert(TenantRow, table=True):
+    """A deduplicated live finding that cannot become a fact without review."""
+
+    __tablename__ = "provisional_safety_alerts"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending','confirmed','dismissed','superseded')",
+            name="ck_provisional_safety_alert_state",
+        ),
+        CheckConstraint(
+            "source_start_offset >= 0 AND source_end_offset >= source_start_offset",
+            name="ck_provisional_safety_alert_span",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "patient_id"],
+            ["patients.clinic_id", "patients.id"],
+            name="fk_provisional_alert_patient",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "session_id"],
+            ["voice_sessions.clinic_id", "voice_sessions.id"],
+            name="fk_provisional_alert_session",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "reviewed_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_provisional_alert_reviewer",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "confirmed_assertion_id"],
+            ["clinical_fact_assertions.clinic_id", "clinical_fact_assertions.id"],
+            name="fk_provisional_alert_assertion",
+        ),
+        UniqueConstraint(
+            "clinic_id",
+            "session_id",
+            "deduplication_key",
+            name="uq_provisional_alert_dedup",
+        ),
+        Index(
+            "ix_provisional_alert_pending",
+            "clinic_id",
+            "patient_id",
+            "state",
+            "detected_at",
+        ),
+    )
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    patient_id: uuid.UUID
+    session_id: uuid.UUID
+    source_event_id: str = Field(max_length=160)
+    source_text_ciphertext: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    source_text_sha256: str = Field(max_length=64)
+    source_start_offset: int = Field(ge=0)
+    source_end_offset: int = Field(ge=0)
+    source_language: str = Field(default="und", max_length=20)
+    concept_code: str = Field(max_length=120)
+    assertion_scope: str = Field(default="specific_substance", max_length=40)
+    polarity: str = Field(default="present", max_length=20)
+    deduplication_key: str = Field(max_length=64)
+    severity: str = Field(default="critical", max_length=20)
+    state: str = Field(default="pending", max_length=20)
+    completed_segment_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    detected_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    reviewed_by_membership_id: uuid.UUID | None = None
+    reviewed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    review_reason_code: str | None = Field(default=None, max_length=80)
+    confirmed_assertion_id: uuid.UUID | None = None
+
+
 class EvaluationRun(TenantRow, table=True):
     __tablename__ = "evaluation_runs"
     __table_args__ = (
         UniqueConstraint("clinic_id", "id", name="uq_evaluation_run_clinic_id"),
         Index("ix_evaluation_run_task_created", "clinic_id", "task", "created_at"),
+        CheckConstraint(
+            "total_sample_count >= 0 AND calibration_sample_count >= 0 AND "
+            "holdout_sample_count >= 0 AND sample_count = holdout_sample_count AND "
+            "total_sample_count = calibration_sample_count + holdout_sample_count",
+            name="ck_evaluation_run_sample_accounting",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     provider: str = Field(max_length=80)
@@ -1314,6 +2532,11 @@ class EvaluationRun(TenantRow, table=True):
     code_commit: str = Field(max_length=64)
     calibration_split: str = Field(max_length=100)
     holdout_split: str = Field(max_length=100)
+    total_sample_count: int = Field(default=0, ge=0)
+    calibration_sample_count: int = Field(default=0, ge=0)
+    holdout_sample_count: int = Field(default=0, ge=0)
+    # Compatibility projection for older readers. It is database-bound to the
+    # untouched holdout population rather than the total evaluation population.
     sample_count: int = Field(ge=0)
     status: str = Field(default="pending", max_length=30)
     metrics_json: dict[str, object] = Field(
@@ -1343,6 +2566,12 @@ class CalibrationReport(TenantRow, table=True):
             name="fk_calibration_report_run",
             ondelete="CASCADE",
         ),
+        CheckConstraint(
+            "total_sample_count >= 0 AND calibration_sample_count >= 0 AND "
+            "holdout_sample_count >= 0 AND sample_count = holdout_sample_count AND "
+            "total_sample_count = calibration_sample_count + holdout_sample_count",
+            name="ck_calibration_report_sample_accounting",
+        ),
     )
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     evaluation_run_id: uuid.UUID
@@ -1352,6 +2581,11 @@ class CalibrationReport(TenantRow, table=True):
     request_parameters_sha256: str = Field(max_length=64)
     dataset_manifest_sha256: str = Field(max_length=64)
     code_commit: str = Field(max_length=64)
+    total_sample_count: int = Field(default=0, ge=0)
+    calibration_sample_count: int = Field(default=0, ge=0)
+    holdout_sample_count: int = Field(default=0, ge=0)
+    # Compatibility projection retained for generated artifacts and older
+    # integrations; the database constrains it to ``holdout_sample_count``.
     sample_count: int = Field(ge=0)
     consultation_count: int = Field(ge=0)
     confidence_band: str = Field(default="unavailable", max_length=20)
@@ -1519,6 +2753,20 @@ class PatientPublication(TenantRow, table=True):
             "supersedes_publication_id IS NULL OR supersedes_publication_id <> id",
             name="ck_patient_publication_not_self_superseding",
         ),
+        CheckConstraint(
+            "((correction_idempotency_key_sha256 IS NULL) = "
+            "(correction_request_sha256 IS NULL)) AND "
+            "(correction_idempotency_key_sha256 IS NULL OR "
+            "(supersedes_publication_id IS NOT NULL AND "
+            "correction_idempotency_key_sha256 ~ '^[0-9a-f]{64}$' AND "
+            "correction_request_sha256 ~ '^[0-9a-f]{64}$'))",
+            name="ck_patient_publication_correction_hashes",
+        ),
+        UniqueConstraint(
+            "clinic_id",
+            "correction_idempotency_key_sha256",
+            name="uq_patient_publication_correction_idempotency",
+        ),
         ForeignKeyConstraint(
             ["clinic_id", "patient_id"],
             ["patients.clinic_id", "patients.id"],
@@ -1544,6 +2792,16 @@ class PatientPublication(TenantRow, table=True):
             ["clinic_id", "approved_by_membership_id"],
             ["clinic_memberships.clinic_id", "clinic_memberships.id"],
             name="fk_patient_publication_approver",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "medication_reviewed_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_patient_publication_medication_reviewer",
+        ),
+        ForeignKeyConstraint(
+            ["clinic_id", "withdrawn_by_membership_id"],
+            ["clinic_memberships.clinic_id", "clinic_memberships.id"],
+            name="fk_patient_publication_withdrawer",
         ),
         ForeignKeyConstraint(
             [
@@ -1581,6 +2839,18 @@ class PatientPublication(TenantRow, table=True):
     supersedes_publication_id: uuid.UUID | None = Field(default=None)
     approved_by_membership_id: uuid.UUID
     approval_policy_version: str = Field(default="patient-sharing-v1", max_length=80)
+    medication_review_complete: bool = False
+    medication_review_json: list[dict[str, object]] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
+    medication_reviewed_by_membership_id: uuid.UUID | None = None
+    medication_reviewed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    correction_reason_code: str | None = Field(default=None, max_length=80)
+    correction_idempotency_key_sha256: str | None = Field(default=None, max_length=64)
+    correction_request_sha256: str | None = Field(default=None, max_length=64)
+    withdrawn_by_membership_id: uuid.UUID | None = None
     approved_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -1774,6 +3044,12 @@ class VoiceSession(TenantRow, table=True):
     error_code: str | None = Field(default=None, max_length=80)
     live_transcript_status: str = Field(default="not_started", max_length=30)
     live_transcript_error_code: str | None = Field(default=None, max_length=80)
+    remote_audio_consent_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    remote_audio_consent_by_id: uuid.UUID | None = Field(
+        default=None, foreign_key="users.id"
+    )
     created_at: datetime = Field(
         default_factory=get_datetime_utc,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -2010,7 +3286,17 @@ class TranscriptSegment(TenantRow, table=True):
     start_ms: int = Field(ge=0)
     end_ms: int = Field(ge=0)
     speaker_id: str | None = Field(default=None, max_length=80)
+    speaker_ids_json: list[str] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
     detected_language: str | None = Field(default=None, max_length=80)
+    source_language: str = Field(default="und", max_length=20)
+    language_confidence: float | None = Field(
+        default=None, sa_column=Column(Float, nullable=True)
+    )
+    language_spans_json: list[dict[str, object]] = Field(
+        default_factory=list, sa_column=Column(JSONB, nullable=False)
+    )
     confidence: float | None = Field(
         default=None, sa_column=Column(Float, nullable=True)
     )
@@ -2116,7 +3402,7 @@ class DemoLoginRequest(SQLModel):
 
 class MePublic(SQLModel):
     user_id: uuid.UUID
-    email: EmailStr
+    email: EmailStr | None
     full_name: str | None
     clinic_id: uuid.UUID
     clinic_code: str
@@ -2187,6 +3473,8 @@ class AuditEventPublic(SQLModel):
     resource_id: uuid.UUID
     version_id: uuid.UUID | None
     created_at: datetime
+    reason_code: str = "not_specified"
+    clinical_rationale_present: bool = False
 
 
 class AuditEventsPublic(SQLModel):
@@ -2221,6 +3509,7 @@ class PatientPublic(SQLModel):
     date_of_birth: date | None = None
     medical_record_number: str | None = None
     same_name_count: int = 1
+    today_visit_id: uuid.UUID | None = None
     today_visit_at: datetime | None = None
     today_visit_status: str | None = None
     today_visit_type: str | None = None
@@ -2275,10 +3564,15 @@ class PatientPortalInvitationCreate(SQLModel):
 class PatientPortalInvitationPublic(SQLModel):
     id: uuid.UUID
     patient_id: uuid.UUID
-    email: EmailStr
+    email: EmailStr | None
     state: Literal["pending"] = "pending"
     expires_at: datetime
     created_at: datetime
+    notification_id: uuid.UUID | None = None
+    notification_state: (
+        Literal["queued", "submitted", "delivered", "failed", "acknowledged", "revoked"]
+        | None
+    ) = None
 
 
 class PatientInvitationPreviewRequest(SQLModel):
@@ -2303,9 +3597,102 @@ class PatientInvitationAccept(SQLModel):
     full_name: str | None = Field(default=None, max_length=255)
 
 
+class PatientAccessEnrollStartRequest(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    invitation_token: str = Field(min_length=64, max_length=512)
+    claim_code: str = Field(min_length=6, max_length=80)
+    phone: str = Field(min_length=8, max_length=32)
+
+
+class PatientAccessLoginStartRequest(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    portal_id: str = Field(min_length=8, max_length=80)
+
+
+class PatientOTPChallengePublic(SQLModel):
+    challenge_id: uuid.UUID
+    challenge_token: str
+    purpose: Literal["enrollment", "login", "recovery", "phone_change"]
+    portal_id: str
+    masked_phone: str
+    expires_at: datetime
+    resend_available_at: datetime
+    attempts_remaining: int
+    notification_id: uuid.UUID
+    delivery_state: Literal[
+        "queued", "submitted", "delivered", "failed", "acknowledged", "revoked"
+    ]
+
+
+class PatientAccessVerifyRequest(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    challenge_token: str = Field(min_length=32, max_length=512)
+    otp: str = Field(min_length=4, max_length=10)
+
+
+class PatientOTPResendRequest(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    challenge_token: str = Field(min_length=32, max_length=512)
+
+
+class PatientAccessPublic(SQLModel):
+    credential_id: uuid.UUID
+    patient_id: uuid.UUID
+    clinic_id: uuid.UUID
+    portal_id: str
+    masked_phone: str
+    access_state: Literal["pending", "active", "revoked"]
+
+
+class PatientAccessVerifyPublic(SQLModel):
+    access: PatientAccessPublic
+    token: Token
+
+
+# Descriptive aliases retained for early clients built from the approved plan.
+PatientEnrollmentStartRequest = PatientAccessEnrollStartRequest
+PatientPortalLoginStartRequest = PatientAccessLoginStartRequest
+PatientOTPVerifyRequest = PatientAccessVerifyRequest
+
+
+class MedicationReviewAttestation(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    assertion_id: uuid.UUID
+    medication: str = Field(min_length=1, max_length=255)
+    dose_value: float | None = None
+    dose_unit: str | None = Field(default=None, max_length=20)
+    route: str | None = Field(default=None, max_length=40)
+    frequency: str | None = Field(default=None, max_length=40)
+    confirmed: bool = True
+
+
+MedicationReviewItem = MedicationReviewAttestation
+
+
 class PatientPublicationCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
     entry_version_id: uuid.UUID
     sharing_request_id: uuid.UUID | None = None
+    medication_reviews: list[MedicationReviewAttestation] = Field(default_factory=list)
+    correction_reason_code: str | None = Field(default=None, max_length=80)
+
+
+class PatientPublicationCorrectionCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    replacement_entry_version_id: uuid.UUID
+    medication_reviews: list[MedicationReviewAttestation] = Field(default_factory=list)
+    # A correction changes patient-visible clinical information. Outreach is a
+    # server-enforced safety invariant rather than a client preference. Keep
+    # the literal field for backwards-compatible request bodies while making a
+    # caller-supplied false value fail validation.
+    outreach_required: Literal[True] = True
 
 
 class PatientPublicationPublic(SQLModel):
@@ -2320,18 +3707,189 @@ class PatientPublicationPublic(SQLModel):
     approved_at: datetime
     withdrawn_at: datetime | None
     items: list[dict[str, object]] = Field(default_factory=list)
+    medication_review_complete: bool = False
+    medication_reviews: list[dict[str, object]] = Field(default_factory=list)
+    correction_reason_code: str | None = None
+    replacement_publication_id: uuid.UUID | None = None
+    acknowledgement_state: Literal["not_required", "pending", "acknowledged"] = (
+        "not_required"
+    )
+    outreach_required: bool = False
+    notification_id: uuid.UUID | None = None
+    notification_state: (
+        Literal[
+            "queued",
+            "submitted",
+            "delivered",
+            "failed",
+            "acknowledged",
+            "revoked",
+        ]
+        | None
+    ) = None
+    delivery_warning: (
+        Literal[
+            "notification_queue_failed",
+            "notification_delivery_failed",
+            "notification_revoked",
+        ]
+        | None
+    ) = None
 
 
 class PatientPublicationReceiptPublic(SQLModel):
+    publication_id: uuid.UUID
     entry_title: str
     approved_by_name: str
     approved_at: datetime
     withdrawn_at: datetime | None
     status: Literal["active", "withdrawn"]
+    replacement_publication_id: uuid.UUID | None = None
+    acknowledged_at: datetime | None = None
+    outreach_status: str | None = None
+    acknowledgement_state: Literal["not_required", "pending", "acknowledged"] = (
+        "not_required"
+    )
+    outreach_required: bool = False
+    replacement_entry_title: str | None = None
+
+
+class PatientPublicationAcknowledgementCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    event_type: Literal["opened", "acknowledged"] = "acknowledged"
+    notification_id: uuid.UUID | None = None
+
+
+class PatientPublicationAcknowledgementPublic(SQLModel):
+    id: uuid.UUID
+    publication_id: uuid.UUID
+    patient_id: uuid.UUID
+    channel: str
+    event_type: str
+    acknowledged_at: datetime
+
+
+class PublicationCorrectionOutreachPublic(SQLModel):
+    id: uuid.UUID
+    patient_id: uuid.UUID
+    withdrawn_publication_id: uuid.UUID
+    replacement_publication_id: uuid.UUID | None
+    notification_id: uuid.UUID | None
+    status: str
+    due_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class PatientPortalEventPublic(SQLModel):
+    id: uuid.UUID
+    patient_id: uuid.UUID
+    event_type: str
+    aggregate_type: str
+    aggregate_id: uuid.UUID
+    created_at: datetime
+
+
+NotificationChannel = Literal["email", "sms", "whatsapp", "portal"]
+NotificationState = Literal[
+    "queued", "submitted", "delivered", "failed", "acknowledged", "revoked"
+]
+
+
+class AppointmentNotificationCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    patient_id: uuid.UUID
+    visit_id: uuid.UUID
+    channel: NotificationChannel
+    destination: str = Field(min_length=3, max_length=320)
+    scheduled_for: datetime | None = None
+
+
+class NotificationResendRequest(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    channel: NotificationChannel | None = None
+    destination: str | None = Field(default=None, min_length=3, max_length=320)
+
+
+class NotificationReceiptInput(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    provider_event_id: str = Field(min_length=1, max_length=200)
+    provider_message_id: str = Field(min_length=1, max_length=200)
+    event_type: Literal[
+        "submitted",
+        "delivered",
+        "failed",
+        "bounced",
+        "undeliverable",
+        "acknowledged",
+    ]
+    occurred_at: datetime
+    payload_sha256: str = Field(min_length=64, max_length=64)
+
+
+NotificationCallbackRequest = NotificationReceiptInput
+
+
+class NotificationAttemptPublic(SQLModel):
+    id: uuid.UUID
+    notification_id: uuid.UUID
+    attempt_no: int
+    provider: str
+    provider_message_id: str | None
+    status: str
+    error_class: str | None
+    error_code: str | None
+    started_at: datetime
+    completed_at: datetime | None
+
+
+class NotificationReceiptPublic(SQLModel):
+    id: uuid.UUID
+    notification_id: uuid.UUID
+    provider: str
+    provider_event_id: str
+    provider_message_id: str
+    event_type: str
+    signature_verified: bool
+    occurred_at: datetime
+    received_at: datetime
+
+
+class NotificationPublic(SQLModel):
+    id: uuid.UUID
+    patient_id: uuid.UUID | None
+    visit_id: uuid.UUID | None
+    publication_id: uuid.UUID | None
+    portal_invitation_id: uuid.UUID | None = None
+    purpose: str
+    channel: NotificationChannel
+    destination_masked: str
+    state: NotificationState
+    available_at: datetime
+    submitted_at: datetime | None
+    delivered_at: datetime | None
+    failed_at: datetime | None
+    acknowledged_at: datetime | None
+    revoked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    attempt_count: int = 0
+    attempts: list[NotificationAttemptPublic] = Field(default_factory=list)
+    receipts: list[NotificationReceiptPublic] = Field(default_factory=list)
 
 
 class PatientSharingRequestCreate(SQLModel):
     entry_version_id: uuid.UUID
+
+
+class PatientSharingApprovalCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    medication_reviews: list[MedicationReviewAttestation] = Field(default_factory=list)
 
 
 class PatientSharingRequestPublic(SQLModel):
@@ -2359,6 +3917,12 @@ class DecisionExplanationPublic(SQLModel):
     confidence: dict[str, object]
     importance: dict[str, object]
     abstention_reason: str | None
+    current_confidence_state: Literal["qualified", "unavailable", "review_required"] = (
+        "unavailable"
+    )
+    confidence_qualification_reasons: list[str] = Field(default_factory=list)
+    confidence_qualified_at: datetime | None = None
+    safety_review_required: bool = False
 
 
 class ReviewRequestCreate(SQLModel):
@@ -2368,8 +3932,8 @@ class ReviewRequestCreate(SQLModel):
 class ImportanceImpressionCreate(SQLModel):
     highlight_id: uuid.UUID
     view_event_id: str = Field(min_length=8, max_length=120)
-    rank: int = Field(ge=1, le=5)
-    surface: str = Field(default="current_priorities", max_length=60)
+    rank: int = Field(ge=1)
+    surface: Literal["current_priorities", "clinical_review"] = "current_priorities"
     exposure_probability: float = Field(default=1.0, gt=0.0, le=1.0)
     visible_ratio: float = Field(ge=0.5, le=1.0)
     visible_duration_ms: int = Field(ge=2_000, le=600_000)
@@ -2393,6 +3957,34 @@ class ConflictPublic(SQLModel):
     right_pointer_id: uuid.UUID | None
     resolution: str | None
     created_at: datetime
+    left_assertion_scope: str | None = None
+    right_assertion_scope: str | None = None
+    left_polarity: str | None = None
+    right_polarity: str | None = None
+    left_allergy_category: Literal["drug", "food", "environmental"] | None = None
+    right_allergy_category: Literal["drug", "food", "environmental"] | None = None
+    left_origin: str | None = None
+    right_origin: str | None = None
+    left_source_role: str | None = None
+    right_source_role: str | None = None
+    left_source_section: str | None = None
+    right_source_section: str | None = None
+    left_source_language: str | None = None
+    right_source_language: str | None = None
+    left_assertion_state: Literal["active", "superseded"] | None = None
+    right_assertion_state: Literal["active", "superseded"] | None = None
+    left_effective_time: datetime | None = None
+    right_effective_time: datetime | None = None
+    left_recorded_at: datetime | None = None
+    right_recorded_at: datetime | None = None
+    review_required: bool = True
+    safety_review_state: Literal["ready", "review_required", "critical_unresolved"] = (
+        "critical_unresolved"
+    )
+    current_confidence_state: Literal["qualified", "unavailable", "review_required"] = (
+        "review_required"
+    )
+    current_confidence_reasons: list[str] = Field(default_factory=list)
 
 
 class ClinicalFactAssertionPublic(SQLModel):
@@ -2400,11 +3992,128 @@ class ClinicalFactAssertionPublic(SQLModel):
     fact_type: str
     subject: str
     normalized_value: str
+    polarity: str = "present"
+    assertion_scope: str = "specific_substance"
+    allergy_category: Literal["drug", "food", "environmental"] | None = None
+    source_language: str = "und"
+    source_role: str | None = None
+    source_section: str | None = None
+    assertion_state: Literal["active", "superseded"] = "active"
+    superseded_by_assertion_id: uuid.UUID | None = None
+    superseded_at: datetime | None = None
     clinical_status: str
     effective_time: datetime | None
     origin: str
     source_entry_version_id: uuid.UUID
     provenance_pointer_id: uuid.UUID
+    medication: str | None = None
+    dose_value: float | None = None
+    dose_unit: str | None = None
+    route: str | None = None
+    frequency: str | None = None
+
+
+class ProvisionalSafetyAlertPublic(SQLModel):
+    id: uuid.UUID
+    patient_id: uuid.UUID
+    session_id: uuid.UUID
+    source_event_id: str
+    source_start_offset: int
+    source_end_offset: int
+    source_language: str
+    concept_code: str
+    assertion_scope: str
+    polarity: str
+    severity: str
+    state: Literal["pending", "confirmed", "dismissed", "superseded"]
+    completed_segment_at: datetime
+    detected_at: datetime
+    reviewed_at: datetime | None
+    review_reason_code: str | None
+    confirmed_assertion_id: uuid.UUID | None
+
+
+class ProvisionalSafetyAlertReviewRequest(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    reason_code: ReasonCodeInput | None = None
+
+
+class HighlightSupportReviewPublic(SQLModel):
+    id: uuid.UUID
+    highlight_id: uuid.UUID
+    patient_id: uuid.UUID
+    source_entry_version_id: uuid.UUID
+    observed_current_version_id: uuid.UUID
+    support_state: Literal["current", "historical", "superseded"]
+    review_status: Literal["pending", "reaffirmed", "superseded"]
+    reviewed_at: datetime | None
+    created_at: datetime
+
+
+class ImportanceCandidateExposurePublic(SQLModel):
+    id: uuid.UUID
+    candidate_set_id: str
+    view_event_id: str
+    patient_id: uuid.UUID
+    highlight_id: uuid.UUID
+    rank: int
+    surface: str
+    feature_keys: list[str]
+    shadow_score: float
+    protected: bool
+    displayed: bool
+    exposure_probability: float
+    observed_at: datetime
+
+
+class ImportanceExposureReportCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    window_hours: int = Field(default=24, ge=1, le=168)
+
+
+class ImportanceExposureSurfacePublic(SQLModel):
+    candidate_count: int = Field(ge=0)
+    telemetry_count: int = Field(ge=0)
+    displayed_count: int = Field(ge=0)
+    protected_candidate_count: int = Field(ge=0)
+    protected_displayed_count: int = Field(ge=0)
+    ordinary_candidate_count: int = Field(ge=0)
+    ordinary_displayed_count: int = Field(ge=0)
+    missing_telemetry_count: int = Field(ge=0)
+    duplicate_telemetry_count: int = Field(ge=0)
+
+
+class ImportanceExposureQualificationReportPublic(SQLModel):
+    id: uuid.UUID
+    report_version: str
+    window_start: datetime
+    window_end: datetime
+    source_candidate_set_count: int = Field(ge=0)
+    candidate_count: int = Field(ge=0)
+    telemetry_count: int = Field(ge=0)
+    displayed_count: int = Field(ge=0)
+    protected_candidate_count: int = Field(ge=0)
+    protected_displayed_count: int = Field(ge=0)
+    ordinary_candidate_count: int = Field(ge=0)
+    ordinary_displayed_count: int = Field(ge=0)
+    protected_recall: float = Field(ge=0, le=1)
+    ordinary_recall: float = Field(ge=0, le=1)
+    ordinary_exposure_rate: float = Field(ge=0, le=1)
+    missing_telemetry_count: int = Field(ge=0)
+    duplicate_telemetry_count: int = Field(ge=0)
+    surfaces: dict[
+        Literal["current_priorities", "clinical_review"],
+        ImportanceExposureSurfacePublic,
+    ]
+    qualified: bool
+    qualification_reasons: list[str] = Field(default_factory=list)
+    current: bool
+    current_reasons: list[str] = Field(default_factory=list)
+    effective_mode: Literal["disabled", "shadow", "active"]
+    expires_at: datetime
+    created_at: datetime
 
 
 class PlatformLogin(SQLModel):
@@ -2428,6 +4137,221 @@ class PlatformClinicPublic(SQLModel):
     patient_count: int
 
 
+class ClinicInitialStaff(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    email: EmailStr
+    full_name: str = Field(min_length=1, max_length=255)
+    role: Literal["admin", "clinician", "staff"] = "admin"
+
+
+class ClinicOnboardingCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    code: str = Field(min_length=3, max_length=12)
+    slug: str = Field(min_length=3, max_length=80)
+    name: str = Field(min_length=1, max_length=255)
+    timezone: str = Field(min_length=3, max_length=80)
+    initial_staff: list[ClinicInitialStaff] = Field(min_length=1)
+    worker_enabled: bool = True
+    supported_languages: list[Literal["en", "ms", "nan", "zh", "cmn"]] = Field(
+        default_factory=lambda: ["en", "ms", "nan", "zh"]
+    )
+    messaging_channels: list[NotificationChannel] = Field(default_factory=list)
+    remote_text_egress_enabled: bool = False
+    remote_audio_egress_enabled: bool = False
+    calibration_required: bool = True
+    formulary_template: Literal["nightingale-clinic-formulary-v1"] = (
+        "nightingale-clinic-formulary-v1"
+    )
+
+
+class ClinicOperationalSettingPublic(SQLModel):
+    clinic_id: uuid.UUID
+    timezone: str
+    worker_enabled: bool
+    supported_languages: list[str]
+    messaging_channels: list[str]
+    remote_text_egress_enabled: bool
+    remote_audio_egress_enabled: bool
+    calibration_required: bool
+    external_proxy_retention_days: int
+    external_container_retention_days: int
+    external_apm_retention_days: int
+    external_observability_retention_evidence: Literal[
+        "unqualified",
+        "deterministic_fixture",
+        "deployment_policy",
+        "provider_contract",
+    ]
+    external_observability_retention_evidence_id: str
+    formulary_template: str
+    onboarding_status: Literal["draft", "ready", "blocked"]
+    updated_at: datetime
+
+
+class ClinicChannelCapabilityEvidencePublic(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    channel: NotificationChannel
+    provider: str
+    configured: bool
+    production_safe: bool
+    reason_code: str | None = None
+
+
+class ClinicPreflightEvidencePublic(SQLModel):
+    """Typed, PHI-free evidence supporting one onboarding preflight check."""
+
+    model_config = SQLModelConfig(extra="forbid")
+
+    evidence_id: str
+    observed_at: datetime
+    source: Literal["request", "runtime", "deployment", "stored_policy"]
+    requested_code: str | None = None
+    requested_slug: str | None = None
+    timezone: str | None = None
+    initial_staff_count: int | None = Field(default=None, ge=0)
+    initial_admin_count: int | None = Field(default=None, ge=0)
+    worker_enabled: bool | None = None
+    worker_kind: str | None = None
+    worker_version: str | None = None
+    worker_source_commit: str | None = None
+    worker_heartbeat_at: datetime | None = None
+    worker_heartbeat_age_seconds: int | None = Field(default=None, ge=0)
+    worker_heartbeat_max_age_seconds: int | None = Field(default=None, ge=1)
+    requested_languages: list[str] = Field(default_factory=list)
+    available_languages: list[str] = Field(default_factory=list)
+    missing_languages: list[str] = Field(default_factory=list)
+    channels: list[ClinicChannelCapabilityEvidencePublic] = Field(default_factory=list)
+    remote_text_requested: bool | None = None
+    remote_text_deployment_ready: bool | None = None
+    remote_audio_requested: bool | None = None
+    remote_audio_deployment_ready: bool | None = None
+    local_asr_default: bool | None = None
+    # Observed deployment configuration, reported verbatim. The 1..30 window is
+    # enforced where it belongs — on the stored clinic setting and by the
+    # preflight check itself — so an out-of-range value must remain reportable
+    # rather than crash the endpoint that exists to flag it.
+    proxy_retention_days: int | None = Field(default=None, ge=0)
+    container_retention_days: int | None = Field(default=None, ge=0)
+    apm_retention_days: int | None = Field(default=None, ge=0)
+    retention_evidence: str | None = None
+    retention_evidence_id: str | None = None
+    formulary_template: str | None = None
+    calibration_required: bool | None = None
+
+
+class ClinicPreflightCheckPublic(SQLModel):
+    key: Literal[
+        "code",
+        "timezone",
+        "initial_staff",
+        "worker",
+        "languages",
+        "messaging",
+        "egress_policy",
+        "observability_retention",
+        "formulary",
+        "calibration",
+    ]
+    passed: bool
+    reason_code: str | None = None
+    evidence: ClinicPreflightEvidencePublic
+
+
+class ClinicPreflightPublic(SQLModel):
+    clinic_id: uuid.UUID
+    ready: bool
+    checks: list[ClinicPreflightCheckPublic]
+    settings: ClinicOperationalSettingPublic
+
+
+class ClinicFormularyConceptCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    concept_code: str = Field(min_length=3, max_length=100)
+    canonical_name: str = Field(min_length=1, max_length=255)
+    multilingual_aliases: dict[str, list[str]]
+    dose_unit: str = Field(min_length=1, max_length=20)
+    minimum_single_dose: float
+    maximum_single_dose: float
+    permitted_routes: list[str] = Field(min_length=1, max_length=12)
+    contraindicated_allergy_concepts: list[str] = Field(
+        default_factory=list, max_length=100
+    )
+
+
+class ClinicFormularyVersionCreate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    version_code: str = Field(min_length=3, max_length=80)
+    concepts: list[ClinicFormularyConceptCreate] = Field(min_length=1, max_length=1_000)
+
+
+class ClinicFormularyQualificationRequest(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    expected_content_sha256: str = Field(min_length=64, max_length=64)
+
+
+class ClinicFormularyConceptPublic(SQLModel):
+    id: uuid.UUID
+    concept_code: str
+    canonical_name: str
+    multilingual_aliases: dict[str, list[str]]
+    dose_unit: str
+    minimum_single_dose: float
+    maximum_single_dose: float
+    permitted_routes: list[str]
+    contraindicated_allergy_concepts: list[str]
+
+
+class ClinicFormularyVersionPublic(SQLModel):
+    id: uuid.UUID
+    version_code: str
+    status: Literal["draft", "active", "retired"]
+    content_sha256: str
+    computed_content_sha256: str | None
+    digest_matches: bool
+    qualification_state: Literal[
+        "unqualified", "qualified", "invalid", "active", "retired"
+    ]
+    qualification_source: Literal["clinic_admin", "platform_template"] | None
+    content_locked_at: datetime | None
+    qualified_at: datetime | None
+    effective_at: datetime
+    retired_at: datetime | None
+    concept_count: int
+    concepts: list[ClinicFormularyConceptPublic] = Field(default_factory=list)
+
+
+class ClinicFormularyVersionsPublic(SQLModel):
+    data: list[ClinicFormularyVersionPublic]
+    count: int
+
+
+class ClinicFormularyReadinessPublic(SQLModel):
+    ready: bool
+    reason_code: str | None = None
+    active_version_id: uuid.UUID | None = None
+    version_code: str | None = None
+    content_sha256: str | None = None
+    qualification_source: Literal["clinic_admin", "platform_template"] | None = None
+
+
+class ProviderCircuitPublic(SQLModel):
+    provider: str
+    capability: str
+    state: Literal["closed", "open", "half_open"]
+    consecutive_failures: int
+    last_error_class: str | None
+    opened_at: datetime | None
+    next_probe_at: datetime | None
+    last_success_at: datetime | None
+    updated_at: datetime
+
+
 class PlatformClinicsPublic(SQLModel):
     data: list[PlatformClinicPublic]
     count: int
@@ -2440,6 +4364,7 @@ class PlatformAuditPublic(SQLModel):
     target_patient_id: uuid.UUID | None
     request_id: str
     created_at: datetime
+    reason_code: str = "not_specified"
 
 
 class PlatformAuditsPublic(SQLModel):
@@ -2452,6 +4377,15 @@ class PatientsPublic(SQLModel):
     count: int
     offset: int = 0
     limit: int = 50
+
+
+class PatientsSearchRequest(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    search: str | None = Field(default=None, max_length=100)
+    visit_scope: Literal["all", "today", "previous"] = "all"
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=100)
 
 
 class EntryCreate(SQLModel):
@@ -2581,6 +4515,7 @@ class CommentPublic(SQLModel):
     anchor_state: str
     review_required: bool
     assigned_membership_id: uuid.UUID | None
+    revision: int = Field(ge=1)
     mentioned_user_ids: list[uuid.UUID] = Field(default_factory=list)
     resolved_at: datetime | None
     created_at: datetime
@@ -2588,6 +4523,27 @@ class CommentPublic(SQLModel):
 
 class AssignmentUpdate(SQLModel):
     assigned_membership_id: uuid.UUID | None
+
+
+class EditorPresenceHeartbeatCreate(SQLModel):
+    """A content-free signal that an actor is editing one immutable version."""
+
+    model_config = SQLModelConfig(extra="forbid")
+
+    entry_version_id: uuid.UUID
+
+
+class EditorPresencePublic(SQLModel):
+    """Short-lived editor identity projection delivered over clinic SSE."""
+
+    clinic_id: uuid.UUID
+    patient_id: uuid.UUID
+    entry_id: uuid.UUID
+    entry_version_id: uuid.UUID
+    actor_id: uuid.UUID
+    actor_role: Literal["staff", "clinician"]
+    actor_display_name: str = Field(min_length=1, max_length=255)
+    expires_at: datetime
 
 
 class HighlightCreate(AnchorInput):
@@ -2615,10 +4571,18 @@ class HighlightPublic(SQLModel):
     base_score: float
     learned_score: float
     final_score: float
-    risk_reason: str
+    risk_reason: RiskReason
     unresolved: bool
     clinician_confirmed: bool
     provenance_pointer_id: uuid.UUID
+    support_state: Literal["current", "historical", "superseded"] = "current"
+    support_review_required: bool = False
+    current_priority_eligible: bool = True
+    safety_review_required: bool = False
+    current_confidence_state: Literal["qualified", "unavailable", "review_required"] = (
+        "unavailable"
+    )
+    current_confidence_reasons: list[str] = Field(default_factory=list)
 
 
 class ProvenanceResolved(SQLModel):
@@ -2635,12 +4599,16 @@ class ProvenanceResolved(SQLModel):
     audio_asset_id: uuid.UUID | None
     audio_start_ms: int | None
     audio_end_ms: int | None
+    support_state: Literal["current", "historical", "superseded"] = "current"
 
 
 class PatientGlanceCard(SQLModel):
     highlight_id: uuid.UUID
     label: str
     provenance_pointer_id: uuid.UUID
+    support_state: Literal["current", "historical", "superseded"] = "current"
+    support_review_required: bool = False
+    current_priority_eligible: bool = True
 
 
 class ClinicalGlanceCard(SQLModel):
@@ -2648,7 +4616,7 @@ class ClinicalGlanceCard(SQLModel):
     label: str
     critical: bool
     pinned: bool
-    risk_reason: str
+    risk_reason: RiskReason
     provenance_pointer_id: uuid.UUID
     score_components: dict[str, float]
     review_state: Literal["ready", "review_required", "abstained"] = "ready"
@@ -2656,6 +4624,14 @@ class ClinicalGlanceCard(SQLModel):
     confidence: dict[str, object] = Field(default_factory=dict)
     importance: dict[str, object] = Field(default_factory=dict)
     abstention_reason: str | None = None
+    support_state: Literal["current", "historical", "superseded"] = "current"
+    fallback_kind: Literal["stored", "rule_derived"] | None = None
+    support_review_required: bool = False
+    current_priority_eligible: bool = True
+    current_confidence_state: Literal["qualified", "unavailable", "review_required"] = (
+        "unavailable"
+    )
+    current_confidence_reasons: list[str] = Field(default_factory=list)
 
 
 class GlancePublic(SQLModel):
@@ -2663,6 +4639,17 @@ class GlancePublic(SQLModel):
     source: Literal["precomputed"] = "precomputed"
     generated_at: datetime
     cards: list[PatientGlanceCard]
+    importance_mode: Literal["disabled", "shadow", "active"]
+    freshness_state: Literal["fresh", "stale", "unavailable"] = "fresh"
+    age_seconds: int = 0
+    provider_outage: bool = False
+    outage_message: str | None = None
+    fallback_kind: Literal["stored", "rule_derived"] | None = None
+    safety_review_required: bool = False
+    current_confidence_state: Literal["qualified", "unavailable", "review_required"] = (
+        "unavailable"
+    )
+    current_confidence_reasons: list[str] = Field(default_factory=list)
 
 
 class ClinicalGlancePublic(SQLModel):
@@ -2671,6 +4658,17 @@ class ClinicalGlancePublic(SQLModel):
     generated_at: datetime
     cards: list[ClinicalGlanceCard]
     review_cards: list[ClinicalGlanceCard] = Field(default_factory=list)
+    importance_mode: Literal["disabled", "shadow", "active"]
+    freshness_state: Literal["fresh", "stale", "unavailable"] = "fresh"
+    age_seconds: int = 0
+    provider_outage: bool = False
+    outage_message: str | None = None
+    fallback_kind: Literal["stored", "rule_derived"] | None = None
+    safety_review_required: bool = False
+    current_confidence_state: Literal["qualified", "unavailable", "review_required"] = (
+        "unavailable"
+    )
+    current_confidence_reasons: list[str] = Field(default_factory=list)
 
 
 class AIIngestRequest(SQLModel):
@@ -2696,6 +4694,21 @@ class AIRunPublic(SQLModel):
     created_at: datetime
 
 
+class JobRetryAttemptPublic(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    attempt: int = Field(ge=0)
+    error_code: str = Field(max_length=80)
+    error_class: str = Field(max_length=80)
+    attempted_at: datetime
+    next_retry_at: datetime | None = None
+    source_job_id: uuid.UUID | None = None
+    recovery_job_id: uuid.UUID | None = None
+    provider: str | None = Field(default=None, max_length=60)
+    capability: str | None = Field(default=None, max_length=60)
+    circuit_state: Literal["closed", "open", "half_open"] | None = None
+
+
 class JobPublic(SQLModel):
     id: uuid.UUID
     patient_id: uuid.UUID
@@ -2707,6 +4720,26 @@ class JobPublic(SQLModel):
     ai_run: AIRunPublic | None = None
     created_at: datetime
     updated_at: datetime
+    error_class: str | None = None
+    next_run_at: datetime | None = None
+    provider_outage: bool = False
+    provider_circuit: ProviderCircuitPublic | None = None
+    retry_history: list[JobRetryAttemptPublic] = Field(default_factory=list)
+    retry_history_invalid_count: int = Field(default=0, ge=0)
+    delayed_at: datetime | None = None
+    timed_out_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    outage_started_at: datetime | None = None
+    outage_age_seconds: int = 0
+    retry_after_seconds: int | None = None
+    visible_state: (
+        Literal["queued", "running", "delayed", "timed_out", "failed"] | None
+    ) = None
+    current_confidence_state: Literal["qualified", "unavailable", "review_required"] = (
+        "unavailable"
+    )
+    current_confidence_reasons: list[str] = Field(default_factory=list)
+    safety_review_required: bool = False
 
 
 class ImportanceFeedbackCreate(SQLModel):
@@ -2758,6 +4791,39 @@ class VoiceSessionCreate(SQLModel):
     capture_kind: VoiceCaptureKind
     synthetic_fixture: bool = False
     fixture_id: str | None = Field(default=None, max_length=100)
+    remote_audio_consent: bool = False
+
+
+AudioQualityUnavailableReason = Literal[
+    "AUDIO_ASSET_NOT_AVAILABLE",
+    "AUDIO_QUALITY_METADATA_INVALID",
+]
+
+
+class AudioQualityPublic(SQLModel):
+    """Allowlisted, typed source-audio quality evidence.
+
+    Measurements describe the decoded source before normalization.  The
+    denoised working copy never replaces the encrypted source evidence, and a
+    review signal remains visible even when denoising was applied.
+    """
+
+    model_config = SQLModelConfig(extra="forbid")
+
+    measurement_stage: Literal["decoded-pre-normalization"]
+    processing_chain_version: str = Field(min_length=1, max_length=100)
+    rms: float = Field(ge=0)
+    noise_floor_dbfs: float = Field(le=0)
+    estimated_snr_db: float
+    clipping_ratio: float = Field(ge=0, le=1)
+    silence_ratio: float = Field(ge=0, le=1)
+    silence_review: bool
+    clipping_review: bool
+    low_signal_review: bool
+    noise_review: bool
+    multi_device_overlap_review: bool
+    denoise_applied: bool
+    review_required: bool
 
 
 class VoiceSessionPublic(SQLModel):
@@ -2772,6 +4838,10 @@ class VoiceSessionPublic(SQLModel):
     live_transcript_reason_code: str | None = None
     current_transcript_revision_id: uuid.UUID | None = None
     published_entry_id: uuid.UUID | None = None
+    audio_quality: AudioQualityPublic | None
+    audio_quality_unavailable_reason: AudioQualityUnavailableReason | None
+    remote_audio_consent_recorded: bool = False
+    remote_audio_consent_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -2841,6 +4911,22 @@ class VoiceFinalizePublic(SQLModel):
     job_id: uuid.UUID
 
 
+class TranscriptLanguageSpanPublic(SQLModel):
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=1)
+    language_code: Literal["en", "ms", "nan", "zh", "cmn", "und"]
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    detection_source: Literal[
+        "provider_hint",
+        "lexicon_rule",
+        "lexicon_and_provider",
+        "mixed_rule",
+        "unavailable",
+        "human_review",
+    ]
+    review_required: bool = False
+
+
 class TranscriptSegmentPublic(SQLModel):
     id: uuid.UUID
     ordinal: int
@@ -2850,7 +4936,11 @@ class TranscriptSegmentPublic(SQLModel):
     start_ms: int
     end_ms: int
     speaker_id: str | None
+    speaker_ids: list[str] = Field(default_factory=list)
     detected_language: str | None
+    source_language: str = "und"
+    language_confidence: float | None = None
+    language_spans: list[TranscriptLanguageSpanPublic] = Field(default_factory=list)
     confidence: float | None
     confidence_source: str
     overlap_group_id: str | None
@@ -2871,6 +4961,11 @@ class ClinicalFactPublic(SQLModel):
     audio_end_ms: int
     status: str
     stale: bool
+    medication: str | None = None
+    dose_value: float | None = None
+    dose_unit: str | None = None
+    route: str | None = None
+    frequency: str | None = None
 
 
 class TranscriptRevisionPublic(SQLModel):
@@ -2889,6 +4984,8 @@ class TranscriptRevisionPublic(SQLModel):
     stale: bool
     fallback: bool
     warning_codes: list[str]
+    audio_quality: AudioQualityPublic | None
+    audio_quality_unavailable_reason: AudioQualityUnavailableReason | None
     segments: list[TranscriptSegmentPublic]
     facts: list[ClinicalFactPublic]
     created_at: datetime
@@ -2911,6 +5008,13 @@ class VoiceReanalyzePublic(SQLModel):
 
 class VoicePublishRequest(SQLModel):
     expected_revision_id: uuid.UUID
+    medication_reviews: list[MedicationReviewAttestation] = Field(default_factory=list)
+
+
+class VoiceRemoteAudioConsentUpdate(SQLModel):
+    model_config = SQLModelConfig(extra="forbid")
+
+    consent: bool
 
 
 class VoicePublishPublic(SQLModel):

@@ -78,6 +78,9 @@ test("clinical sign-in is product-only and validates the human clinic code", asy
   await page.goto("/login")
   await expect(page.getByTestId("clinical-login-form")).toBeVisible()
   await expect(page.getByText("Clinical team access")).toBeVisible()
+  await expect(
+    page.getByRole("link", { name: "Patient sign in" }),
+  ).toHaveAttribute("href", "/patient/login")
   await expect(page.getByRole("button", { name: /Continue as/i })).toHaveCount(
     0,
   )
@@ -110,8 +113,14 @@ test("patient sign-in is a separate portal with reciprocal navigation", async ({
   page,
 }) => {
   await page.goto("/patient/login")
-  await expect(page.getByTestId("patient-login-form")).toBeVisible()
+  await expect(page.getByTestId("patient-otp-login-form")).toBeVisible()
   await expect(page.getByText("Patient access")).toBeVisible()
+  await expect(page.getByLabel("Portal ID")).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Send one-time code" }),
+  ).toBeVisible()
+  await expect(page.getByLabel("Email")).toHaveCount(0)
+  await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0)
   await expect(
     page.getByRole("link", { name: "Clinical sign in" }),
   ).toHaveAttribute("href", "/login")

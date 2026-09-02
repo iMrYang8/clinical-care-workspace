@@ -1,9 +1,12 @@
 import type {
+  JobPublic,
   TranscriptRevisionPublic,
   VoiceFinalizePublic,
+  VoicePublishPublic,
   VoiceSessionPublic,
 } from "@/client"
 import { VoiceService } from "@/client"
+import type { MedicationReviewInput } from "@/features/api"
 import { authenticatedFetch } from "@/features/authenticatedFetch"
 import {
   acknowledgeChunk,
@@ -140,6 +143,28 @@ export async function voiceTranscript(
 ): Promise<TranscriptRevisionPublic> {
   return (await VoiceService.transcript({ path: { session_id: sessionId } }))
     .data
+}
+
+export async function voiceJob(sessionId: string): Promise<JobPublic> {
+  return (
+    await VoiceService.sessionJobStatus({ path: { session_id: sessionId } })
+  ).data
+}
+
+export async function publishReviewedVoice(
+  sessionId: string,
+  expectedRevisionId: string,
+  medicationReviews: MedicationReviewInput[],
+): Promise<VoicePublishPublic> {
+  return (
+    await VoiceService.publish({
+      path: { session_id: sessionId },
+      body: {
+        expected_revision_id: expectedRevisionId,
+        medication_reviews: medicationReviews,
+      },
+    })
+  ).data
 }
 
 export function voiceAudioUrl(sessionId: string): string {

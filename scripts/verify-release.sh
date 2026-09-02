@@ -123,6 +123,14 @@ fi
 section "Compose rendering"
 ./scripts/test-demo-script-safety.sh
 ./scripts/test-script-safety.sh
+# Production Compose intentionally has no permissive retention default. The
+# isolated release topology supplies an inspectable CI policy attestation;
+# operators may override all five values with their deployed policy/contract.
+export EXTERNAL_PROXY_RETENTION_DAYS="${EXTERNAL_PROXY_RETENTION_DAYS:-30}"
+export EXTERNAL_CONTAINER_RETENTION_DAYS="${EXTERNAL_CONTAINER_RETENTION_DAYS:-30}"
+export EXTERNAL_APM_RETENTION_DAYS="${EXTERNAL_APM_RETENTION_DAYS:-30}"
+export EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE="${EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE:-deployment_policy}"
+export EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID="${EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID:-policy:nightingale-release-verification-30d}"
 docker compose config --quiet
 docker compose config --format json | \
   python3 scripts/assert_compose_ports.py development
@@ -426,7 +434,7 @@ if [[ "$run_e2e" == true ]]; then
     -f compose.yml -f compose.override.yml build playwright
   docker compose --project-name "$live_project" \
     -f compose.yml -f compose.override.yml run --rm --no-deps -e CI=1 \
-    playwright bunx playwright test --fail-on-flaky-tests \
+    playwright bunx playwright test --fail-on-flaky-tests --retries=0 \
       --trace=retain-on-failure --repeat-each=3 --workers=1
 fi
 
@@ -503,6 +511,7 @@ if [[ "$run_e2e" == true || "$run_benchmark" == true || "$run_ffmpeg" == true ]]
   export PROJECT_NAME="Nightingale production release verification"
   export SECRET_KEY="$(openssl rand -hex 32)"
   export FIELD_ENCRYPTION_MASTER_KEY="$(openssl rand -base64 32 | tr -d '\n')"
+  export NOTIFICATION_WEBHOOK_SECRET="$(openssl rand -hex 32)"
   export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
   export POSTGRES_APP_PASSWORD="$(openssl rand -hex 24)"
   export SMTP_HOST=smtp.example.com

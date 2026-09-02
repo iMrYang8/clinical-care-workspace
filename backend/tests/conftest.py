@@ -19,14 +19,28 @@ migration_engine = create_engine(
 
 
 @event.listens_for(engine, "begin")
-def _default_direct_test_session_to_primary_clinic(connection) -> None:
-    """Scope legacy direct test inspections without granting an RLS bypass."""
+def _default_direct_test_session_to_primary_clinician(connection) -> None:
+    """Give direct runtime-engine test helpers an explicit scoped actor.
+
+    API requests always replace these transaction-local fixture values with the
+    authenticated request context. Direct service/worker tests historically use
+    ``Session(engine)``; binding the synthetic clinician keeps those inspections
+    RLS-visible without granting a bypass role or weakening production defaults.
+    """
 
     if connection.dialect.name == "postgresql":
-        connection.execute(
-            text("SELECT set_config('app.current_clinic_id', :clinic_id, true)"),
-            {"clinic_id": str(demo_id("clinic-primary"))},
-        )
+        values = {
+            "app.current_clinic_id": str(demo_id("clinic-primary")),
+            "app.current_actor_id": str(demo_id("user-clinician")),
+            "app.current_actor_role": "clinician",
+            "app.current_patient_id": "",
+            "app.current_invitation_token_hash": "",
+        }
+        for setting, value in values.items():
+            connection.execute(
+                text("SELECT set_config(:setting, :value, true)"),
+                {"setting": setting, "value": value},
+            )
 
 
 def reset_synthetic_fixture(session: Session) -> None:
@@ -36,6 +50,7 @@ def reset_synthetic_fixture(session: Session) -> None:
         text(
             """
             TRUNCATE TABLE
+              worker_heartbeats,
               platform_audit_events, platform_administrators,
               patient_publication_items, patient_sharing_requests,
               patient_publications, calibration_buckets, decision_assessments,

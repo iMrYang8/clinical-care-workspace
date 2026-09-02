@@ -30,6 +30,7 @@ trap cleanup EXIT INT TERM
 
 secret_key="$(openssl rand -hex 32)"
 field_key="$(openssl rand -base64 32 | tr -d '\n')"
+notification_webhook_secret="$(openssl rand -hex 32)"
 postgres_password="$(openssl rand -hex 24)"
 postgres_app_password="$(openssl rand -hex 24)"
 first_superuser_password="$(openssl rand -hex 24)"
@@ -52,6 +53,7 @@ BROWSER_TRUSTED_ORIGINS=https://localhost
 
 SECRET_KEY=$secret_key
 FIELD_ENCRYPTION_MASTER_KEY=$field_key
+NOTIFICATION_WEBHOOK_SECRET=$notification_webhook_secret
 FIRST_SUPERUSER=ci-admin@example.com
 FIRST_SUPERUSER_PASSWORD=$first_superuser_password
 
@@ -77,6 +79,14 @@ PRESIDIO_NLP_MODEL=en_core_web_sm
 INSTALL_PRESIDIO_NLP=$install_presidio_nlp
 INSTALL_LOCAL_ASR=false
 INSTALL_DIARIZATION=false
+
+# CI's production-Compose rendering uses an inspectable synthetic policy ID;
+# development Compose overrides this with deterministic_fixture explicitly.
+EXTERNAL_PROXY_RETENTION_DAYS=30
+EXTERNAL_CONTAINER_RETENTION_DAYS=30
+EXTERNAL_APM_RETENTION_DAYS=30
+EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE=deployment_policy
+EXTERNAL_OBSERVABILITY_RETENTION_EVIDENCE_ID=policy:nightingale-ci-external-observability-30d
 
 IMPORTANCE_LEARNING_ENABLED=true
 DATA_DECAY_ENABLED=true

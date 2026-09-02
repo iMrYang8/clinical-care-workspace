@@ -1,283 +1,298 @@
 <?xml version='1.0' encoding='utf-8'?>
-<mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1220" math="0" shadow="0" adaptiveColors="auto" background="#FAF8F3">
+<mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1120" math="0" shadow="0" adaptiveColors="auto" background="#FFFFFF">
   <root>
     <mxCell id="0" />
     <mxCell id="1" parent="0" />
-    <mxCell id="title" value="Nightingale · Domain Schema" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=26;fontColor=#17324D;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
-      <mxGeometry x="44" y="30" width="1712" height="42" as="geometry" />
-    </mxCell>
-    <mxCell id="subtitle" value="Clinic-scoped entities, decision assessments, publication approvals, and immutable links that keep every surfaced fact traceable" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontColor=#607386;fontStyle=0;whiteSpace=wrap;" vertex="1" parent="1">
-      <mxGeometry x="46" y="70" width="1708" height="30" as="geometry" />
-    </mxCell>
-    <mxCell id="tenant_box" value="TENANCY &amp; IDENTITY" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EEF6F4;strokeColor=#C9DED9;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="40" y="116" width="340" height="400" as="geometry" />
-    </mxCell>
-    <mxCell id="record_box" value="CARE RECORD &amp; REVISION" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F1F5FA;strokeColor=#CDD9E8;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="414" y="116" width="550" height="400" as="geometry" />
-    </mxCell>
-    <mxCell id="collab_box" value="COLLABORATION" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F3F0FA;strokeColor=#DBD1EE;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="998" y="116" width="320" height="400" as="geometry" />
-    </mxCell>
-    <mxCell id="trust_box" value="TRUST, GLANCE &amp; LEARNING" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F8F3E8;strokeColor=#E5D7B8;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1352" y="116" width="408" height="500" as="geometry" />
-    </mxCell>
-    <mxCell id="ai_box" value="AI EXECUTION &amp; EVENTS" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F3F0FA;strokeColor=#DBD1EE;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="40" y="560" width="560" height="458" as="geometry" />
-    </mxCell>
-    <mxCell id="voice_box" value="VOICE CAPTURE &amp; REVIEW" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#F8F3E8;strokeColor=#E5D7B8;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="634" y="560" width="684" height="458" as="geometry" />
-    </mxCell>
-    <mxCell id="retention_box" value="RETENTION &amp; RECOVERY" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EEF6F4;strokeColor=#C9DED9;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=14;spacingLeft=16;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1352" y="652" width="408" height="366" as="geometry" />
-    </mxCell>
-    <mxCell id="s1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="clinic" target="membership">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="user" target="membership">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="clinic" target="patient">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s4" value="accepts" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="invitation" target="membership">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="patient" target="patient_link">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s6" value="owns" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="patient" target="entry">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s7" value="1..n" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="entry" target="version">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="relation">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="conflict">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="audit">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s11" value="anchors" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="comment">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="comment" target="mention">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="comment" target="task">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s14" value="resolve" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="comment" target="orphan">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="highlight">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s16" value="source" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="highlight" target="provenance">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s17" value="top 5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="highlight" target="glance_snapshot">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s18" value="bounded" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="feedback" target="stats">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s19" value="rank" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="stats" target="glance_snapshot">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="redaction_run">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s21" value="safe input" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="redaction_run" target="ai_run">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="ai_run" target="job">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s23" value="1..n" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="job" target="attempt">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="job" target="domain_event">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s25" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="attempt" target="provider_note">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s26" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="patient" target="voice_session">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s27" value="1..n" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="voice_session" target="voice_device">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s28" value="ordered" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="voice_device" target="audio_chunk">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s29" value="seal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="voice_session" target="audio_asset">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s30" value="transcribe" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="audio_asset" target="revision">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s31" value="1..n" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="revision" target="segment">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s32" value="supports" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="segment" target="fact">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s33" value="time anchor" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="fact" target="provenance">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s34" value="cold" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="archive_blob">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s35" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="decay_run" target="archive_blob">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s36" value="protects" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="retention_lock" target="archive_blob">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s37" value="verify" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="archive_blob" target="rehydrate">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s5_user" value="portal identity" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="user" target="patient_link">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s_platform_identity" value="separate role" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="user" target="platform_admin">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s_platform_audit" value="writes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="platform_admin" target="platform_audit">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="s_platform_target" value="audited target" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="platform_audit" target="patient">
-      <mxGeometry relative="1" as="geometry" />
-    </mxCell>
-    <mxCell id="clinic" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;Clinic + AISetting&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;code/name · encrypted AI routing&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="68" y="162" width="284" height="60" as="geometry" />
-    </mxCell>
-    <mxCell id="user" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;User&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;identity&lt;br&gt;password hash&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="68" y="242" width="126" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="membership" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;ClinicMembership&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;clinic + user&lt;br&gt;role · status&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="214" y="242" width="138" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="invitation" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;Invitations&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;clinic member + patient portal&lt;br&gt;hashed token · expiry&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="68" y="340" width="126" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="patient" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;Patient + identifiers&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;visit/status · HMAC duplicate key&lt;br&gt;encrypted DOB/MRN/identity&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="214" y="340" width="138" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="platform_admin" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:12px&quot;&gt;PlatformAdministrator&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;user · active&lt;br&gt;outside membership&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="68" y="438" width="126" height="70" as="geometry" />
-    </mxCell>
-    <mxCell id="platform_audit" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:12px&quot;&gt;PlatformAuditEvent&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;admin · request&lt;br&gt;clinic/patient target&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="214" y="438" width="138" height="70" as="geometry" />
-    </mxCell>
-    <mxCell id="patient_link" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;PatientUserLink&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;patient + user&lt;br&gt;portal access only&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="442" y="162" width="202" height="60" as="geometry" />
-    </mxCell>
-    <mxCell id="entry" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;Entry&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;section · type · author&lt;br&gt;current_version · occurred_at&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="680" y="162" width="250" height="76" as="geometry" />
-    </mxCell>
-    <mxCell id="version" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;EntryVersion&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;immutable number + hash&lt;br&gt;encrypted content · created_by&lt;br&gt;supersedes via relation&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="680" y="264" width="250" height="88" as="geometry" />
-    </mxCell>
-    <mxCell id="relation" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;EntryRelation&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;supersedes&lt;br&gt;conflicts_with&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="442" y="264" width="202" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="conflict" value="&lt;b&gt;&lt;font color=&quot;#BE4B5A&quot; style=&quot;font-size:13px&quot;&gt;ConflictCase&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;normalized fact pair&lt;br&gt;severity · correction · reviewer&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#BE4B5A;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="442" y="374" width="202" height="84" as="geometry" />
-    </mxCell>
-    <mxCell id="audit" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;AuditEvent (clinic)&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;actor · action · resource&lt;br&gt;tenant metadata; no PHI&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="680" y="384" width="250" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="comment" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;Comment&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;entry_version + offsets&lt;br&gt;quote · prefix/suffix · hash&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1026" y="162" width="264" height="88" as="geometry" />
-    </mxCell>
-    <mxCell id="mention" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;Mention&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;comment&lt;br&gt;membership&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1026" y="278" width="126" height="82" as="geometry" />
-    </mxCell>
-    <mxCell id="task" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;CareTask&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;comment&lt;br&gt;assignee&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1164" y="278" width="126" height="82" as="geometry" />
-    </mxCell>
-    <mxCell id="orphan" value="&lt;b&gt;&lt;font color=&quot;#BE4B5A&quot; style=&quot;font-size:13px&quot;&gt;Anchor lifecycle&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;resolved · orphaned · review_required&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#BE4B5A;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1026" y="390" width="264" height="72" as="geometry" />
-    </mxCell>
-    <mxCell id="highlight" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;Highlight + Assessment&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;exact immutable anchor&lt;br&gt;risk floor · confidence · abstention&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1380" y="162" width="352" height="84" as="geometry" />
-    </mxCell>
-    <mxCell id="provenance" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;Provenance + Assertion&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;version/span/hash · normalized fact&lt;br&gt;audio/time anchor · support state&lt;br&gt;resolution/abstention state&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1380" y="270" width="352" height="96" as="geometry" />
-    </mxCell>
-    <mxCell id="glance_snapshot" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;Glance + publication&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;snapshot · request · approved source items&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1380" y="392" width="352" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="feedback" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;Feedback + Impression&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;explicit action/reason&lt;br&gt;view dedup · exposure probability&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1380" y="494" width="166" height="88" as="geometry" />
-    </mxCell>
-    <mxCell id="stats" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;ImportanceFeatureStat&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;clinic bounded&lt;br&gt;weight + counts&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1566" y="494" width="166" height="88" as="geometry" />
-    </mxCell>
-    <mxCell id="redaction_run" value="&lt;b&gt;&lt;font color=&quot;#BE4B5A&quot; style=&quot;font-size:13px&quot;&gt;Redaction + evaluation&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;encrypted map · residual scan&lt;br&gt;PHI recall + clinical preservation&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#BE4B5A;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="68" y="610" width="220" height="84" as="geometry" />
-    </mxCell>
-    <mxCell id="ai_run" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;AI / evaluation / calibration&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;provider/model/task · manifest hash&lt;br&gt;band · abstention · metrics&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="328" y="610" width="244" height="84" as="geometry" />
-    </mxCell>
-    <mxCell id="job" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;Job&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;clinic + patient + type&lt;br&gt;idempotency · lease · state&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="68" y="730" width="220" height="88" as="geometry" />
-    </mxCell>
-    <mxCell id="attempt" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;JobAttempt&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;claim token · provider&lt;br&gt;started/finished · error class&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="328" y="730" width="244" height="88" as="geometry" />
-    </mxCell>
-    <mxCell id="domain_event" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;DomainEvent&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;aggregate + sequence&lt;br&gt;SSE payload · delivered_at&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="68" y="858" width="220" height="88" as="geometry" />
-    </mxCell>
-    <mxCell id="provider_note" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;Clinic AI routing&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;fast / careful / transcribe&lt;br&gt;gates → fallback/review&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="328" y="858" width="244" height="88" as="geometry" />
-    </mxCell>
-    <mxCell id="voice_session" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;VoiceSession&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;patient · state&lt;br&gt;join/finalize window&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="662" y="610" width="210" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="voice_device" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;VoiceDevice&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;session · label&lt;br&gt;sealed/abandoned&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="900" y="610" width="180" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="audio_chunk" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:13px&quot;&gt;AudioChunk&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;device + sequence&lt;br&gt;encrypted bytes/hash&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1108" y="610" width="182" height="78" as="geometry" />
-    </mxCell>
-    <mxCell id="audio_asset" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;AudioAsset&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;normalized 16 kHz&lt;br&gt;encrypted payload · checksum&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="662" y="728" width="210" height="84" as="geometry" />
-    </mxCell>
-    <mxCell id="revision" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:13px&quot;&gt;TranscriptRevision&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;immutable transcript · provider/model&lt;br&gt;language · confidence source · stale state&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="900" y="728" width="390" height="84" as="geometry" />
-    </mxCell>
-    <mxCell id="segment" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;TranscriptSegment&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;start/end · speaker · overlap group&lt;br&gt;text · confidence&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="662" y="856" width="292" height="84" as="geometry" />
-    </mxCell>
-    <mxCell id="fact" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;Voice ClinicalFact&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;structured value · review status&lt;br&gt;segment/time provenance&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="982" y="856" width="308" height="84" as="geometry" />
-    </mxCell>
-    <mxCell id="archive_blob" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:13px&quot;&gt;ArchiveBlob&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;zstd + AES-GCM payload&lt;br&gt;plain/cipher checksum · storage tier&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1380" y="704" width="352" height="92" as="geometry" />
-    </mxCell>
-    <mxCell id="decay_run" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:13px&quot;&gt;DecayRun&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;preview/archive&lt;br&gt;policy + counts&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1380" y="828" width="166" height="86" as="geometry" />
-    </mxCell>
-    <mxCell id="retention_lock" value="&lt;b&gt;&lt;font color=&quot;#BE4B5A&quot; style=&quot;font-size:13px&quot;&gt;RetentionLock&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot;&gt;entry/version&lt;br&gt;reason · expiry&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#BE4B5A;strokeWidth=1.5;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontColor=#607386;fontSize=11;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1566" y="828" width="166" height="86" as="geometry" />
-    </mxCell>
-    <mxCell id="rehydrate" value="Checksum verified rehydrate" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#E7F5F2;strokeColor=#0F766E;strokeWidth=1.5;fontColor=#0F766E;fontStyle=1;fontSize=12;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="1380" y="944" width="352" height="48" as="geometry" />
-    </mxCell>
-    <mxCell id="tenant_rule" value="Clinical tenant rows carry clinic_id · composite foreign keys + PostgreSQL RLS enforce scope · platform reads use a separate audited identity" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#E7F5F2;strokeColor=#0F766E;strokeWidth=1.5;fontColor=#0F766E;fontStyle=1;fontSize=12;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="40" y="1050" width="1720" height="76" as="geometry" />
-    </mxCell>
-    <mxCell id="enc_rule" value="Encrypted: notes · patient identifiers · clinic API keys · comments · transcripts · audio · snapshots" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#EAF1FF;strokeColor=#2563EB;strokeWidth=1.5;fontColor=#2563EB;fontStyle=1;fontSize=12;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="40" y="1142" width="850" height="48" as="geometry" />
-    </mxCell>
-    <mxCell id="imm_rule" value="Immutable evidence: versions · audit · provenance · assessments · publication receipts · archive checksums" style="rounded=1;whiteSpace=wrap;html=1;arcSize=50;fillColor=#F1EBFF;strokeColor=#7C3AED;strokeWidth=1.5;fontColor=#7C3AED;fontStyle=1;fontSize=12;shadow=0;" vertex="1" parent="1">
-      <mxGeometry x="910" y="1142" width="850" height="48" as="geometry" />
+    <mxCell id="title" value="Nightingale · Core Clinical Evidence Schema" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Times New Roman;fontSize=26;fontColor=#17324D;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="44" y="28" width="1512" height="42" as="geometry" />
+    </mxCell>
+    <mxCell id="subtitle" value="Implemented PostgreSQL tables and service derivations from immutable note to decision, learning and patient receipt" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Times New Roman;fontSize=12;fontColor=#607386;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="46" y="68" width="1508" height="30" as="geometry" />
+    </mxCell>
+    <mxCell id="record_box" value="01  IMMUTABLE RECORD + AI-SCRIBED NOTES" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C9DED9;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=12;spacingLeft=16;fontFamily=Times New Roman;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
+      <mxGeometry x="40" y="118" width="1520" height="285" as="geometry" />
+    </mxCell>
+    <mxCell id="trust_box" value="02  SOURCE, ASSERTION + DECISION GATES" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#DBD1EE;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=12;spacingLeft=16;fontFamily=Times New Roman;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
+      <mxGeometry x="40" y="421" width="1520" height="275" as="geometry" />
+    </mxCell>
+    <mxCell id="sharing_box" value="03  CLINICIAN-APPROVED PATIENT PUBLICATION" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#E5D7B8;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=12;spacingLeft=16;fontFamily=Times New Roman;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
+      <mxGeometry x="40" y="714" width="1520" height="166" as="geometry" />
+    </mxCell>
+    <mxCell id="learning_box" value="04  GLANCE + BOUNDED IMPORTANCE LEARNING" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CDD9E8;strokeWidth=1.5;verticalAlign=top;align=left;spacingTop=12;spacingLeft=16;fontFamily=Times New Roman;fontColor=#17324D;fontStyle=1;fontSize=14;shadow=0;" vertex="1" parent="1">
+      <mxGeometry x="40" y="898" width="1520" height="166" as="geometry" />
+    </mxCell>
+    <mxCell id="e_patient_entry" value="1 : N" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="patient" target="entry">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_entry_version" value="1 : N immutable" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="entry" target="version">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_version_comment" value="exact version anchor" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="comment">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_version_ai_source" value="source_entry_version_id" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="ai_run">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1150" y="195" />
+          <mxPoint x="1150" y="214" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_ai_entry" value="output_entry_id" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="ai_run" target="entry">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1330" y="145" />
+          <mxPoint x="410" y="145" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_ai_version" value="output_entry_version_id" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="ai_run" target="version">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1390" y="158" />
+          <mxPoint x="710" y="158" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_ai_stereotype" value="stored as Entry + EntryVersion" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="ai_run" target="ai_note">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_version_highlight" value="source_entry_version_id" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="highlight">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="555" y="302" />
+          <mxPoint x="555" y="464" />
+          <mxPoint x="185" y="464" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_version_provenance" value="entry_version_id" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="provenance">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="540" y="302" />
+          <mxPoint x="540" y="478" />
+          <mxPoint x="480" y="478" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_comment_provenance" value="comment_id (optional)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="comment" target="provenance">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1150" y="302" />
+          <mxPoint x="1150" y="452" />
+          <mxPoint x="540" y="452" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_voice_provenance" value="audio/time anchor" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="voice_source" target="provenance">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="760" y="484" />
+          <mxPoint x="575" y="484" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_highlight_provenance" value="highlight_id (optional)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="highlight" target="provenance">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_provenance_assertion" value="canonicalizes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="provenance" target="assertion">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_assertion_assessment" value="assertion_id (optional)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="assertion" target="assessment">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_highlight_assessment" value="UQ highlight_id" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="highlight" target="assessment">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="185" y="662" />
+          <mxPoint x="1140" y="662" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_calibration_assessment" value="calibration_report_id" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="calibration" target="assessment">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_version_request" value="submitted exact version" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="version" target="sharing_request">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1145" y="302" />
+          <mxPoint x="1145" y="410" />
+          <mxPoint x="1540" y="410" />
+          <mxPoint x="1540" y="704" />
+          <mxPoint x="380" y="704" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_request_publication" value="clinician review + gates" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="sharing_request" target="publication">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_publication_item" value="1 : N receipt items" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="publication" target="publication_item">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points" />
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_pointer_item" value="required FK" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="provenance" target="publication_item">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="480" y="690" />
+          <mxPoint x="1080" y="690" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_assertion_item" value="optional FK" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="assertion" target="publication_item">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="805" y="682" />
+          <mxPoint x="1200" y="682" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_assessment_item" value="optional FK" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="assessment" target="publication_item">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1140" y="674" />
+          <mxPoint x="1320" y="674" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_highlight_snapshot" value="top-five projection" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="highlight" target="snapshot">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="20" y="623" />
+          <mxPoint x="20" y="886" />
+          <mxPoint x="220" y="886" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_snapshot_impression" value="rendered exposure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#2563EB;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="snapshot" target="impression">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="390" y="984" />
+          <mxPoint x="390" y="925" />
+          <mxPoint x="650" y="925" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_highlight_feedback" value="explicit action FK" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7C3AED;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=0;" edge="1" parent="1" source="highlight" target="feedback">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="950" y="623" />
+          <mxPoint x="950" y="890" />
+          <mxPoint x="872" y="890" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_feedback_stats" value="feature keys + bounded delta" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#B7791F;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="feedback" target="feature_stat">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1038" y="984" />
+          <mxPoint x="1038" y="925" />
+          <mxPoint x="1197" y="925" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_stats_snapshot" value="re-score Highlights -&gt; rebuild Glance" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F766E;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="feature_stat" target="snapshot">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1197" y="1060" />
+          <mxPoint x="220" y="1060" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="e_impression_audit" value="telemetry only" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#BE4B5A;strokeWidth=1.7;endArrow=block;endFill=1;fontFamily=Times New Roman;fontSize=10;fontColor=#607386;dashed=1;" edge="1" parent="1" source="impression" target="exposure_only">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="685" y="910" />
+          <mxPoint x="1455" y="910" />
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="patient" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:16px&quot;&gt;Patient&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;patients&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;clinic-scoped record&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;1 patient : N entries&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="70" y="188" width="175" height="105" as="geometry" />
+    </mxCell>
+    <mxCell id="entry" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:16px&quot;&gt;Entry&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;entries&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;origin + section + entry_type&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;current_version_id&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="290" y="172" width="240" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="version" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:16px&quot;&gt;EntryVersion&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;entry_versions&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;immutable content + SHA-256&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;version_no + author_id&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;revert creates a new version&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="580" y="172" width="260" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="comment" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:16px&quot;&gt;Comment&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;comments&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;entry_id + entry_version_id&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;exact quote + offsets + hash&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;thread / resolve / task anchor&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="890" y="172" width="240" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="ai_run" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:16px&quot;&gt;AIRun&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;ai_runs&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;source_entry_version_id&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;output_entry_id + output_version_id&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;provider/model + review state&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="1180" y="172" width="300" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="voice_source" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:16px&quot;&gt;Voice source chain&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;audio_assets -&amp;gt; transcript_revisions -&amp;gt; clinical_facts&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;optional audio/time provenance&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="570" y="318" width="560" height="82" as="geometry" />
+    </mxCell>
+    <mxCell id="ai_note" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:16px&quot;&gt;AI-scribed note = Entry stereotype&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;not a separate table&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;origin=ai; section=system&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;doctor / nurse / patient summary&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="1180" y="310" width="300" height="90" as="geometry" />
+    </mxCell>
+    <mxCell id="highlight" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:16px&quot;&gt;Highlight&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;highlights&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;patient + entry + source version&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;base / learned / final score&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;risk, protected and review state&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="70" y="493" width="230" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="provenance" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:16px&quot;&gt;ProvenancePointer&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;provenance_pointers&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;entry_version + exact span/hash&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;optional highlight/comment&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;optional audio asset + milliseconds&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="350" y="493" width="260" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="assertion" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:16px&quot;&gt;ClinicalFactAssertion&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;clinical_fact_assertions&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;patient + entry + version + pointer&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;normalized fact + polarity/status&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;canonical source-bound claim&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="660" y="493" width="290" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="assessment" value="&lt;b&gt;&lt;font color=&quot;#BE4B5A&quot; style=&quot;font-size:16px&quot;&gt;DecisionAssessment&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;decision_assessments&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;UQ: one per Highlight&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;optional assertion + calibration&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;risk floor + confidence + abstention&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#BE4B5A;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="1000" y="493" width="280" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="calibration" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:16px&quot;&gt;CalibrationReport&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;calibration_reports&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;provider/model/task&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;confidence band + lower bound&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="1330" y="493" width="200" height="130" as="geometry" />
+    </mxCell>
+    <mxCell id="sharing_request" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:16px&quot;&gt;PatientSharingRequest&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;patient_sharing_requests&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;exact submitted EntryVersion&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;staff request -&amp;gt; clinician review&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="230" y="756" width="300" height="92" as="geometry" />
+    </mxCell>
+    <mxCell id="publication" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:16px&quot;&gt;PatientPublication&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;patient_publications&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;approved result EntryVersion&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;receipt, withdraw, supersede&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="620" y="756" width="300" height="92" as="geometry" />
+    </mxCell>
+    <mxCell id="publication_item" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:16px&quot;&gt;PatientPublicationItem&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;patient_publication_items&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;required ProvenancePointer&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;optional Assertion + Assessment&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="1010" y="756" width="420" height="92" as="geometry" />
+    </mxCell>
+    <mxCell id="snapshot" value="&lt;b&gt;&lt;font color=&quot;#0F766E&quot; style=&quot;font-size:16px&quot;&gt;PatientGlanceSnapshot&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;patient_glance_snapshots&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;encrypted precomputed projection&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;cards / review cards / patient cards &amp;lt;= 5&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="70" y="934" width="300" height="100" as="geometry" />
+    </mxCell>
+    <mxCell id="impression" value="&lt;b&gt;&lt;font color=&quot;#2563EB&quot; style=&quot;font-size:16px&quot;&gt;ImportanceImpression&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;importance_impressions&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;Highlight + viewer membership&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;rank, exposure, visible duration&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="415" y="934" width="270" height="100" as="geometry" />
+    </mxCell>
+    <mxCell id="feedback" value="&lt;b&gt;&lt;font color=&quot;#7C3AED&quot; style=&quot;font-size:16px&quot;&gt;ImportanceFeedbackEvent&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;importance_feedback_events&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;explicit action + reason&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;Highlight + actor + applied delta&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="730" y="934" width="285" height="100" as="geometry" />
+    </mxCell>
+    <mxCell id="feature_stat" value="&lt;b&gt;&lt;font color=&quot;#B7791F&quot; style=&quot;font-size:16px&quot;&gt;ImportanceFeatureStat&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;importance_feature_stats&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;UQ clinic + feature_key&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;bounded weight + counts&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B7791F;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=0;" vertex="1" parent="1">
+      <mxGeometry x="1060" y="934" width="275" height="100" as="geometry" />
+    </mxCell>
+    <mxCell id="exposure_only" value="&lt;b&gt;&lt;font color=&quot;#BE4B5A&quot; style=&quot;font-size:16px&quot;&gt;Exposure audit only&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:11px&quot;&gt;service boundary&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#607386&quot; style=&quot;font-size:12px&quot;&gt;Impressions never update score&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#BE4B5A;strokeWidth=1.6;verticalAlign=middle;align=left;spacingLeft=14;spacingRight=12;fontFamily=Times New Roman;fontColor=#607386;fontSize=11;shadow=0;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="1365" y="942" width="180" height="84" as="geometry" />
+    </mxCell>
+    <mxCell id="legend_solid" value="solid = stored database FK / uniqueness" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0F766E;fontFamily=Times New Roman;fontColor=#0F766E;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="40" y="1078" width="310" height="28" as="geometry" />
+    </mxCell>
+    <mxCell id="legend_dashed" value="dashed = service derivation / projection / telemetry" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#7C3AED;fontFamily=Times New Roman;fontColor=#7C3AED;fontStyle=1;fontSize=11;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="370" y="1078" width="360" height="28" as="geometry" />
+    </mxCell>
+    <mxCell id="tenant_rule" value="All clinical rows carry clinic_id · tenant-composite FKs + PostgreSQL RLS enforce clinic scope · encrypted payloads remain separate from immutable evidence metadata" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2563EB;fontFamily=Times New Roman;fontColor=#2563EB;fontStyle=1;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="750" y="1078" width="810" height="28" as="geometry" />
     </mxCell>
   </root>
 </mxGraphModel>

@@ -57,7 +57,7 @@ jobs:
         trap cleanup EXIT INT TERM
         docker compose build
         docker compose up -d --wait proxy backend ai-worker mailpit
-        docker compose run --rm --no-deps playwright bunx playwright test --fail-on-flaky-tests --trace=retain-on-failure --repeat-each=3 --workers=1
+        docker compose run --rm --no-deps playwright bunx playwright test --fail-on-flaky-tests --retries=0 --trace=retain-on-failure --repeat-each=3 --workers=1
     - name: Upload blob report to GitHub Actions Artifacts
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

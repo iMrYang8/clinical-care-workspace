@@ -117,7 +117,8 @@ docker compose run --rm backend \
 
 | Mode | Required configuration | Network/model behavior |
 | --- | --- | --- |
-| Disabled (default) | `VOICE_TRANSCRIPTION_PROVIDER=disabled` | No ASR; encrypted audio is retained with an explicit pending/review state. |
+| Local-first (default) | `VOICE_TRANSCRIPTION_PROVIDER=local`, optional local-ASR image group, and a pre-cached `LOCAL_ASR_MODEL_DIR` | No audio egress. A missing local runtime or model remains explicit as pending/review rather than falling through to a remote provider. |
+| Disabled | `VOICE_TRANSCRIPTION_PROVIDER=disabled` | No ASR; encrypted audio is retained with an explicit pending/review state. |
 | Synthetic fixture | Development-only test session flag; no product-interface control | Fixed speaker/timestamp/code-switch/overlap fixture only; never selected for ordinary audio. |
 | OpenAI final transcription | `VOICE_TRANSCRIPTION_PROVIDER=openai`, `REMOTE_AUDIO_EGRESS_ENABLED=true`, `OPENAI_API_KEY`, `OPENAI_TRANSCRIBE_MODEL` | Sends the normalized audio only when every gate is true. `STRICT_NO_AUDIO_EGRESS=true` overrides all remote settings. Model IDs come from the environment. Calls have a bounded ASR timeout. |
 | faster-whisper | `compose.local-asr.yml`, a pre-cached `LOCAL_ASR_MODEL_DIR` | CPU/int8 and `local_files_only=True`; no runtime model download. Inference runs in a dedicated child process that is killed on timeout/cancellation, so retries cannot stack orphaned CTranslate2 threads. No diarization is claimed. |

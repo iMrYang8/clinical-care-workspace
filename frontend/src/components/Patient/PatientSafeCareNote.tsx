@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   UserRound,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import type {
   PatientPublic,
@@ -33,6 +33,8 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   apiErrorMessage,
+  type PatientPortalEvent,
+  type PatientPublicationAcknowledgement,
   type PatientPublicationReceipt,
   type PatientSafeGlance,
   patientSafeApi,
@@ -46,6 +48,14 @@ export type PatientSafeApi = {
   publicationReceipts?: (
     patientId: string,
   ) => Promise<PatientPublicationReceipt[]>
+  acknowledgePublication?: (
+    publicationId: string,
+  ) => Promise<PatientPublicationAcknowledgement>
+  portalEvents?: (
+    patientId: string,
+    since?: string,
+  ) => Promise<PatientPortalEvent[]>
+  streamEvents?: typeof patientSafeApi.streamEvents
   resolveProvenance: (pointerId: string) => Promise<ProvenanceResolved>
   createInsight: (
     patientId: string,
@@ -68,6 +78,7 @@ export function PatientSafeCareNote({
   const [content, setContent] = useState("")
   const [composerOpen, setComposerOpen] = useState(false)
   const [liveMessage, setLiveMessage] = useState("")
+  const lastPortalEventId = useRef<string | undefined>(undefined)
 
   const patientsQuery = useQuery({
     queryKey: ["patient-safe", "patients"],
@@ -83,16 +94,25 @@ export function PatientSafeCareNote({
     queryKey: ["patient-safe", patientId, "timeline"],
     queryFn: () => api.timeline(patientId!),
     enabled: Boolean(patientId),
+    refetchInterval: 15_000,
   })
   const glanceQuery = useQuery({
     queryKey: ["patient-safe", patientId, "glance"],
     queryFn: () => api.glance(patientId!),
     enabled: Boolean(patientId),
+    refetchInterval: 15_000,
   })
   const publicationReceiptsQuery = useQuery({
     queryKey: ["patient-safe", patientId, "publication-receipts"],
     queryFn: () => api.publicationReceipts?.(patientId!) ?? Promise.resolve([]),
     enabled: Boolean(patientId && api.publicationReceipts),
+    refetchInterval: 15_000,
+  })
+  const portalEventsQuery = useQuery({
+    queryKey: ["patient-safe", patientId, "portal-events"],
+    queryFn: () => api.portalEvents?.(patientId!) ?? Promise.resolve([]),
+    enabled: Boolean(patientId && api.portalEvents),
+    refetchInterval: 15_000,
   })
   const patient = patientsQuery.data?.find((item) => item.id === patientId)
 
@@ -109,6 +129,79 @@ export function PatientSafeCareNote({
       setLiveMessage("Your insight was added to the patient-facing timeline.")
     },
   })
+  const acknowledgeMutation = useMutation({
+    mutationFn: (publicationId: string) => {
+      if (!api.acknowledgePublication)
+        throw new Error("Acknowledgement is unavailable")
+      return api.acknowledgePublication(publicationId)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["patient-safe", patientId, "publication-receipts"],
+      })
+      setLiveMessage("Sharing correction acknowledged.")
+    },
+  })
+
+  useEffect(() => {
+    const events = portalEventsQuery.data ?? []
+    const newest = events[events.length - 1]
+    if (!newest || newest.id === lastPortalEventId.current) return
+    const isInitialLoad = lastPortalEventId.current === undefined
+    lastPortalEventId.current = newest.id
+    if (isInitialLoad) return
+    void Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: ["patient-safe", patientId, "timeline"],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["patient-safe", patientId, "glance"],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["patient-safe", patientId, "publication-receipts"],
+      }),
+    ])
+    setLiveMessage(
+      "Your care team changed shared information. Polling refreshed this open view.",
+    )
+  }, [patientId, portalEventsQuery.data, queryClient])
+
+  useEffect(() => {
+    if (!patientId || !api.streamEvents) return
+    const controller = new AbortController()
+    void api
+      .streamEvents(
+        patientId,
+        (event) => {
+          if (
+            !event.event.startsWith("patient_publication.") &&
+            !event.event.startsWith("publication.") &&
+            !event.event.startsWith("notification.")
+          )
+            return
+          void Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: ["patient-safe", patientId, "timeline"],
+            }),
+            queryClient.invalidateQueries({
+              queryKey: ["patient-safe", patientId, "glance"],
+            }),
+            queryClient.invalidateQueries({
+              queryKey: ["patient-safe", patientId, "publication-receipts"],
+            }),
+          ])
+          setLiveMessage(
+            "Your care team changed shared information. The open view has been refreshed.",
+          )
+        },
+        { signal: controller.signal },
+      )
+      .catch(() => {
+        // Fifteen-second query polling remains the explicit fallback when SSE
+        // is interrupted or unsupported by an intermediary.
+      })
+    return () => controller.abort()
+  }, [api, patientId, queryClient])
 
   const showSource = async (pointerId: string) => {
     try {
@@ -394,7 +487,9 @@ export function PatientSafeCareNote({
             </CardContent>
           </Card>
           {(publicationReceiptsQuery.data ?? []).some(
-            (receipt) => receipt.status === "withdrawn",
+            (receipt) =>
+              receipt.status !== "active" ||
+              receipt.acknowledgement_state === "pending",
           ) && (
             <Card>
               <CardHeader className="pb-3">
@@ -402,13 +497,18 @@ export function PatientSafeCareNote({
                   <History className="size-5 text-primary" /> Sharing updates
                 </CardTitle>
                 <p className="text-sm leading-6 text-muted-foreground">
-                  Withdrawn updates are no longer visible in your timeline, but
-                  their sharing receipt remains here.
+                  Withdrawn or corrected updates are removed from your open
+                  timeline immediately. Their immutable receipt and any linked
+                  replacement remain here for acknowledgement.
                 </p>
               </CardHeader>
               <CardContent className="space-y-3">
                 {publicationReceiptsQuery.data
-                  ?.filter((receipt) => receipt.status === "withdrawn")
+                  ?.filter(
+                    (receipt) =>
+                      receipt.status !== "active" ||
+                      receipt.acknowledgement_state === "pending",
+                  )
                   .map((receipt) => (
                     <div
                       className="rounded-xl border bg-muted/30 p-3"
@@ -416,7 +516,11 @@ export function PatientSafeCareNote({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <p className="font-medium">{receipt.entry_title}</p>
-                        <Badge variant="outline">Withdrawn</Badge>
+                        <Badge variant="outline">
+                          {receipt.replacement_publication_id
+                            ? "Corrected"
+                            : "Withdrawn"}
+                        </Badge>
                       </div>
                       <p className="mt-1 text-xs leading-5 text-muted-foreground">
                         Previously approved by {receipt.approved_by_name} ·
@@ -425,6 +529,34 @@ export function PatientSafeCareNote({
                           ? formatSingaporeDateTime(receipt.withdrawn_at)
                           : "recently"}
                       </p>
+                      {receipt.replacement_entry_title && (
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          Replacement: {receipt.replacement_entry_title}
+                        </p>
+                      )}
+                      {receipt.outreach_required === true && (
+                        <p className="mt-2 text-xs font-medium text-warning-muted-foreground">
+                          Your care team marked this correction for direct
+                          outreach.
+                        </p>
+                      )}
+                      {receipt.acknowledgement_state === "pending" &&
+                        api.acknowledgePublication &&
+                        receipt.publication_id && (
+                          <Button
+                            className="mt-2"
+                            disabled={acknowledgeMutation.isPending}
+                            onClick={() =>
+                              acknowledgeMutation.mutate(receipt.publication_id)
+                            }
+                            size="sm"
+                          >
+                            {acknowledgeMutation.isPending && (
+                              <LoaderCircle className="animate-spin" />
+                            )}
+                            Acknowledge correction
+                          </Button>
+                        )}
                     </div>
                   ))}
               </CardContent>
