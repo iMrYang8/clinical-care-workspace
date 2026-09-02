@@ -12,9 +12,11 @@ from sqlmodel import Session, select
 from app.api.deps import RequestContext
 from app.core.field_crypto import field_codec
 from app.models import (
+    AIRun,
     AuditEvent,
     ClinicalFactAssertion,
     ClinicMembership,
+    ConflictCase,
     DecisionAssessment,
     Entry,
     EntryVersion,
@@ -22,6 +24,7 @@ from app.models import (
     Job,
     JobAttempt,
     ProvenancePointer,
+    RedactionRun,
     User,
     VoiceSession,
 )
@@ -31,6 +34,7 @@ from app.services.ai_jobs import (
     _create_fact_provenance,
     job_public,
 )
+from app.services.decisioning import ConfidenceQualification
 from app.services.nightingale import rebuild_glance
 from app.services.provider_resilience import ProviderFailure
 from app.services.providers.base import ClinicalFact
@@ -461,3 +465,332 @@ def test_candidate_fingerprint_is_database_immutable(owner_session: Session) -> 
         owner_session.add(candidate)
         owner_session.commit()
     owner_session.rollback()
+
+
+def test_model_derived_highlight_without_assessment_never_reaches_priorities(
+    client: TestClient,
+    auth_headers: Callable[[str], dict[str, str]],
+    owner_session: Session,
+) -> None:
+    """A missing assessment is an unqualified claim, not an absent one.
+
+    The AI job always writes an assessment beside the candidate, so this state
+    is reachable only through partial or legacy data. It must still fail closed
+    rather than presenting an uncalibrated model claim as a ready priority.
+    """
+
+    clinician_headers = auth_headers("clinician")
+    patient_id = uuid.UUID(
+        client.get("/api/v1/patients", headers=clinician_headers).json()["data"][0][
+            "id"
+        ]
+    )
+    context = _clinician_context(owner_session)
+    text = "Patient reports an allergy to penicillin."
+    source_version = _source_version(
+        owner_session,
+        context,
+        patient_id=patient_id,
+        content=text,
+    )
+    highlight = _persist_ai_patient_allergy_candidate(
+        owner_session,
+        context,
+        patient_id=patient_id,
+        source_version=source_version,
+        text=text,
+    )
+    # Promote the candidate, then strip its assessment while leaving the
+    # model-derived marker in place.
+    highlight.status = "accepted"
+    highlight.unresolved = False
+    highlight.review_required = False
+    highlight.support_review_required = False
+    highlight.current_priority_eligible = True
+    owner_session.add(highlight)
+    assessment = owner_session.exec(
+        select(DecisionAssessment).where(
+            DecisionAssessment.clinic_id == context.clinic_id,
+            DecisionAssessment.highlight_id == highlight.id,
+        )
+    ).one()
+    owner_session.delete(assessment)
+    owner_session.commit()
+
+    owner_session.expire_all()
+    rebuild_glance(owner_session, context, patient_id)
+    owner_session.commit()
+    glance = client.get(
+        f"/api/v1/patients/{patient_id}/glance", headers=clinician_headers
+    )
+    assert glance.status_code == 200, glance.text
+    body = glance.json()
+    assert str(highlight.id) not in {card["highlight_id"] for card in body["cards"]}
+    projected = next(
+        card
+        for card in body["review_cards"]
+        if card["highlight_id"] == str(highlight.id)
+    )
+    assert projected["current_confidence_state"] == "review_required"
+    assert "AI_HIGHLIGHT_ASSESSMENT_MISSING" in projected["current_confidence_reasons"]
+    assert body["safety_review_required"] is True
+
+
+def test_human_priorities_without_assessment_remain_displayable(
+    client: TestClient,
+    auth_headers: Callable[[str], dict[str, str]],
+) -> None:
+    """Human-authored priorities have no calibration claim and keep working."""
+
+    clinician_headers = auth_headers("clinician")
+    staff_headers = auth_headers("staff")
+    created_patient = client.post(
+        "/api/v1/patients",
+        headers=staff_headers,
+        json={
+            "display_name": "Human Priority Probe",
+            "date_of_birth": "1988-04-12",
+            "medical_record_number": f"MRN-HP-{uuid.uuid4().hex[:8]}",
+            "identity_document_type": "nric_fin",
+            "identity_document_number": f"S{uuid.uuid4().int % 10_000_000:07d}A",
+        },
+    )
+    assert created_patient.status_code == 201, created_patient.text
+    patient_id = created_patient.json()["id"]
+    created = client.post(
+        "/api/v1/entries",
+        headers=clinician_headers,
+        json={
+            "patient_id": patient_id,
+            "section": "clinician",
+            "title": "Follow-up reminder",
+            "content": "Continue current plan.",
+            "patient_facing": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    entry = created.json()
+    highlighted = client.post(
+        f"/api/v1/entries/{entry['id']}/highlights",
+        headers=clinician_headers,
+        json={
+            "entry_version_id": entry["version_id"],
+            "start_offset": 0,
+            "end_offset": len("Continue current plan."),
+            "exact_quote": "Continue current plan.",
+            "label": "Current plan",
+            "feature_keys": ["topic:follow_up"],
+            "patient_facing": False,
+        },
+    )
+    assert highlighted.status_code == 201, highlighted.text
+    highlight_id = highlighted.json()["id"]
+    accepted = client.post(
+        f"/api/v1/highlights/{highlight_id}/accept",
+        headers=staff_headers,
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    glance = client.get(
+        f"/api/v1/patients/{patient_id}/glance", headers=clinician_headers
+    )
+    assert glance.status_code == 200, glance.text
+    body = glance.json()
+    projected = next(
+        card for card in body["cards"] if card["highlight_id"] == highlight_id
+    )
+    assert projected["current_confidence_state"] == "unavailable"
+    assert "CONFIDENCE_NOT_APPLICABLE" in projected["current_confidence_reasons"]
+    assert highlight_id not in {card["highlight_id"] for card in body["review_cards"]}
+
+
+def _persist_two_ai_facts(
+    session: Session,
+    context: RequestContext,
+    *,
+    patient_id: uuid.UUID,
+) -> tuple[Job, EntryVersion, list[Highlight]]:
+    first = "Patient is allergic to clindamycin."
+    second = "Patient is allergic to latex."
+    text = f"{first} {second}"
+    source_version = _source_version(
+        session,
+        context,
+        patient_id=patient_id,
+        content=text,
+    )
+    job = Job(
+        clinic_id=context.clinic_id,
+        patient_id=patient_id,
+        kind="ai_ingest",
+        idempotency_key=f"coverage-{uuid.uuid4()}",
+        request_sha256="a" * 64,
+        payload_ciphertext=b"unused-test-payload",
+        created_by_id=context.user_id,
+        state="succeeded",
+    )
+    session.add(job)
+    session.flush()
+    redaction = RedactionRun(
+        clinic_id=context.clinic_id,
+        source_entry_version_id=source_version.id,
+        status="completed",
+        input_sha256="a" * 64,
+        redacted_sha256="b" * 64,
+        map_ciphertext=b"{}",
+        residual_scan_passed=True,
+    )
+    session.add(redaction)
+    session.flush()
+    session.add(
+        AIRun(
+            clinic_id=context.clinic_id,
+            patient_id=patient_id,
+            job_id=job.id,
+            redaction_run_id=redaction.id,
+            source_entry_version_id=source_version.id,
+            interaction_type="care_note",
+            provider="deterministic",
+            model="clinical-fixture-v1",
+            status="completed",
+            request_sha256="a" * 64,
+        )
+    )
+    highlights = _create_fact_provenance(
+        session,
+        context,
+        job=job,
+        source_version=source_version,
+        source_text=text,
+        facts=[
+            ClinicalFact(
+                fact_type="allergy",
+                value="clindamycin",
+                evidence_start=0,
+                evidence_end=len(first),
+                evidence_quote=first,
+                feature_keys=["entity:allergy"],
+            ),
+            ClinicalFact(
+                fact_type="allergy",
+                value="latex",
+                evidence_start=len(first) + 1,
+                evidence_end=len(text),
+                evidence_quote=second,
+                feature_keys=["entity:allergy"],
+            ),
+        ],
+        needs_review=False,
+        rule_derived=False,
+        provider="deterministic",
+        model="clinical-fixture-v1",
+    )
+    assert len(highlights) == 2
+    return job, source_version, highlights
+
+
+def test_incomplete_ai_assessment_coverage_keeps_job_review_required(
+    client: TestClient,
+    auth_headers: Callable[[str], dict[str, str]],
+    owner_session: Session,
+) -> None:
+    clinician_headers = auth_headers("clinician")
+    patient_id = uuid.UUID(
+        client.get("/api/v1/patients", headers=clinician_headers).json()["data"][0][
+            "id"
+        ]
+    )
+    context = _clinician_context(owner_session)
+    job, _source_version, highlights = _persist_two_ai_facts(
+        owner_session,
+        context,
+        patient_id=patient_id,
+    )
+    dropped = owner_session.exec(
+        select(DecisionAssessment).where(
+            DecisionAssessment.clinic_id == context.clinic_id,
+            DecisionAssessment.highlight_id == highlights[1].id,
+        )
+    ).one()
+    owner_session.delete(dropped)
+    owner_session.commit()
+
+    owner_session.expire_all()
+    stored_job = owner_session.get(Job, job.id)
+    assert stored_job is not None
+    projected = job_public(owner_session, stored_job)
+    assert projected.current_confidence_state == "review_required"
+    assert (
+        "JOB_CONFIDENCE_ASSESSMENT_INCOMPLETE" in projected.current_confidence_reasons
+    )
+    assert projected.safety_review_required is True
+
+
+def test_partially_assessed_ai_entry_cannot_publish(
+    client: TestClient,
+    auth_headers: Callable[[str], dict[str, str]],
+    owner_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clinician_headers = auth_headers("clinician")
+    patient_id = uuid.UUID(
+        client.get("/api/v1/patients", headers=clinician_headers).json()["data"][0][
+            "id"
+        ]
+    )
+    context = _clinician_context(owner_session)
+    _job, source_version, highlights = _persist_two_ai_facts(
+        owner_session,
+        context,
+        patient_id=patient_id,
+    )
+    dropped = owner_session.exec(
+        select(DecisionAssessment).where(
+            DecisionAssessment.clinic_id == context.clinic_id,
+            DecisionAssessment.highlight_id == highlights[1].id,
+        )
+    ).one()
+    owner_session.delete(dropped)
+    kept = owner_session.exec(
+        select(DecisionAssessment).where(
+            DecisionAssessment.clinic_id == context.clinic_id,
+            DecisionAssessment.highlight_id == highlights[0].id,
+        )
+    ).one()
+    kept.abstained = False
+    kept.support_state = "supported"
+    kept.confidence_band = "medium"
+    owner_session.add(kept)
+    for conflict in owner_session.exec(
+        select(ConflictCase).where(
+            ConflictCase.clinic_id == context.clinic_id,
+            ConflictCase.patient_id == patient_id,
+            ConflictCase.status == "unresolved",
+        )
+    ).all():
+        conflict.status = "resolved"
+        owner_session.add(conflict)
+    owner_session.commit()
+
+    monkeypatch.setattr(
+        "app.api.routes.trust.redaction_is_qualified",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "app.api.routes.trust.requalify_assessment_confidence",
+        lambda *_args, **_kwargs: ConfidenceQualification(
+            qualified=True,
+            current_state="qualified",
+            band="medium",
+            lower_bound=0.9,
+            reasons=(),
+        ),
+    )
+
+    published = client.post(
+        f"/api/v1/entries/{source_version.entry_id}/patient-publications",
+        headers=clinician_headers,
+        json={"entry_version_id": str(source_version.id)},
+    )
+    assert published.status_code == 409, published.text
+    assert published.json()["detail"]["code"] == "CLAIM_LEVEL_PROVENANCE_REQUIRED"

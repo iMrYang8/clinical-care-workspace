@@ -430,6 +430,116 @@ def requalify_assessment_confidence(
     return qualification
 
 
+def is_model_derived(highlight: Highlight) -> bool:
+    """Return whether a highlight was produced by the model pipeline.
+
+    ``Highlight`` carries no origin column; a non-null ``candidate_fingerprint``
+    is the durable marker written by the AI job when it persists a candidate.
+    Entry origin is deliberately not used: clinician-confirmed highlights are
+    routinely attached to AI-authored entries and must keep human semantics.
+    """
+
+    return highlight.candidate_fingerprint is not None
+
+
+def requalify_highlight_confidence(
+    session: Session,
+    highlight: Highlight,
+    assessment: DecisionAssessment | None,
+    *,
+    provider: str | None = None,
+    exact_model_id: str | None = None,
+    task: str | None = None,
+    request_parameters: dict[str, object] | None = None,
+    dataset_manifest_sha256: str | None = None,
+    code_commit: str | None = None,
+) -> ConfidenceQualification:
+    """Qualify a highlight's confidence, failing closed on a missing assessment.
+
+    A model-derived highlight without a ``DecisionAssessment`` has no
+    calibration claim to stand on. Treating the absent row as "nothing to
+    qualify" would silently promote it, so it is reported unqualified instead.
+    """
+
+    if assessment is None and is_model_derived(highlight):
+        return ConfidenceQualification(
+            qualified=False,
+            current_state="unavailable",
+            band="unavailable",
+            lower_bound=None,
+            reasons=("AI_HIGHLIGHT_ASSESSMENT_MISSING",),
+        )
+    return requalify_assessment_confidence(
+        session,
+        assessment,
+        provider=provider,
+        exact_model_id=exact_model_id,
+        task=task,
+        request_parameters=request_parameters,
+        dataset_manifest_sha256=dataset_manifest_sha256,
+        code_commit=code_commit,
+    )
+
+
+@dataclass(frozen=True)
+class AiAssessmentCoverage:
+    """The model-derived highlights on a version and the ones actually assessed."""
+
+    expected_highlight_ids: frozenset[uuid.UUID]
+    assessed_highlight_ids: frozenset[uuid.UUID]
+
+    @property
+    def complete(self) -> bool:
+        return (
+            bool(self.expected_highlight_ids)
+            and self.expected_highlight_ids == self.assessed_highlight_ids
+        )
+
+    @property
+    def missing_highlight_ids(self) -> frozenset[uuid.UUID]:
+        return self.expected_highlight_ids - self.assessed_highlight_ids
+
+
+def ai_assessment_coverage(
+    session: Session,
+    *,
+    clinic_id: uuid.UUID,
+    patient_id: uuid.UUID,
+    source_entry_version_id: uuid.UUID,
+) -> AiAssessmentCoverage:
+    """Compare the model-derived highlights on a version against their assessments.
+
+    Enumerating assessments alone cannot detect a highlight that never received
+    one, so the expected population is queried independently.
+    """
+
+    expected = session.exec(
+        select(Highlight.id).where(
+            Highlight.clinic_id == clinic_id,
+            Highlight.patient_id == patient_id,
+            Highlight.source_entry_version_id == source_entry_version_id,
+            col(Highlight.candidate_fingerprint).is_not(None),
+        )
+    ).all()
+    assessed = session.exec(
+        select(DecisionAssessment.highlight_id)
+        .join(Highlight, col(DecisionAssessment.highlight_id) == col(Highlight.id))
+        .where(
+            DecisionAssessment.clinic_id == clinic_id,
+            Highlight.clinic_id == clinic_id,
+            Highlight.patient_id == patient_id,
+            Highlight.source_entry_version_id == source_entry_version_id,
+            col(Highlight.candidate_fingerprint).is_not(None),
+        )
+    ).all()
+    return AiAssessmentCoverage(
+        expected_highlight_ids=frozenset(expected),
+        assessed_highlight_ids=frozenset(
+            highlight_id for highlight_id in assessed if highlight_id is not None
+        ),
+    )
+
+
 def matching_calibration_report(
     session: Session,
     *,
@@ -634,6 +744,11 @@ def assessment_review_state(
     if confidence_qualification is not None and not confidence_qualification.qualified:
         return "review_required"
     if assessment is None:
+        # Model-derived output with no assessment has no calibration claim, so
+        # it can never be ready. Human-authored highlights legitimately have no
+        # assessment and keep their existing semantics.
+        if is_model_derived(highlight):
+            return "review_required"
         return "review_required" if highlight.review_required else "ready"
     if assessment.abstained:
         return "abstained"

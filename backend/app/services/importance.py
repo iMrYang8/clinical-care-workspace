@@ -48,6 +48,15 @@ _SAFE_EXACT_FEATURES = {
     "topic:follow_up",
     "risk:critical",
 }
+
+# Feature keys whose ranking must never be suppressed by learned feedback.
+# A tired care team dismissing these on a busy day must not teach the clinic
+# to bury them; removal has to happen by correcting or superseding the
+# underlying assertion. This governs learning only, not review classification.
+_SAFETY_FLOOR_FEATURES = {
+    "entity:allergy",
+    "entity:medication",
+}
 _ENTRY_TYPE = re.compile(r"^entry_type:[a-z0-9_]{1,64}$")
 
 
@@ -441,9 +450,9 @@ def calculate_score(
     weights = [feature_weights.get(key, 0.0) for key in feature_keys]
     learned = sum(weights) / len(weights) if weights else 0.0
     learned = max(MIN_FEATURE_WEIGHT, min(MAX_FEATURE_WEIGHT, learned))
-    allergy_evidence = "entity:allergy" in feature_keys
+    safety_floor_evidence = bool(_SAFETY_FLOOR_FEATURES & set(feature_keys))
     if (
-        critical or unresolved or clinician_confirmed or allergy_evidence
+        critical or unresolved or clinician_confirmed or safety_floor_evidence
     ) and learned < 0:
         learned = 0.0
     final = max(0.0, min(1.0, base + learned))
@@ -641,10 +650,11 @@ def record_feedback(
     learning_mode = qualify_importance_mode(session, context.clinic_id).effective_mode
     # Shadow mode is the safe default: it captures the same complete feedback
     # telemetry as an active rollout but does not mutate weights or counters.
-    allergy_evidence = "entity:allergy" in feature_keys
-    # Allergy feedback remains telemetry-only. Clinical removal must happen by
-    # correcting or superseding the assertion, never by mutating rank weights.
-    effective_learn = learn and not allergy_evidence
+    safety_floor_evidence = bool(_SAFETY_FLOOR_FEATURES & set(feature_keys))
+    # Allergy and medication feedback remains telemetry-only. Clinical removal
+    # must happen by correcting or superseding the assertion, never by mutating
+    # rank weights.
+    effective_learn = learn and not safety_floor_evidence
     delta = (
         SIGNAL_DELTAS[signal] if effective_learn and learning_mode == "active" else 0.0
     )

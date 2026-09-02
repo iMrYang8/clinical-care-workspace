@@ -58,7 +58,7 @@ from app.services.decisioning import (
     decision_payload,
     public_confidence_projection,
     redaction_is_qualified,
-    requalify_assessment_confidence,
+    requalify_highlight_confidence,
 )
 from app.services.importance import (
     IMPORTANCE_EXPOSURE_REPORT_VERSION,
@@ -1743,7 +1743,9 @@ def rebuild_glance(
             assessment is not None
             and assessment.output_type == "rule_derived_suggestion"
         )
-        confidence_qualification = requalify_assessment_confidence(session, assessment)
+        confidence_qualification = requalify_highlight_confidence(
+            session, highlight, assessment
+        )
         decision = decision_payload(
             assessment=assessment,
             highlight=highlight,
@@ -1827,6 +1829,10 @@ def rebuild_glance(
             and promoted
             and review_state == "ready"
             and current_priority_ready
+            # Defence in depth: a card whose confidence failed requalification
+            # must never occupy an ordinary priority slot, nor reach the patient
+            # projection built from the same predicate below.
+            and current_confidence_state != "review_required"
         )
         if ordinary_eligible:
             current_priority_rank += 1
