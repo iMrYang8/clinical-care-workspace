@@ -134,6 +134,8 @@ How to verify that path (gold-text extraction, not WER):
 
 Do not claim live multi-agent extraction, real-audio WER/PolyWER, or that this is on `release-2026-09-02`.
 
+Enabling `VOICE_MULTI_AGENT_PIPELINE` does **not** change the live WebSocket path. Provisional safety alerts still come from `persist_completed_safety_alerts` (lexicon extraction on each completed caption). The seven agents need a whole consult to assign clinician/patient/family; they run only after a batch transcript revision exists.
+
 ### Provisional live-caption providers
 
 | Mode | Required configuration | Behavior and boundary |

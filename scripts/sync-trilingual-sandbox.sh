@@ -18,7 +18,9 @@ rsync -a --delete \
   --exclude '*.pyc' \
   --exclude 'cli.py' \
   --exclude 'eval.py' \
+  --exclude 'eval_audio.py' \
   --exclude 'report.py' \
+  --exclude 'polywer.py' \
   --exclude '__main__.py' \
   "$src/" "$dst/"
 
