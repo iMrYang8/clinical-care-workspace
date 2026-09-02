@@ -73,6 +73,7 @@ from app.services.voice.language import (
     validate_addressable_language_spans,
 )
 from app.services.voice.provenance import validate_fact_evidence
+from app.services.voice.providers.deterministic import ALLOWED_SYNTHETIC_FIXTURE_IDS
 
 _CAPTURE_STATES = {"created", "recording"}
 _CLINICAL_ROLES = {"staff", "clinician"}
@@ -529,7 +530,7 @@ def create_voice_session(
         if (
             settings.FASTAPI_ENV != "development"
             or not settings.ENABLE_DEMO_AUTH
-            or body.fixture_id != "code-switch-overlap-v1"
+            or body.fixture_id not in ALLOWED_SYNTHETIC_FIXTURE_IDS
         ):
             raise HTTPException(
                 status_code=403, detail={"code": "SYNTHETIC_FIXTURE_DISABLED"}

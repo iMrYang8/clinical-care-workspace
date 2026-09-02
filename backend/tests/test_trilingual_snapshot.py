@@ -14,6 +14,7 @@ _SKIP_NAMES = {
     "eval_audio.py",
     "report.py",
     "polywer.py",
+    "audio_bench.py",
     "__main__.py",
 }
 

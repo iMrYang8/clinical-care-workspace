@@ -4,6 +4,13 @@ from app.services.voice.providers.base import (
     validate_transcript_result,
 )
 
+ALLOWED_SYNTHETIC_FIXTURE_IDS = frozenset(
+    {
+        "code-switch-overlap-v1",
+        "trilingual-intrasentential-v1",
+    }
+)
+
 
 class SyntheticFixtureProvider:
     """Fixed CI/demo transcript provider, gated by an explicit fixture ID.
@@ -36,6 +43,35 @@ class SyntheticFixtureProvider:
                 "overlap-1",
             ),
         ),
+        "trilingual-intrasentential-v1": (
+            (
+                "We'll continue metformin 500 mg twice daily.",
+                0,
+                4_500,
+                "SPEAKER_00",
+                "en",
+                0.96,
+                None,
+            ),
+            (
+                "我对盘尼西林不过敏，是胃不舒服。",
+                4_600,
+                9_000,
+                "SPEAKER_01",
+                "zh",
+                0.91,
+                None,
+            ),
+            (
+                "Dia tui penicillin koe-bin masa kecil.",
+                9_100,
+                14_000,
+                "SPEAKER_02",
+                "ms",
+                0.74,
+                None,
+            ),
+        ),
     }
 
     def transcribe_fixture(self, fixture_id: str) -> TranscriptResult:
@@ -46,10 +82,12 @@ class SyntheticFixtureProvider:
         text = "\n".join(pieces)
         cursor = 0
         segments: list[TranscriptSegmentResult] = []
+        overlapped = False
         for index, item in enumerate(fixture):
             segment_text, start_ms, end_ms, speaker, language, confidence, overlap = (
                 item
             )
+            overlapped = overlapped or overlap is not None
             text_start = cursor
             text_end = cursor + len(segment_text)
             segments.append(
@@ -69,6 +107,9 @@ class SyntheticFixtureProvider:
                 )
             )
             cursor = text_end + (1 if index < len(fixture) - 1 else 0)
+        warnings = ["SYNTHETIC_FIXTURE"]
+        if overlapped:
+            warnings.append("OVERLAP_REVIEW")
         return validate_transcript_result(
             TranscriptResult(
                 text=text,
@@ -76,6 +117,6 @@ class SyntheticFixtureProvider:
                 provider=self.provider_name,
                 model=fixture_id,
                 detected_language="multilingual",
-                warnings=("SYNTHETIC_FIXTURE", "OVERLAP_REVIEW"),
+                warnings=tuple(warnings),
             )
         )

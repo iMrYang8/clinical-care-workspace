@@ -1,0 +1,20 @@
+{
+  "consult_id": "consult-04-hokkien",
+  "synthetic": true,
+  "speaker_roles": {
+    "SPEAKER_01": "patient"
+  },
+  "facts": [
+    {
+      "fact_type": "allergy",
+      "key": "penicillin",
+      "polarity": "present",
+      "speaker_role": "patient",
+      "source_language": "nan",
+      "review_required": false
+    }
+  ],
+  "conflicts": [],
+  "publish_blocked": false,
+  "warning_codes_required": ["HOKKIEN_ASR_UNSUPPORTED"]
+}

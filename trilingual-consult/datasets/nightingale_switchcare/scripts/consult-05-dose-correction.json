@@ -1,0 +1,29 @@
+{
+  "id": "consult-05-dose-correction",
+  "synthetic": true,
+  "not_clinical_validation": true,
+  "attribution": "Same-speaker dose correction still conflicts. 5000 mg is out of range; nothing auto-resolves.",
+  "enabled_languages": ["en", "ms", "zh", "nan"],
+  "turns": [
+    {
+      "speaker_id": "SPEAKER_00",
+      "speaker_role": "clinician",
+      "source_language": "en",
+      "language_confidence": 0.97,
+      "start_ms": 0,
+      "end_ms": 4200,
+      "text": "We'll start metformin 5000 mg twice daily.",
+      "tagged_text": "We'll start [[EN]] metformin 5000 mg [[/EN]] twice daily."
+    },
+    {
+      "speaker_id": "SPEAKER_00",
+      "speaker_role": "clinician",
+      "source_language": "en",
+      "language_confidence": 0.97,
+      "start_ms": 4300,
+      "end_ms": 7800,
+      "text": "Sorry, metformin 500 mg twice daily.",
+      "tagged_text": "Sorry, [[EN]] metformin 500 mg [[/EN]] twice daily."
+    }
+  ]
+}

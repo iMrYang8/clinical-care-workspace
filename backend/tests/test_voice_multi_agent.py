@@ -3,14 +3,28 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import engine
-from app.models import ClinicalFact, ConflictCase
+from app.models import (
+    ClinicalFact,
+    ClinicOperationalSetting,
+    ConflictCase,
+    ProvisionalSafetyAlert,
+    VoiceSession,
+)
+from app.services.voice.live import (
+    clear_live_consult_buffer,
+    persist_completed_safety_alerts,
+)
 from app.services.voice.multi_agent import (
     consult_agent_payload,
     consult_fact_candidates,
@@ -21,7 +35,10 @@ from app.services.voice.providers.base import (
     TranscriptResult,
     TranscriptSegmentResult,
 )
-from app.services.voice.providers.deterministic import SyntheticFixtureProvider
+from app.services.voice.providers.deterministic import (
+    ALLOWED_SYNTHETIC_FIXTURE_IDS,
+    SyntheticFixtureProvider,
+)
 from tests.test_voice_worker import _create_recording, _run_job
 
 _CLINICIAN = "We'll continue metformin 500 mg twice daily."
@@ -83,8 +100,105 @@ def _enable_consult_fixture(monkeypatch: MonkeyPatch) -> str:
     return transcript
 
 
+class _FirstResult:
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def first(self) -> Any:
+        return self.value
+
+
+class _LiveFakeDB:
+    def __init__(self) -> None:
+        self.added: list[object] = []
+        self.operational = ClinicOperationalSetting(
+            clinic_id=uuid.uuid4(),
+            supported_languages_json=["en", "ms", "nan", "zh", "cmn"],
+        )
+
+    def exec(self, statement: Any) -> _FirstResult:
+        if "clinic_operational_settings" in str(statement):
+            return _FirstResult(self.operational)
+        return _FirstResult(None)
+
+    def add(self, item: object) -> None:
+        self.added.append(item)
+
+    def flush(self) -> None:
+        return None
+
+
+def _persist_live_captions(
+    db: _LiveFakeDB, *, flag_on: bool, monkeypatch: MonkeyPatch
+) -> list[object]:
+    monkeypatch.setattr(settings, "VOICE_MULTI_AGENT_PIPELINE", flag_on)
+    clear_live_consult_buffer()
+    clinic_id = uuid.uuid4()
+    db.operational.clinic_id = clinic_id
+    voice_session = VoiceSession(
+        clinic_id=clinic_id,
+        patient_id=uuid.uuid4(),
+        capture_kind="clinical",
+        created_by_id=uuid.uuid4(),
+    )
+    context = SimpleNamespace(
+        clinic_id=clinic_id,
+        user_id=uuid.uuid4(),
+        membership=SimpleNamespace(id=uuid.uuid4()),
+    )
+    turns = (
+        (_CLINICIAN, "en"),
+        (_PATIENT, "zh"),
+        (_FAMILY, "ms"),
+    )
+    created: list[object] = []
+    for index, (text, language) in enumerate(turns):
+        created.extend(
+            persist_completed_safety_alerts(
+                db,  # type: ignore[arg-type]
+                context,  # type: ignore[arg-type]
+                voice_session,
+                source_event_id=f"live-{index}",
+                text=text,
+                source_language=language,
+                completed_segment_at=datetime.now(UTC),
+            )
+        )
+    return created
+
+
 def test_voice_multi_agent_pipeline_defaults_off() -> None:
     assert settings.VOICE_MULTI_AGENT_PIPELINE is False
+    assert "trilingual-intrasentential-v1" in ALLOWED_SYNTHETIC_FIXTURE_IDS
+
+
+@pytest.mark.unit
+def test_trilingual_intrasentential_fixture_runs_consult_agents() -> None:
+    result = SyntheticFixtureProvider().transcribe_fixture(
+        "trilingual-intrasentential-v1"
+    )
+    state = run_consult_on_segments(
+        result.segments, consult_id="trilingual-intrasentential-v1"
+    )
+    assert state.speaker_roles == {
+        "SPEAKER_00": "clinician",
+        "SPEAKER_01": "patient",
+        "SPEAKER_02": "family",
+    }
+    langs = {span.language for span in state.language_spans if span.turn_index == 2}
+    assert langs >= {"ms", "en", "nan"}
+    assert "UNRESOLVED_ALLERGY_CONFLICT" in state.warning_codes
+    assert state.publish_blocked is True
+    family = [
+        fact
+        for fact in state.proposed_facts
+        if fact.fact_type == "allergy"
+        and fact.speaker_role == "family"
+        and fact.key == "penicillin"
+    ]
+    assert family
+    assert all(fact.review_required for fact in family)
+    assert all(fact.polarity == "present" for fact in family)
 
 
 def test_consult_agents_propose_roles_facts_and_block_publish() -> None:
@@ -220,3 +334,46 @@ def test_publish_stays_gated_so_agents_do_not_create_conflict_cases(
         facts = db.exec(select(ClinicalFact)).all()
         assert facts
         assert all(row.status == "proposed" for row in facts)
+
+
+@pytest.mark.unit
+def test_live_completed_captions_stay_lexicon_only_when_flag_off(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from app.services.voice import live as live_mod
+
+    db = _LiveFakeDB()
+    created = _persist_live_captions(db, flag_on=False, monkeypatch=monkeypatch)
+    assert live_mod._live_consult_buffers == {}
+    codes = {
+        alert.concept_code
+        for alert in created
+        if isinstance(alert, ProvisionalSafetyAlert)
+    }
+    assert "allergy:penicillin" in codes
+    assert not any(isinstance(item, ConflictCase) for item in db.added)
+
+
+@pytest.mark.unit
+def test_live_completed_captions_rerun_agents_when_flag_on(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from app.services.voice import live as live_mod
+
+    db = _LiveFakeDB()
+    created = _persist_live_captions(db, flag_on=True, monkeypatch=monkeypatch)
+    assert len(next(iter(live_mod._live_consult_buffers.values()))) == 3
+    alerts = [item for item in created if isinstance(item, ProvisionalSafetyAlert)]
+    codes = {alert.concept_code for alert in alerts}
+    polarities = {alert.polarity for alert in alerts}
+    assert "allergy:penicillin" in codes
+    assert "allergy:review_required" in codes
+    assert "unknown" in polarities
+    assert not any(isinstance(item, ConflictCase) for item in db.added)
+    clear_live_consult_buffer()
+    # The same three captions through the batch adapter still surface the
+    # unresolved penicillin conflict — live only persists alerts, not cases.
+    segments = _consult_segments()
+    state = run_consult_on_segments(segments, consult_id="live-buffer-check")
+    assert state.publish_blocked is True
+    assert "UNRESOLVED_ALLERGY_CONFLICT" in state.warning_codes
