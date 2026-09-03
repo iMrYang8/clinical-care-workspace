@@ -19,7 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from trilingual_consult.lexicon import DRUG_ALIASES, canonicalize_drug
+from trilingual_consult.lexicon import (
+    DRUG_ALIASES,
+    canonicalize_drug,
+    is_weakly_evidenced_absent,
+)
 from trilingual_consult.pipeline import run_consult_pipeline
 from trilingual_consult.polywer import _levenshtein
 from trilingual_consult.state import ConsultInput, ConsultTurn
@@ -44,6 +48,11 @@ class BenchClip:
     audio_path: Path | None = None
     licence: str | None = None
     notes: str | None = None
+    # Labels the dataset publishes about itself. Scoring against these is the
+    # only non-circular evidence available here: nobody on this project wrote
+    # them. ViMedCSS ships `cs_terms_list`, ASCEND ships a per-utterance
+    # `language` of en/zh/mixed.
+    external: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +94,7 @@ DATASETS: dict[str, DatasetSpec] = {
         name="multimed",
         hf_id="leduckhai/MultiMed",
         split="test",
+        config="Vietnamese",
         language="vi",
         licence="dataset card",
         proves="Multilingual medical ASR (vi/en/de/fr/zh), not necessarily CS.",
@@ -206,7 +216,9 @@ def score_clip(
     nkda = [
         fact
         for fact in allergies
-        if fact.polarity == "absent" and fact.key in {"*", ""}
+        if is_weakly_evidenced_absent(
+            fact.fact_type, fact.key, fact.polarity, clip.language
+        )
     ]
     report["false_nkda"] = bool(nkda)
     report["allergy_keys"] = sorted({fact.key for fact in allergies if fact.key != "*"})
@@ -229,7 +241,56 @@ def score_clip(
     ]
     report["warning_codes"] = list(state.warning_codes)
     report["review_required"] = any(fact.review_required for fact in state.proposed_facts)
+
+    # Structural invariant: a fact's quote must still index its own span. On real
+    # Vietnamese diacritics and Han text this genuinely fails, so unlike the
+    # review flag it discriminates.
+    report["quote_integrity_ok"] = all(
+        state.turns[fact.turn_index].text[fact.start : fact.end] == fact.quote
+        for fact in state.proposed_facts
+        if 0 <= fact.turn_index < len(state.turns)
+    )
+
+    external = clip.external or {}
+
+    # Scored against the dataset's own expert annotation of which terms are
+    # code-switched. Nobody here wrote those labels, so this is the one number
+    # on public data that cannot be circular.
+    terms = _external_terms(external.get("cs_terms_list"))
+    if terms:
+        survived = [term for term in terms if term.casefold() in working_fold]
+        report["cs_terms_annotated"] = len(terms)
+        report["cs_terms_survived"] = len(survived)
+        report["cs_terms_lost"] = sorted(set(terms) - set(survived))
+
+    # ASCEND labels each utterance en / zh / mixed. Compare that against whether
+    # the pipeline raised MIXED_LANGUAGE_TURN, which gives a real precision and
+    # recall over spontaneous speech instead of a self-graded score.
+    declared = str(external.get("language") or "").strip().lower()
+    if declared in {"en", "zh", "mixed"}:
+        report["declared_mixed"] = declared == "mixed"
+        report["detected_mixed"] = "MIXED_LANGUAGE_TURN" in state.warning_codes
     return report
+
+
+def _external_terms(value: Any) -> list[str]:
+    """Normalise a dataset's code-switch term column into a list of strings."""
+
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw.replace("'", '"'))
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    return []
 
 
 def summarise_reports(name: str, spec: DatasetSpec, reports: list[dict[str, Any]]) -> dict[str, Any]:
@@ -249,15 +310,64 @@ def summarise_reports(name: str, spec: DatasetSpec, reports: list[dict[str, Any]
         "mean_error_rate": round(sum(wers) / len(wers), 4) if wers else None,
         "false_nkda_count": sum(1 for item in reports if item.get("false_nkda")),
         "island_hits": sum(1 for item in reports if item.get("island_canonicalised")),
+        "quote_integrity_failures": sum(
+            1 for item in reports if item.get("quote_integrity_ok") is False
+        ),
+        **_external_label_summary(reports),
         "clips": reports,
     }
 
 
+def _external_label_summary(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    """Roll up the metrics scored against each dataset's own annotation.
+
+    Kept separate so a set that publishes no labels simply contributes nothing,
+    rather than reporting a zero that reads like a measured failure.
+    """
+
+    summary: dict[str, Any] = {}
+
+    annotated = sum(item.get("cs_terms_annotated", 0) for item in reports)
+    if annotated:
+        survived = sum(item.get("cs_terms_survived", 0) for item in reports)
+        summary["cs_terms_annotated"] = annotated
+        summary["cs_terms_survived"] = survived
+        summary["cs_term_survival"] = round(survived / annotated, 4)
+
+    labelled = [item for item in reports if "declared_mixed" in item]
+    if labelled:
+        true_positive = sum(
+            1 for i in labelled if i["declared_mixed"] and i["detected_mixed"]
+        )
+        false_positive = sum(
+            1 for i in labelled if not i["declared_mixed"] and i["detected_mixed"]
+        )
+        false_negative = sum(
+            1 for i in labelled if i["declared_mixed"] and not i["detected_mixed"]
+        )
+        summary["mixed_turn_labelled"] = len(labelled)
+        summary["mixed_turn_precision"] = (
+            round(true_positive / (true_positive + false_positive), 4)
+            if true_positive + false_positive
+            else None
+        )
+        summary["mixed_turn_recall"] = (
+            round(true_positive / (true_positive + false_negative), 4)
+            if true_positive + false_negative
+            else None
+        )
+    return summary
+
+
 def _transcript_from_row(row: dict[str, Any]) -> str:
+    # Order matters only for rows that carry more than one of these. Every name
+    # here belongs to a set we actually load: `segment_text` is ViMedCSS, whose
+    # absence silently emptied that set; `sentence` is Common Voice.
     for key in (
         "transcription",
         "transcript",
         "sentence",
+        "segment_text",
         "text",
         "normalized_text",
         "raw_text",
@@ -329,7 +439,12 @@ def clips_from_rows(
         transcript = _transcript_from_row(row)
         if not transcript:
             continue
-        clip_id = str(row.get("id") or row.get("path") or index)
+        clip_id = str(row.get("id") or row.get("segment_id") or row.get("path") or index)
+        external = {
+            key: row[key]
+            for key in ("cs_terms_list", "cs_terms_count", "language", "locale", "topic")
+            if row.get(key) not in (None, "")
+        }
         dest = cache_dir / spec.name / f"{index:04d}.wav"
         audio_path = _audio_path_from_row(row, dest) if need_audio else None
         clips.append(
@@ -341,6 +456,7 @@ def clips_from_rows(
                 audio_path=audio_path,
                 licence=spec.licence,
                 notes=spec.not_claim,
+                external=external or None,
             )
         )
     return clips
@@ -359,7 +475,13 @@ def try_load_clips(spec: DatasetSpec, n: int) -> tuple[list[BenchClip], str | No
         return [], f"HF_LOAD_FAILED:{type(exc).__name__}"
     if not rows:
         return [], "HF_EMPTY_SPLIT"
-    return clips_from_rows(spec, rows, need_audio=asr_status() == "ASR_READY"), None
+    clips = clips_from_rows(spec, rows, need_audio=asr_status() == "ASR_READY")
+    if not clips:
+        # Rows arrived but none carried a transcript this reader recognises. That
+        # is a column-name mismatch on our side, not an empty or gated split, and
+        # it must not be reported as a clean run over zero clips.
+        return [], f"NO_USABLE_TRANSCRIPTS:{len(rows)}_rows"
+    return clips, None
 
 
 def make_transcribe() -> Callable[[BenchClip], tuple[str, str]] | None:

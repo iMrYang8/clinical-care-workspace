@@ -423,3 +423,41 @@ def count_cmi_and_switches(turns_tagged: list[str]) -> tuple[float, int]:
     if total_tokens == 0:
         return 0.0, 0
     return round(mixed_tokens / total_tokens, 4), switch_points
+
+
+BROAD_ALLERGY_KEYS = frozenset({"*", ""})
+
+
+def is_weakly_evidenced_absent(
+    fact_type: str,
+    key: str,
+    polarity: str,
+    matrix_language: str | None,
+) -> bool:
+    """Return whether an allergy denial rests on evidence too weak to publish.
+
+    A denial is the dangerous direction. Saying "allergic" when the patient is
+    not causes an avoidable substitution; saying "not allergic" when the patient
+    is can kill them. So a denial has to earn its confidence, and there are two
+    ways it fails to:
+
+    * it names no substance, so it is a blanket NKDA inferred from a bare
+      keyword rather than from a parsed negation;
+    * the turn's matrix language never resolved, so a negation pattern from some
+      other language fired inside text whose grammar was never validated.
+
+    ``matrix_language`` is the turn's language, not the matched pattern's. A
+    fact carries the language of the pattern that produced it, so an English
+    negation pattern firing inside an unrecognised matrix reports ``en`` and
+    looks trustworthy on its own.
+
+    This deliberately does not test ``key in BROAD_ALLERGY_KEYS and polarity ==
+    "absent"`` as a conjunction with nothing else. That pair is unreachable from
+    the current extractor -- pattern matches always carry a real key and keyword
+    matches always carry ``unknown`` polarity -- which is why the previous
+    version of this check never fired.
+    """
+
+    if fact_type != "allergy" or polarity != "absent":
+        return False
+    return key in BROAD_ALLERGY_KEYS or normalize_language(matrix_language) == "und"
