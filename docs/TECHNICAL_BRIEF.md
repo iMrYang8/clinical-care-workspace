@@ -2,8 +2,8 @@
 
 **`main` · 3 September 2026 · synthetic data only**
 
-Measured on this tree: backend pytest **521 passed / 1 skipped**; ruff,
-ruff-format, mypy and ty clean. **11 of 16 clinic scenarios survive, 5 are
+Measured on this tree: backend pytest **521 passed / 1 skipped**; frontend
+vitest **134 passed**; ruff, ruff-format, mypy and ty clean. **11 of 16 clinic scenarios survive, 5 are
 partial, none fail outright.** Seven are demonstrated on video, each gated by
 an automated check that asserts the on-screen evidence before any footage is
 kept. Per-scenario coverage is indexed in

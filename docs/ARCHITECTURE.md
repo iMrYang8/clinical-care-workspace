@@ -10,7 +10,7 @@ per-scenario coverage index, read
 
 Nightingale is a clinic-scoped patient-care workspace. It is designed to let a care team answer two questions quickly: **what matters for this patient now, and what exact saved source supports it?** The product combines a five-item Current priorities view, a longitudinal record, role-separated clinical collaboration, reviewable AI-assisted notes, and recoverable voice capture. It does not treat a score, risk badge, or model output as self-validating evidence.
 
-This build does **not** claim: live Twilio delivery, offline pyannote quality, real trilingual/noisy clinic ASR, Hokkien recognition, a persisted `MedicationReviewCandidate` table, voice elapsed/retry UI, or `LocalNormalizedText` typing. Missing `DecisionAssessment` rows on model-derived highlights fail closed (`AI_HIGHLIGHT_ASSESSMENT_MISSING`). Backend pytest on `main`: 521 passed, 1 skipped.
+This build does **not** claim: live Twilio delivery, offline pyannote quality, real trilingual/noisy clinic ASR, Hokkien recognition, a persisted `MedicationReviewCandidate` table, voice elapsed/retry UI, or `LocalNormalizedText` typing. Missing `DecisionAssessment` rows on model-derived highlights fail closed (`AI_HIGHLIGHT_ASSESSMENT_MISSING`). Backend pytest on `main`: 521 passed, 1 skipped. Frontend vitest: 134 passed.
 
 ## 1. Architecture and clinical workflow
 

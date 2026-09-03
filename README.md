@@ -115,17 +115,19 @@ Individual development checks:
 ```bash
 cd backend && uv run pytest
 cd trilingual-consult && uv run pytest
-cd frontend && bun run test
+cd frontend && bun run test        # or: node ../node_modules/vitest/vitest.mjs run
 cd frontend && bun run typecheck
 cd frontend && bun run build
 ```
 
-The frontend suites require Bun, which is what CI pins (1.3.12) and what the
-workspace scripts resolve. Running Vitest under Node instead fails on recent
-releases — Node 25 exposes its own global `localStorage`, which collides with
-the jsdom test environment and breaks every suite that clears storage. Running
-it from the repository root fails differently: it sweeps `.worktrees/`, picks
-up the Playwright specs, and cannot resolve the `@/` alias.
+Run the frontend checks from `frontend/`. From the repository root Vitest
+sweeps `.worktrees/`, collects the Playwright specs it cannot execute, and
+fails to resolve the `@/` alias.
+
+CI pins Bun 1.3.12, and the unit suite also passes under Node. Node 22.4 and
+later define an inert global `localStorage` that shadows the jsdom test
+environment's own; `src/test/browserStorage.ts` replaces it when it is
+unusable and stands aside when it is not, so both runtimes behave the same.
 
 Browser tests are under `frontend/tests/` and run with `bunx playwright test`
 against a running local stack. Security and domain tests cover tenant
