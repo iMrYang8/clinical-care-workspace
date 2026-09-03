@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from trilingual_consult.lexicon import DOSE_RANGE_MG
+from trilingual_consult.lexicon import DOSE_RANGE_MG, is_weakly_evidenced_absent
 from trilingual_consult.state import ConsultState
 
 
@@ -32,8 +32,17 @@ def run_verifier(state: ConsultState) -> ConsultState:
         state.publish_blocked = True
         state.add_warning("PUBLISH_BLOCKED")
         state.trace("verifier:publish-blocked")
+    # The turn's matrix language, not the fact's: a fact reports the language of
+    # the pattern that matched it, which can be a language the turn was never in.
     if any(
-        fact.fact_type == "allergy" and fact.polarity == "absent" and fact.key == "*"
+        is_weakly_evidenced_absent(
+            fact.fact_type,
+            fact.key,
+            fact.polarity,
+            state.turns[fact.turn_index].source_language
+            if 0 <= fact.turn_index < len(state.turns)
+            else None,
+        )
         for fact in state.proposed_facts
     ):
         state.add_warning("BROAD_NKDA_FROM_WEAK_EVIDENCE")
