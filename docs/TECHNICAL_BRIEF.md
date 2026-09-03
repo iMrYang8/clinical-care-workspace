@@ -111,7 +111,9 @@ clinic.
 deterministic fixture. Hokkien is the weakest leg: the `nan` lexicon assumes
 POJ romanisation and Whisper does not emit POJ, so that branch is effectively
 unreachable from a real recording. There is no public Malay/English/Hokkien
-medical consult corpus to evaluate against.
+medical consult corpus to evaluate against. What the seven-agent consult
+pipeline was measured against instead, and where it still fails, is set out in
+[`docs/TRILINGUAL_MULTI_AGENT_BRIEF.md`](TRILINGUAL_MULTI_AGENT_BRIEF.md).
 
 **Development-mode escape hatches.** The restricted-runtime-role assertion is
 skipped when `FASTAPI_ENV=development`. A staging box left in development mode
