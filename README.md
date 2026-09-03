@@ -96,11 +96,15 @@ scenario to the automated tests that cover it and names what each one still
 does not prove. `backend/tests/test_scenario_map.py` verifies that index
 against the source tree, so it cannot rot silently.
 
-Seven scenarios are additionally recorded from the running application. Each
-recording is gated: the recorder first walks the click path with capture off
-and asserts every declared proof string is on screen, so a scenario that cannot
-prove itself produces no footage. See
-[`docs/SCENARIO_RECORDINGS.md`](./docs/SCENARIO_RECORDINGS.md).
+Seven scenarios are additionally recorded from the running application, one
+narrated clip each, and together they are the demo for this submission. Every
+recording is gated: the recorder first walks the click path with capture off and
+asserts each declared proof string is on screen, so a scenario that cannot prove
+itself produces no footage. Narration is muxed in afterwards without
+re-encoding, so a voiced clip's video stream stays byte-identical to the gated
+original. See [`docs/DEMO_RUNBOOK.md`](./docs/DEMO_RUNBOOK.md) for the clip list
+and [`docs/SCENARIO_RECORDINGS.md`](./docs/SCENARIO_RECORDINGS.md) for the
+recording commands and scope notes.
 
 ## Verification
 
@@ -141,7 +145,8 @@ recovery.
 - [Scenario-to-test map](./docs/SCENARIO_TEST_MAP.md) — all sixteen scenarios, their verdicts, and the tests that cover them
 - [Architecture and product overview](./docs/ARCHITECTURE.md)
 - [Architecture diagram](./docs/architecture.svg)
-- [Scenario recordings](./docs/SCENARIO_RECORDINGS.md)
+- [Demo runbook](./docs/DEMO_RUNBOOK.md) — the seven narrated scenario clips that make up the demo
+- [Scenario recordings](./docs/SCENARIO_RECORDINGS.md) — how they are recorded, gated and narrated
 - [中文最终演示脚本](./docs/DEMO_SCRIPT.zh-CN.md)
 - [Voice pipeline](./docs/VOICE_PIPELINE.md)
 - [Model inventory](./MODEL_INVENTORY.md)
