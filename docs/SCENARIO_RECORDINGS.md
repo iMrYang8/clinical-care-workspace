@@ -36,6 +36,38 @@ BASE_URL=https://localhost node scripts/demo/record_scenarios.mjs           # re
 
 `--only=<id>` records a single scenario.
 
+## Narrated copies
+
+The seven originals stay silent. `scripts/demo/voice_scenarios.sh` writes a
+narrated copy of each into `output/demo/scenarios/voiced/`, leaving the source
+clips untouched:
+
+```bash
+./scripts/demo/voice_scenarios.sh                      # all seven
+./scripts/demo/voice_scenarios.sh 13-allergy-vs-nkda   # one clip
+node scripts/demo/generate_scenario_captions.mjs --check   # cue gate only
+```
+
+`scripts/demo/scenario_narration.mjs` holds the cues, exactly as
+`english_demo_content.mjs` holds them for the twelve-minute demo, and
+`generate_scenario_captions.mjs` applies the same acceptance rules: each cue
+lasts `max(3 s, words / 2.8)` capped at 7.5 s, wraps to at most two 42-character
+lines, may not overlap its neighbour, and may not run past the recording. The
+generator probes the real mp4, so a clip re-recorded to a different length fails
+the build instead of producing narration that talks over the next shot.
+
+`render_samantha_voiceover.py` then speaks that SRT cue by cue with macOS `say`
+(Samantha, 220 wpm, no network and no paid TTS), lays each clip down at its own
+cue start, loudness-normalises the assembled track, and muxes it with
+`-c:v copy` — the video stream in a voiced copy is byte-identical to the gated
+original. The spoken line and the subtitle line are the same string, so they
+cannot drift.
+
+Each voiced clip ships with its `.srt`, the narration `.m4a`, a
+`_Voiced_metadata.json` (cue count, tempo ratios, source and output SHA-256) and
+a `_Voiced_SHA256.txt`. No cue currently needs time-compression: `max_tempo_ratio`
+is 1.000 across all seven.
+
 ## Scope and honesty notes
 
 - **Scenario 13 films the real patient-versus-nurse path.** Building this
@@ -52,3 +84,8 @@ BASE_URL=https://localhost node scripts/demo/record_scenarios.mjs           # re
 - The clips cover scenarios the build genuinely survives. Scenarios 1, 3, 4, 6,
   7, 8, 11, 15 and 16 are partial or not visually demonstrable and were
   deliberately not filmed.
+- **The narration is synthetic speech, and it is not itself a gate.**
+  `record_scenarios.mjs --check` asserts the `proofs` strings on screen; it does
+  not read `scenario_narration.mjs`. A cue that overstates what the footage shows
+  would pass every automated check here, so narration edits are reviewed against
+  the clip the same way the `proofs` list is.

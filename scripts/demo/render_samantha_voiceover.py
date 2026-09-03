@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generate cue-aligned macOS Samantha narration and mux it into the demo."""
+"""Generate cue-aligned macOS `say` narration and mux it into a demo video.
+
+Every cue is spoken separately, fitted inside its own subtitle window, and laid
+down at that window's start, so the narration and the SRT cannot drift apart.
+Used for the twelve-minute demo (`--expect-duration 720`) and for each
+per-scenario recording via `voice_scenarios.sh`.
+"""
 
 from __future__ import annotations
 
@@ -178,6 +184,24 @@ def main() -> None:
     parser.add_argument("--voice", default="Samantha")
     parser.add_argument("--rate", type=int, default=220)
     parser.add_argument("--cache-dir", type=Path, required=True)
+    parser.add_argument(
+        "--subtitle-track",
+        default="burned in source video",
+        help=(
+            "How the viewer gets these cues as text. The twelve-minute demo has "
+            "them burned in; the per-scenario clips ship the SRT beside them."
+        ),
+    )
+    parser.add_argument(
+        "--expect-duration",
+        type=float,
+        default=None,
+        help=(
+            "Refuse to render unless the input video is this many seconds long. "
+            "Pass 720 for the twelve-minute demo; the per-scenario clips each "
+            "declare their own length in scenario_narration.mjs."
+        ),
+    )
     parser.add_argument("--narration-audio", type=Path, required=True)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--sha-file", type=Path, required=True)
@@ -192,14 +216,23 @@ def main() -> None:
     cues = parse_srt(args.srt)
     video_probe = probe(args.video)
     video_duration = float(video_probe["format"]["duration"])
-    if abs(video_duration - 720) > 0.12:
-        raise ValueError(f"Expected a 720-second input video, found {video_duration}")
+    if (
+        args.expect_duration is not None
+        and abs(video_duration - args.expect_duration) > 0.12
+    ):
+        raise ValueError(
+            f"Expected a {args.expect_duration}-second input video, found {video_duration}"
+        )
+    if cues[-1].end > video_duration + 0.001:
+        raise ValueError(
+            f"Final cue ends at {cues[-1].end}s, past the {video_duration}s video"
+        )
 
     clips: list[Path] = []
     ratios: list[float] = []
     source_durations: list[float] = []
     for position, cue in enumerate(cues, start=1):
-        print(f"[{position}/{len(cues)}] Samantha cue {cue.index}", flush=True)
+        print(f"[{position}/{len(cues)}] {args.voice} cue {cue.index}", flush=True)
         clip, source_duration, ratio = synthesize_cue(
             cue,
             voice=args.voice,
@@ -316,7 +349,7 @@ def main() -> None:
             "duration": "passed",
             "one_h264_video_stream": "passed",
             "one_aac_audio_stream": "passed",
-            "subtitle_track": "burned in source video",
+            "subtitle_track": args.subtitle_track,
         },
     }
     args.metadata.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
