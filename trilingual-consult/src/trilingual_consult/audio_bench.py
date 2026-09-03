@@ -274,23 +274,41 @@ def score_clip(
 
 
 def _external_terms(value: Any) -> list[str]:
-    """Normalise a dataset's code-switch term column into a list of strings."""
+    """Normalise a dataset's code-switch term column into a list of strings.
+
+    ViMedCSS stores a Python-style list whose cells may themselves hold several
+    terms separated by a semicolon, so a cell has to be split after the list is
+    parsed, not instead of it. Treating a cell as a single term made a pair that
+    both survived look like a loss and understated the survival rate.
+    """
 
     if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, str):
+        cells: list[str] = [str(item) for item in value]
+    elif isinstance(value, str):
         raw = value.strip()
         if not raw:
             return []
+        cells = []
         if raw.startswith("["):
             try:
                 parsed = json.loads(raw.replace("'", '"'))
             except json.JSONDecodeError:
                 parsed = None
             if isinstance(parsed, list):
-                return [str(item).strip() for item in parsed if str(item).strip()]
-        return [part.strip() for part in raw.split(",") if part.strip()]
-    return []
+                cells = [str(item) for item in parsed]
+        if not cells:
+            cells = [raw]
+    else:
+        return []
+
+    terms: list[str] = []
+    for cell in cells:
+        for chunk in cell.split(";"):
+            for part in chunk.split(","):
+                cleaned = part.strip()
+                if cleaned:
+                    terms.append(cleaned)
+    return terms
 
 
 def summarise_reports(name: str, spec: DatasetSpec, reports: list[dict[str, Any]]) -> dict[str, Any]:
