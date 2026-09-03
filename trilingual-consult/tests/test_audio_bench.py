@@ -202,3 +202,26 @@ def test_summary_omits_external_metrics_when_no_dataset_labels_exist() -> None:
     assert "cs_term_survival" not in summary
     assert "mixed_turn_recall" not in summary
     assert summary["quote_integrity_failures"] == 0
+
+
+def test_multi_term_annotation_cells_are_split_not_treated_as_one_term() -> None:
+    """ViMedCSS packs several terms into one cell, separated by a semicolon.
+
+    A real 30-clip run reported three "lost" terms that had in fact both
+    survived; the loss was this parser treating `hormone; estrogen` as a single
+    term that never appears verbatim. That understated survival, which is the
+    direction that makes the pipeline look worse than it is -- but a metric that
+    is wrong in either direction cannot be quoted.
+    """
+
+    clip = BenchClip(
+        dataset="vimedcss",
+        clip_id="mock-multi",
+        transcript="Nong do hormone va estrogen deu tang cao.",
+        language="vi",
+        external={"cs_terms_list": "['hormone; estrogen']"},
+    )
+    report = score_clip(clip)
+    assert report["cs_terms_annotated"] == 2
+    assert report["cs_terms_survived"] == 2
+    assert report["cs_terms_lost"] == []
