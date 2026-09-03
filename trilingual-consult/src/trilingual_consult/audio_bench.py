@@ -465,8 +465,15 @@ def clips_from_rows(
 def try_load_clips(spec: DatasetSpec, n: int) -> tuple[list[BenchClip], str | None]:
     try:
         rows = list(iter_hf_rows(spec, n, need_audio=asr_status() == "ASR_READY"))
-    except ImportError:
-        return [], "DATASETS_LIB_MISSING"
+    except ImportError as exc:
+        # datasets 5.x decodes an Audio feature through torchcodec, so a missing
+        # decoder surfaces here as an ImportError that has nothing to do with the
+        # datasets library itself. Reporting both as one code sent the last
+        # attempt looking for the wrong package.
+        missing = getattr(exc, "name", "") or str(exc)
+        if "torchcodec" in missing or "torio" in missing or "torchaudio" in missing:
+            return [], f"AUDIO_DECODER_MISSING:{missing}"
+        return [], f"DATASETS_LIB_MISSING:{missing}"
     except Exception as exc:  # noqa: BLE001 — record gated/network failures honestly
         message = str(exc)
         lowered = message.lower()
