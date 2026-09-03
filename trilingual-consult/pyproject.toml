@@ -9,6 +9,9 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 audio = ["datasets>=3.0", "soundfile>=0.12"]
+# Pinned to what the Nightingale backend already locks, so a number measured
+# here transfers to the product path instead of describing a different decoder.
+local-asr = ["faster-whisper>=1.1.0,<2.0.0"]
 
 [project.scripts]
 trilingual-consult = "trilingual_consult.cli:main"

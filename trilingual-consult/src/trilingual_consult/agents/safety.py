@@ -19,7 +19,13 @@ def run_safety(state: ConsultState) -> ConsultState:
                 or role in {"family", "unknown"}
                 or (hint not in {"und", match.language})
                 or bool(turn.overlap_group_id)
+                # A drug name recovered from a near-miss spelling is matched so
+                # that a conflict can still be seen, but it is never trusted
+                # silently: the recovery itself is a guess.
+                or match.fuzzy_key
             )
+            if match.fuzzy_key:
+                state.add_warning("DRUG_NAME_RECOVERED_FUZZILY")
             fact = ProposedFact(
                 fact_type="allergy",
                 key=match.key,

@@ -83,6 +83,7 @@ class AllergyMatch:
     polarity: str
     language: LanguageCode
     penicillin_class: bool
+    fuzzy_key: bool = False
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,66 @@ class MedicationMatch:
 
 def canonicalize_drug(raw: str) -> str | None:
     return _ALIAS_TO_CANONICAL.get(raw.strip().casefold())
+
+
+def _edit_distance(left: str, right: str) -> int:
+    """Plain Levenshtein distance between two short strings."""
+
+    if left == right:
+        return 0
+    previous = list(range(len(right) + 1))
+    for i, lch in enumerate(left, start=1):
+        current = [i]
+        for j, rch in enumerate(right, start=1):
+            current.append(
+                min(
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + (lch != rch),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+# A drug name has to be long enough that a single edit is plausibly a
+# transcription slip rather than a different word. Below this length the
+# neighbourhood is too crowded to guess safely.
+_FUZZY_MIN_LENGTH = 7
+
+
+def canonicalize_drug_fuzzy(raw: str) -> tuple[str | None, bool]:
+    """Canonicalise a possibly misspelt drug name.
+
+    Returns ``(canonical, exact)``. Speech recognition misspells drug names in
+    ways nobody can enumerate in an alias table -- a real transcription of Malay
+    audio produced ``penicilin``, one letter short, while the table happened to
+    carry the different guess ``penisilin``. An unmatched key silently becomes a
+    substance of its own, so a clinician's denial and a family's report of the
+    same allergy stop being a conflict and nothing blocks publication.
+
+    A fuzzy hit is therefore matched, but never trusted: callers mark it for
+    review. The match is accepted only when it is unambiguous, meaning exactly
+    one canonical drug lies within one edit, so a slip cannot silently resolve
+    to the wrong medicine.
+    """
+
+    cleaned = raw.strip().casefold()
+    if not cleaned:
+        return None, False
+    exact = _ALIAS_TO_CANONICAL.get(cleaned)
+    if exact is not None:
+        return exact, True
+    if len(cleaned) < _FUZZY_MIN_LENGTH:
+        return None, False
+    near = {
+        canonical
+        for alias, canonical in _ALIAS_TO_CANONICAL.items()
+        if abs(len(alias) - len(cleaned)) <= 1 and _edit_distance(alias, cleaned) <= 1
+    }
+    if len(near) != 1:
+        return None, False
+    return near.pop(), False
 
 
 def strip_language_tags(tagged: str) -> str:
@@ -280,7 +341,9 @@ def extract_allergy_matches(text: str) -> list[AllergyMatch]:
             if any(match.start() >= start and match.end() <= end for start, end in occupied):
                 continue
             raw = match.group(group)
-            key = canonicalize_drug(raw) or raw.strip().casefold()
+            resolved, exact = canonicalize_drug_fuzzy(raw)
+            key = resolved or raw.strip().casefold()
+            fuzzy_key = resolved is not None and not exact
             matches.append(
                 AllergyMatch(
                     start=match.start(),
@@ -290,6 +353,7 @@ def extract_allergy_matches(text: str) -> list[AllergyMatch]:
                     polarity=polarity,
                     language=language,
                     penicillin_class=key in PENICILLIN_CLASS,
+                    fuzzy_key=fuzzy_key,
                 )
             )
             occupied.append((match.start(), match.end()))
