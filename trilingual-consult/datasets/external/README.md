@@ -33,4 +33,44 @@ decoded and WER/CER is written. Otherwise the artifact records
 
 Gated or missing sets write `skip_reason` and move on. That skip is the result.
 
-Do not average ViMedCSS WER into a “Q6 SEA score”.
+Do not average ViMedCSS WER into a "Q6 SEA score".
+
+## What a real decoder changed
+
+faster-whisper 1.2.1 (`Systran/faster-whisper-small`, int8, the version the
+Nightingale backend locks) over macOS TTS of a gold Malay line:
+
+```
+gold  Dia ada alahan kepada penicillin masa kecil.
+hyp   dia ada alahan kepada penicilin masa kecil.     ms, p=0.98
+```
+
+Language identification was right; the drug name lost a letter. That was enough
+to make a clinician's English denial and a family's Malay report of the same
+allergy two unrelated substances, so no conflict was raised and publication of
+the denial was not blocked. Drug names are now recovered from a single edit,
+bounded and always marked for review. See `tests/test_asr_misspelling.py`.
+
+The lesson generalises past this one word: an alias table is a list of spellings
+somebody guessed, and a decoder produces spellings nobody guessed.
+
+## Honest scoring on public sets
+
+The seven gold consults score 1.00 because the lexicon and the gold were written
+together. Two public sets publish their own annotation, so scoring against them
+is not circular:
+
+| Set | Its own label | What we score with it |
+|---|---|---|
+| ViMedCSS | `cs_terms_list` per segment | Do annotated code-switched terms survive into the working text |
+| ASCEND | per-utterance `language` of en/zh/mixed | Precision and recall of `MIXED_LANGUAGE_TURN` |
+
+Review rate is deliberately **not** a metric here. Public clips carry no speaker
+role, so review is forced on every fact and the rate is pinned near one.
+
+## Known gaps in this runner
+
+* `datasets` 5.x decodes audio through `torchcodec`, which is not installed, so
+  audio-bearing runs report `AUDIO_DECODER_MISSING` and fall back to the
+  dataset's own transcript. Text-only scoring is unaffected.
+* AfriSwitchCare is gated. A 401 is recorded as the result, not worked around.
