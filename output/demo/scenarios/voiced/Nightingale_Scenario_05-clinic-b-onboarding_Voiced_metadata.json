@@ -1,0 +1,32 @@
+{
+  "language": "en",
+  "narration": true,
+  "narration_voice": "Samantha",
+  "narration_engine": "macOS say",
+  "requested_rate": 220,
+  "alignment": "SRT cue start; every cue fitted within its subtitle window",
+  "cue_count": 8,
+  "duration_seconds": 28.982,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_sample_rate": 48000,
+  "audio_channels": 2,
+  "max_tempo_ratio": 1.0,
+  "tempo_adjusted_cues": 0,
+  "source_spoken_seconds": 18.328798,
+  "source_video": "Nightingale_Scenario_05-clinic-b-onboarding.mp4",
+  "source_video_sha256": "4929bada7c564e445d776b5dfd7c44085c9e238dbfb6994901b9f5866ae5823c",
+  "srt": "Nightingale_Scenario_05-clinic-b-onboarding.srt",
+  "srt_sha256": "203951e986d40390126e40cd224115a63477087b73f7c9cf7711dc773cef403f",
+  "narration_audio": "Nightingale_Scenario_05-clinic-b-onboarding_Voiced.m4a",
+  "narration_audio_sha256": "b75f446fbcc92e99ec9de2cf70eb9ad1ab431f6af686f92cc74fbea7d7f29e3a",
+  "output": "Nightingale_Scenario_05-clinic-b-onboarding_Voiced.mp4",
+  "output_sha256": "619b93fdfa9c787712f93a9f99bec4c32d988776a425d2ebc6d09443a027d22f",
+  "qa": {
+    "cue_alignment": "passed",
+    "duration": "passed",
+    "one_h264_video_stream": "passed",
+    "one_aac_audio_stream": "passed",
+    "subtitle_track": "sidecar SRT beside the clip"
+  }
+}

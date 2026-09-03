@@ -15,7 +15,14 @@ backend/app/frontend/
 # Chinese rollback copy and the generated English-captioned files out of Git;
 # package-release.sh copies only the explicitly selected English deliverables.
 /output/demo/Nightingale_Final_Demo_*
-/output/demo/scenarios/
+/output/demo/scenarios/*
+!/output/demo/scenarios/voiced/
+/output/demo/scenarios/voiced/*
+!/output/demo/scenarios/voiced/*.mp4
+!/output/demo/scenarios/voiced/*.srt
+!/output/demo/scenarios/voiced/*_SHA256.txt
+!/output/demo/scenarios/voiced/*_metadata.json
+!/output/demo/scenarios/voiced/README.md
 /datasets/raw/
 /artifacts/evaluation/cache/
 
@@ -31,3 +38,6 @@ probe.tmp.mjs
 # agent tooling, not part of the build
 .claude/
 .agents/
+
+# regenerable voiceover render cache
+/artifacts/demo/voiceover/

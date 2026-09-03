@@ -1,0 +1,32 @@
+{
+  "language": "en",
+  "narration": true,
+  "narration_voice": "Samantha",
+  "narration_engine": "macOS say",
+  "requested_rate": 220,
+  "alignment": "SRT cue start; every cue fitted within its subtitle window",
+  "cue_count": 8,
+  "duration_seconds": 30.445,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_sample_rate": 48000,
+  "audio_channels": 2,
+  "max_tempo_ratio": 1.0,
+  "tempo_adjusted_cues": 0,
+  "source_spoken_seconds": 16.618368,
+  "source_video": "Nightingale_Scenario_12-medication-gate.mp4",
+  "source_video_sha256": "c6e487060c433528bfce30d3957cfc436a953a936bc577353b8b80a9e1035d7f",
+  "srt": "Nightingale_Scenario_12-medication-gate.srt",
+  "srt_sha256": "30574e68f9ed5156f6f7b0e8ea5975de786a6150f55b89e02a081c46442a825a",
+  "narration_audio": "Nightingale_Scenario_12-medication-gate_Voiced.m4a",
+  "narration_audio_sha256": "0f1d74d55d39660c774a79ecffcaad8822a64b6d887d9b8824189e3546ce37f6",
+  "output": "Nightingale_Scenario_12-medication-gate_Voiced.mp4",
+  "output_sha256": "baf2d503863fc54a2a048df11fabdbe176cfc4a05a20531cc520ee6b6801bb97",
+  "qa": {
+    "cue_alignment": "passed",
+    "duration": "passed",
+    "one_h264_video_stream": "passed",
+    "one_aac_audio_stream": "passed",
+    "subtitle_track": "sidecar SRT beside the clip"
+  }
+}

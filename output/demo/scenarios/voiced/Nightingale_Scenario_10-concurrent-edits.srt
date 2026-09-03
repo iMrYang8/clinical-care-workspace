@@ -1,0 +1,33 @@
+1
+00:00:00,500 --> 00:00:03,500
+Two care staff open the same saved note.
+
+2
+00:00:04,000 --> 00:00:07,000
+Session A starts typing into its own
+draft.
+
+3
+00:00:07,500 --> 00:00:10,714
+Session B edits the same note and saves
+first.
+
+4
+00:00:11,200 --> 00:00:14,414
+Session A is warned before it can
+overwrite anything.
+
+5
+00:00:14,900 --> 00:00:17,900
+Version conflict: nothing was silently
+merged.
+
+6
+00:00:18,400 --> 00:00:21,971
+The losing draft is kept beside the latest
+saved note.
+
+7
+00:00:22,400 --> 00:00:25,400
+No automatic merge was applied. A person
+decides.

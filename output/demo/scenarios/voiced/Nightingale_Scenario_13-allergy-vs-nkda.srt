@@ -1,0 +1,135 @@
+1
+00:00:00,500 --> 00:00:04,071
+A nurse opens Alex Tan's record in the
+clinic workspace.
+
+2
+00:00:04,500 --> 00:00:07,500
+She documents a named allergy to
+penicillin.
+
+3
+00:00:08,000 --> 00:00:11,000
+It is saved as an ordinary care note.
+
+4
+00:00:12,000 --> 00:00:15,000
+The same patient signs into her own
+portal.
+
+5
+00:00:15,600 --> 00:00:18,600
+The patient channel is separate from the
+record.
+
+6
+00:00:19,200 --> 00:00:22,200
+Nothing she writes here edits a
+clinician's note.
+
+7
+00:00:23,000 --> 00:00:26,571
+Her account shows only what has been
+shared with her.
+
+8
+00:00:27,200 --> 00:00:30,414
+There are no published entries and no
+shared highlights.
+
+9
+00:00:31,000 --> 00:00:34,000
+Current priorities stays empty until the
+team publishes.
+
+10
+00:00:34,600 --> 00:00:37,814
+Every patient and note in this recording
+is synthetic.
+
+11
+00:00:38,400 --> 00:00:41,400
+She adds her own insight about her
+allergies.
+
+12
+00:00:42,000 --> 00:00:45,571
+In her own words: I have no known drug
+allergies.
+
+13
+00:00:46,200 --> 00:00:49,414
+The statement goes to the care team as
+hers.
+
+14
+00:00:50,000 --> 00:00:53,000
+It appears on her timeline, attributed to
+her.
+
+15
+00:00:53,600 --> 00:00:56,600
+The denial does not delete the nurse's
+note.
+
+16
+00:00:57,200 --> 00:01:00,200
+Both statements are preserved, with their
+authors.
+
+17
+00:01:00,800 --> 00:01:03,800
+A disagreement is never resolved by
+overwriting.
+
+18
+00:01:04,400 --> 00:01:07,400
+A patient denial is evidence, not an
+erasure.
+
+19
+00:01:08,000 --> 00:01:11,000
+The record keeps who said what, and when.
+
+20
+00:01:11,600 --> 00:01:14,600
+Nothing is decided by whichever save
+happened last.
+
+21
+00:01:15,200 --> 00:01:18,414
+The nurse's note and the patient's words
+both stand.
+
+22
+00:01:21,200 --> 00:01:24,200
+The clinician now opens the same patient.
+
+23
+00:01:25,200 --> 00:01:28,200
+Clinical conflicts shows a critical
+penicillin allergy.
+
+24
+00:01:28,800 --> 00:01:32,014
+One side reads Source: staff, documented
+by the nurse.
+
+25
+00:01:32,200 --> 00:01:35,414
+The other reads Source: patient, in her
+own words.
+
+26
+00:01:35,600 --> 00:01:38,600
+Status: unresolved. Neither source wins.
+
+27
+00:01:39,000 --> 00:01:42,571
+A blanket denial does not override an
+active named allergy.
+
+28
+00:01:42,900 --> 00:01:45,900
+A clinician decides, and the record shows
+why.

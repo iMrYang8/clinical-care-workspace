@@ -1,0 +1,35 @@
+1
+00:00:00,500 --> 00:00:03,500
+Two source-linked medication instructions
+disagree.
+
+2
+00:00:04,200 --> 00:00:07,414
+The record shows a clinical conflict, not
+a guess.
+
+3
+00:00:08,000 --> 00:00:11,000
+Status: unresolved, at high severity.
+
+4
+00:00:11,500 --> 00:00:14,714
+Each side opens the exact saved source
+behind it.
+
+5
+00:00:15,600 --> 00:00:18,600
+The conflicting instruction is equally
+addressable.
+
+6
+00:00:19,600 --> 00:00:22,600
+Neither source wins automatically.
+
+7
+00:00:23,200 --> 00:00:26,200
+Staff cannot dismiss a high-risk conflict.
+
+8
+00:00:26,700 --> 00:00:29,700
+Publication to the patient stays blocked.

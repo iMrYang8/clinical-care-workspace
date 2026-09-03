@@ -1,0 +1,38 @@
+1
+00:00:00,400 --> 00:00:04,329
+A second clinic is configuration and data,
+not a new deployment.
+
+2
+00:00:04,700 --> 00:00:07,700
+The administrator opens the onboarding
+dialog.
+
+3
+00:00:08,000 --> 00:00:11,000
+The calibration gate is deliberately
+switched off.
+
+4
+00:00:11,400 --> 00:00:14,400
+Preflight names the unmet requirement by
+reason code.
+
+5
+00:00:14,800 --> 00:00:18,014
+Action required, with the exact gate that
+is missing.
+
+6
+00:00:18,400 --> 00:00:21,400
+Restore the gate and run preflight again.
+
+7
+00:00:21,800 --> 00:00:25,014
+Every check passes, and the status flips
+to Ready.
+
+8
+00:00:25,400 --> 00:00:28,400
+Only then does the action become Create
+clinic.

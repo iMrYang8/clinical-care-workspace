@@ -1,0 +1,32 @@
+{
+  "language": "en",
+  "narration": true,
+  "narration_voice": "Samantha",
+  "narration_engine": "macOS say",
+  "requested_rate": 220,
+  "alignment": "SRT cue start; every cue fitted within its subtitle window",
+  "cue_count": 5,
+  "duration_seconds": 21.985,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_sample_rate": 48000,
+  "audio_channels": 2,
+  "max_tempo_ratio": 1.0,
+  "tempo_adjusted_cues": 0,
+  "source_spoken_seconds": 13.619954,
+  "source_video": "Nightingale_Scenario_02-clinic-isolation.mp4",
+  "source_video_sha256": "16a52f8085a6eee5cd61c52a727b876ba2cf7e3b6249e68a73adea30cf9ccce3",
+  "srt": "Nightingale_Scenario_02-clinic-isolation.srt",
+  "srt_sha256": "e988e6920feaa479320f06549184fb22a53036bf3fd70fa19879efface665d4a",
+  "narration_audio": "Nightingale_Scenario_02-clinic-isolation_Voiced.m4a",
+  "narration_audio_sha256": "e1884b52fc3f3235585f6e9e94ae91cd7c2c6aa3082d4496f59b6842a51ff383",
+  "output": "Nightingale_Scenario_02-clinic-isolation_Voiced.mp4",
+  "output_sha256": "c0947004e70c5f92cba0e8a636715237d592ac6bef10b1ddb438f15031dc7e36",
+  "qa": {
+    "cue_alignment": "passed",
+    "duration": "passed",
+    "one_h264_video_stream": "passed",
+    "one_aac_audio_stream": "passed",
+    "subtitle_track": "sidecar SRT beside the clip"
+  }
+}

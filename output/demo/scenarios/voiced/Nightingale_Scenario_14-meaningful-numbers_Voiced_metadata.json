@@ -1,0 +1,32 @@
+{
+  "language": "en",
+  "narration": true,
+  "narration_voice": "Samantha",
+  "narration_engine": "macOS say",
+  "requested_rate": 220,
+  "alignment": "SRT cue start; every cue fitted within its subtitle window",
+  "cue_count": 7,
+  "duration_seconds": 26.349,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_sample_rate": 48000,
+  "audio_channels": 2,
+  "max_tempo_ratio": 1.0,
+  "tempo_adjusted_cues": 0,
+  "source_spoken_seconds": 14.526437999999999,
+  "source_video": "Nightingale_Scenario_14-meaningful-numbers.mp4",
+  "source_video_sha256": "1c6cb914ae232b388bca559b4961e0e627876c8ddf8d048271321ed5a519933e",
+  "srt": "Nightingale_Scenario_14-meaningful-numbers.srt",
+  "srt_sha256": "dda459d17130a38955d608550fd0a52a0399680efd240005a0a0909c5bf54a63",
+  "narration_audio": "Nightingale_Scenario_14-meaningful-numbers_Voiced.m4a",
+  "narration_audio_sha256": "617532999a48cc4b878f5f579ac44d5c170fcebed764658417339b4d00046097",
+  "output": "Nightingale_Scenario_14-meaningful-numbers_Voiced.mp4",
+  "output_sha256": "8eaa9a7dd5525c99463fa56bf0cc846db9be411cf260473bc87b0787afd08edd",
+  "qa": {
+    "cue_alignment": "passed",
+    "duration": "passed",
+    "one_h264_video_stream": "passed",
+    "one_aac_audio_stream": "passed",
+    "subtitle_track": "sidecar SRT beside the clip"
+  }
+}

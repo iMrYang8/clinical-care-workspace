@@ -1,0 +1,19 @@
+1
+00:00:00,500 --> 00:00:03,500
+The remote text processing provider is
+unavailable.
+
+2
+00:00:04,000 --> 00:00:07,000
+Stored priorities remain visible, and are
+labelled.
+
+3
+00:00:07,500 --> 00:00:10,500
+The card states when it was last
+generated.
+
+4
+00:00:11,000 --> 00:00:14,000
+An outage degrades the feature, never the
+record.

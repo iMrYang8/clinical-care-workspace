@@ -1,0 +1,32 @@
+{
+  "language": "en",
+  "narration": true,
+  "narration_voice": "Samantha",
+  "narration_engine": "macOS say",
+  "requested_rate": 220,
+  "alignment": "SRT cue start; every cue fitted within its subtitle window",
+  "cue_count": 28,
+  "duration_seconds": 106.136,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_sample_rate": 48000,
+  "audio_channels": 2,
+  "max_tempo_ratio": 1.0,
+  "tempo_adjusted_cues": 0,
+  "source_spoken_seconds": 61.100861,
+  "source_video": "Nightingale_Scenario_13-allergy-vs-nkda.mp4",
+  "source_video_sha256": "33f5f62a26c4a93cc04d14e9f8a28732948ddb36b182aaac8568aca09dabdaa5",
+  "srt": "Nightingale_Scenario_13-allergy-vs-nkda.srt",
+  "srt_sha256": "3e9a31e1b2b56c3d4cdfedf7e7af1e9a08f22b9e26466a1622c682d1742c856f",
+  "narration_audio": "Nightingale_Scenario_13-allergy-vs-nkda_Voiced.m4a",
+  "narration_audio_sha256": "c35a47dbc5787886b466c9db69e1045bf80563765316af64e32dae305a1dcdb8",
+  "output": "Nightingale_Scenario_13-allergy-vs-nkda_Voiced.mp4",
+  "output_sha256": "e0f9824c233a5153bb57e9b6e80b7fb3e5c5a0b929ca850afdb9ff30bca272c9",
+  "qa": {
+    "cue_alignment": "passed",
+    "duration": "passed",
+    "one_h264_video_stream": "passed",
+    "one_aac_audio_stream": "passed",
+    "subtitle_track": "sidecar SRT beside the clip"
+  }
+}

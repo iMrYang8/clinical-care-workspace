@@ -1,0 +1,33 @@
+1
+00:00:00,500 --> 00:00:03,500
+A confidence number should mean something.
+
+2
+00:00:04,000 --> 00:00:07,000
+Current priorities carries
+source-supported items.
+
+3
+00:00:07,500 --> 00:00:10,500
+This one says its confidence is not
+applicable.
+
+4
+00:00:11,000 --> 00:00:14,000
+Why this decision explains what the item
+means.
+
+5
+00:00:14,500 --> 00:00:18,071
+It states how it could be wrong, and what
+follows.
+
+6
+00:00:18,600 --> 00:00:21,600
+Unqualified items stay in a protected
+review queue.
+
+7
+00:00:22,100 --> 00:00:25,100
+That queue cannot be shared with the
+patient.

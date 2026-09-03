@@ -1,0 +1,32 @@
+{
+  "language": "en",
+  "narration": true,
+  "narration_voice": "Samantha",
+  "narration_engine": "macOS say",
+  "requested_rate": 220,
+  "alignment": "SRT cue start; every cue fitted within its subtitle window",
+  "cue_count": 7,
+  "duration_seconds": 27.574,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_sample_rate": 48000,
+  "audio_channels": 2,
+  "max_tempo_ratio": 1.0,
+  "tempo_adjusted_cues": 0,
+  "source_spoken_seconds": 15.515827999999999,
+  "source_video": "Nightingale_Scenario_10-concurrent-edits.mp4",
+  "source_video_sha256": "31f464458f8970fc8ee340df87cfa9f5a01534257abc28539521d5aaa32b3ef1",
+  "srt": "Nightingale_Scenario_10-concurrent-edits.srt",
+  "srt_sha256": "461c2d64a45c3e79ba3c4fa3966b02c216836342b1b94326595ac0f58d8f1ee1",
+  "narration_audio": "Nightingale_Scenario_10-concurrent-edits_Voiced.m4a",
+  "narration_audio_sha256": "65ba739efdae903061158929733a529f395d2cb934fa19768f144da6bfd5623e",
+  "output": "Nightingale_Scenario_10-concurrent-edits_Voiced.mp4",
+  "output_sha256": "7e6236b833aaab94b3cd79579cc65253c98d4693cc49607c48a6f0ed5e443456",
+  "qa": {
+    "cue_alignment": "passed",
+    "duration": "passed",
+    "one_h264_video_stream": "passed",
+    "one_aac_audio_stream": "passed",
+    "subtitle_track": "sidecar SRT beside the clip"
+  }
+}

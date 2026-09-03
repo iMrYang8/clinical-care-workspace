@@ -1,0 +1,24 @@
+1
+00:00:00,600 --> 00:00:04,529
+The first clinic searches an MRN that
+belongs to another clinic.
+
+2
+00:00:05,000 --> 00:00:08,571
+The record does not exist here: zero
+matching patient records.
+
+3
+00:00:09,000 --> 00:00:12,214
+The same search inside her own clinic
+returns her.
+
+4
+00:00:13,000 --> 00:00:16,214
+Platform oversight opens the clinic as a
+read-only view.
+
+5
+00:00:17,000 --> 00:00:20,571
+Isolation is enforced in the database, not
+in the interface.
