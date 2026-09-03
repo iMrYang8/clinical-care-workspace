@@ -1,6 +1,6 @@
 # Nightingale
 
-> Delivery-specific archive. For the product overview and everyday setup, start with the root [`README.md`](../../README.md) and [`docs/TECHNICAL_BRIEF.md`](../TECHNICAL_BRIEF.md).
+> Delivery-specific archive. For the product overview and everyday setup, start with the root [`README.md`](../../README.md) and [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md).
 
 Nightingale is a clinic-scoped, synthetic-data care-note demo built for a
 72-hour product exercise. It makes the path from a Glance card to an immutable

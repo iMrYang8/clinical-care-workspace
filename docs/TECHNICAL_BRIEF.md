@@ -1,112 +1,208 @@
-# Nightingale — current technical brief
+# Nightingale — technical brief
 
-**Current working tree · 2 September 2026 · `release-2026-09-02` · synthetic/mock patient data only**
+**`main` · 3 September 2026 · synthetic data only**
 
-Nightingale is a clinic-scoped patient-care workspace. It is designed to let a care team answer two questions quickly: **what matters for this patient now, and what exact saved source supports it?** The product combines a five-item Current priorities view, a longitudinal record, role-separated clinical collaboration, reviewable AI-assisted notes, and recoverable voice capture. It does not treat a score, risk badge, or model output as self-validating evidence.
+Measured on this tree: backend pytest **521 passed / 1 skipped**; ruff,
+ruff-format, mypy and ty clean. **11 of 16 clinic scenarios survive, 5 are
+partial, none fail outright.** Seven are demonstrated on video, each gated by
+an automated check that asserts the on-screen evidence before any footage is
+kept. Per-scenario coverage is indexed in
+[`SCENARIO_TEST_MAP.md`](./SCENARIO_TEST_MAP.md), which a test verifies against
+the source tree. Architecture detail is in
+[`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
-This freeze does **not** claim: live Twilio delivery, offline pyannote quality, real trilingual/noisy clinic ASR, Hokkien recognition, a persisted `MedicationReviewCandidate` table, voice elapsed/retry UI, or `LocalNormalizedText` typing. Missing `DecisionAssessment` rows on model-derived highlights fail closed (`AI_HIGHLIGHT_ASSESSMENT_MISSING`). Backend pytest on this branch: 504 passed, 1 skipped. Frontend vitest: 129 passed.
+Where a claim rests on something I could not measure, it is listed as not
+evidenced rather than described as working.
 
-## 1. Architecture and clinical workflow
+## 1 · What the feedback changed
 
-![Nightingale system architecture](./architecture.svg)
+The feedback's central move was to stop asking whether a feature exists and
+start asking what a clinician sees when it misbehaves. Re-reading the build
+through that lens produced four patterns, none of which I expected.
 
-The browser application uses React, TypeScript, Vite, TanStack Router/Query, shadcn/ui, and Tiptap. FastAPI owns authentication, authorization, validation, the OpenAPI boundary, and same-origin production delivery. SQLModel and Alembic manage PostgreSQL 16. A separate worker claims durable text and voice jobs. Traefik terminates local TLS; Docker Compose provides the reproducible local topology.
+**The safety machinery was consistently ahead of the surfaces consuming it.**
+The evaluation harness had really run and its negative result really did gate
+the system; anchors were frozen by trigger. What was missing, repeatedly, was
+the last hop: a reason-label map covering two of six backend values, a
+`fallback_kind` badge that was unreachable dead code, a
+`current_confidence_state` computed on the server and then re-derived — wrongly
+— in the browser, a diff endpoint with no caller. A reviewer reading only the
+backend would have scored this build higher than a clinician using it.
 
-The primary workflow is:
+**Absence was being read as innocence.** Four trust defects reduced to one
+mistake: a missing `DecisionAssessment` row was treated as "nothing to qualify"
+rather than "not qualified". That reading let a job report qualified confidence
+from a partial subset, let an unassessed model-derived highlight render as a
+ready priority and reach the patient projection, and let publication record a
+model claim as human-asserted. The fix is one explicit rule — a highlight is
+model-derived if it carries a candidate fingerprint, and a model-derived
+highlight with no assessment is unqualified — threaded through job confidence,
+glance review state and the publication gate by two shared helpers instead of
+three divergent checks.
 
-1. Staff or Clinician searches the clinic's patient registry and opens a shared record.
-2. Current priorities presents at most five precomputed items plus a separate clinical-review queue.
-3. **View source** resolves a priority or normalized fact to the exact wording in an immutable saved note version.
-4. Human and AI-assisted entries appear together in a longitudinal timeline while retaining their type and review state.
-5. Staff and Clinician edit their permitted sections, discuss selected text, mention or assign a colleague, resolve/reopen threads, compare versions, and restore an earlier version as a new version.
-6. Staff submits an exact saved note version to the Patient sharing queue. A Clinician reviews that immutable version, passes the provenance/redaction/conflict gates, publishes it, or later withdraws it. Patients use a separate My Care projection that excludes internal comments, raw AI working material, scores, transcripts, and audio; a withdrawal removes the note while retaining a visible receipt and audit history.
+**The same mistake reappeared in an unrelated subsystem.** The row-level
+security write check on provenance pointers validated a row by querying for
+that row, which cannot be satisfied before the row exists. A not-yet-present
+thing treated as a fact about the world rather than as a gap in what is known.
 
-The warm Current-priorities path reads an encrypted precomputed snapshot rather than invoking a model. An exploratory run against this **dirty working tree** measured 100 warm reads at median 2.602 ms, p95 **3.881 ms**, and p99 4.151 ms, below the 300 ms target. This is useful current evidence, but it is not a release-candidate measurement until it is rebound to a clean revision and image digest.
+**State machines right in the model and wrong at the boundary.** A delivered
+SMS could be marked revoked, which is a false record — except for enrolment and
+one-time codes, where revocation is precisely how the live token is
+invalidated. Clinic preflight returned a 500 on exactly the out-of-range
+retention configuration it exists to report.
 
-## 2. Data model, tenancy, and source integrity
+## 2 · Scored build parts
 
-![Nightingale clinic-scoped data model](./schema.svg)
+**Survives — seven of twelve.** *Medical terminology and dosage confirmation:*
+a versioned RxNorm-coded clinic formulary screened at publication, with
+four-axis human attestation enforced on client and server; the vocabulary is
+deliberately small and fails closed outside it. *Immutable, version-bound
+provenance:* triggers freeze anchors and seal version ciphertext, and
+append-only tables `REVOKE UPDATE, DELETE` from the runtime role. *Fact
+extraction under negation, correction and conflict:* three-valued polarity,
+four negation-scope guards, and unknown never becomes reassuring. *Real-time
+collaborative editing:* lost-update prevention proven under thread contention,
+with comment mutations carrying revisions and requiring `If-Match`. *AI
+regeneration preserving human state:* candidate fingerprints make regeneration
+reuse rather than duplicate, and confirmed state is protected by trigger in
+scoring, decay and cold storage. *Contradictory human, patient and AI
+assertions:* no source-precedence auto-resolution, and the conflict card names
+each side's origin, role, section and language. *Distinct clinician, staff and
+patient outputs:* server-side read and write gating, different response schemas
+per audience, a separate patient route tree.
 
-The main evidence chain is:
+**Partial — five of twelve.** *Streaming and noisy-environment ASR* uses a real
+SNR estimate rather than the earlier RMS proxy, but there is no denoiser and no
+measurement on real noisy recordings. *Diarization* runs pyannote in a killable
+subprocess with typed unavailability codes; no weights are cached here, so
+quality is unmeasured. *Within-statement code-switching* determines language per
+span at a 0.85 threshold and fails closed below it, but only against synthetic
+spans. *Multilingual downstream processing* gained Malay and Chinese dose
+patterns plus a language-agnostic numeric fallback, closing an English-only
+publication-gate bypass; there is still no translation step and no real-speech
+evaluation. *Self-learning* is clinic-scoped and bounded — ±0.20 clamp by
+database check, 1/√n damping, append-only audit enforced by REVOKE, shadow mode
+by default, allergy and medication floors in both code and schema — but
+exposure is evaluated and **not corrected**: no exploration, no propensity
+weighting.
 
-```text
-Clinic → Patient → Entry → immutable EntryVersion
-                         ↘ Comment / Highlight / ClinicalFactAssertion
-                           → ProvenancePointer → exact quote and saved version
-```
+**One deliberate omission inside a survivor.** Nothing here generates for
+reading level. The patient summary is written by the publishing clinician.
+Automatic rewriting would put unreviewed model wording into the patient-visible
+record, contradicting the rule that human confirmation gates everything
+outbound. The audience separation is real; audience-adapted generation is not
+claimed.
 
-`ClinicMembership` assigns one role within a clinic; `PatientUserLink` grants a patient access only to their own record. Patient identifiers use encrypted values plus clinic-scoped HMACs for exact duplicate detection. Tenant rows carry `clinic_id`; tenant-composite foreign keys prevent cross-clinic relationships, and PostgreSQL row-level security reinforces application checks. Clinical text, comments, Glance payloads, identifiers, redaction maps, transcripts, facts, and audio use clinic-bound AES-256-GCM.
+## 3 · Where this fails first
 
-Entries do not mutate history. Every save creates an `EntryVersion`; compare-and-swap version checks reject stale writes, and restore creates a new current version. `ProvenancePointer` stores the saved version, offsets, exact quote/context, quote hash, and optional audio time range. The user interface shows the clinically useful source title, author, date, quote, and historical state while hiding internal UUIDs and hashes.
+**Message delivery.** No Twilio credentials exist here, so the effective
+provider is a deterministic stub that reports success. Scenarios 1, 5 and 11
+all terminate at the same unproven hop. One sandbox account moves three
+scenarios at once; without it, a queued message looks delivered, which is the
+failure mode that matters.
 
-The internal provenance chain is implemented and source jumps were observed in the browser. `EntryPublic` and `PatientTimelineEntry` now expose a required `author_role` plus typed top-level provenance. AI/System entries return `author_role=system`; normal AI runs resolve the immutable input version directly, reviewed voice output uses an explicit entry relation, an archived source is labelled `archived`, and a missing source is honestly returned as `unavailable` rather than treating generated wording as evidence.
+**The voice path under a hang.** Text jobs are bounded at 15/30/75 seconds and
+fall back deterministically. Voice has only a 600-second per-call timeout, so a
+stuck transcript shows an indefinite spinner with no elapsed time and no retry.
+This is the least-improved scenario and the one most likely to be hit in a real
+clinic.
 
-## 3. Roles and browser validation
+**Real multilingual speech.** Every code-switching result here is a
+deterministic fixture. Hokkien is the weakest leg: the `nan` lexicon assumes
+POJ romanisation and Whisper does not emit POJ, so that branch is effectively
+unreachable from a real recording. There is no public Malay/English/Hokkien
+medical consult corpus to evaluate against.
 
-The server resolves the active membership; browser-supplied clinic, role, or actor values are never authority.
+**Development-mode escape hatches.** The restricted-runtime-role assertion is
+skipped when `FASTAPI_ENV=development`. A staging box left in development mode
+with owner credentials loses the tenant-isolation guarantee that the rest of
+the design depends on.
 
-| Role | Implemented boundary | Browser observation in the current local build |
-| --- | --- | --- |
-| Patient | Own patient-facing entries, approved priorities, personal insight/recording; no clinical/admin data | Separate My Care navigation; one approved timeline note and three approved priorities; no raw AI, internal discussion, transcript, or Admin navigation |
-| Staff | Search patients, add staff care notes, discuss/assign, record visits; no clinician-section edits or conflict resolution | 303-record registry with search, six today's visits and 297 previous records; exact AI-source jump; Staff note editable while Clinician note is not; high conflict remains review-only |
-| Clinician | Staff capabilities plus clinical judgement, AI/voice review, conflict correction, and publication | Jordan Wong shows 22 years, 11 entries, three distinct AI-assisted note types, seven linked facts, an unresolved oral-intake conflict, source quote, decision explanation, and correction control |
-| Clinic Admin | Manage membership and clinic AI settings; read-only clinical oversight | Team/invitation/AI settings and database-backed activity log visible; patient record labelled read-only; no add, edit, or resolve controls |
+## 4 · What I tried that did not work
 
-Selected backend P0/P1/Bonus tests reported **101 passed**, the current frontend unit suite reports **19 files / 77 tests passed**, and a fresh-image isolated Chromium run of the core four-role and product-language specs reports **21 passed / 0 failed**. Direct browser checks covered Staff Glance-to-source, longitudinal Clinician review, patient-portal isolation, Admin read-only behavior, and Light/Dark/System appearance. Stale browser selectors for the renamed longitudinal heading and modal invitation flow were corrected. A focused remote-provider regression also reports **3 passed / 0 failed**. The current full Backend + Frontend + Typecheck + Build + Alembic + Playwright release gate still requires one final clean-tree run; these selected results must not be represented as a revision-bound release gate.
+**Fixing tests before understanding them.** The full backend suite gave 140
+failures. Columns had been added to already-applied migrations, so the database
+was stamped at head while lacking them. Rebuilding the schema from empty
+reduced 140 failures to 8 — 132 environmental, 8 real signal. The rule that
+came out of it: no further edits to an applied migration.
 
-## 4. Importance learning: exact behavior and limits
+**Adding `entity:medication` to the protected-visibility predicate.** It
+belongs in the learning safety floor, and it is now there with a matching
+database check constraint. Putting it in the visibility predicate as well would
+have reclassified every medication highlight into the clinical-review surface
+and silently changed dismissal permissions. Learning suppression and review
+classification are different concerns that happened to share a predicate.
 
-The current mechanism is **deterministic, clinic-level online feature weighting**. It is not an LLM, not a learned neural model, and not a personal user profile.
+**A demo proof string that proved nothing.** My first scenario-13 assertion was
+`"Penicillin Allergy"`, which passed while the conflict card did not exist at
+all: Playwright's substring match is case-insensitive and had matched the note
+body I had just typed. Proof strings are now unique to the card under test.
 
-For each highlight, the base score is:
+**Dropped from this freeze:** `VOICE_JOB_TIMEOUT_SECONDS` with elapsed-time and
+retry UI; the `LocalNormalizedText` nominal type; the original-versus-current
+diff pane; a persisted `MedicationReviewCandidate` table; exposure-bias
+correction. Each is named rather than quietly omitted.
 
-```text
-base = 0.30·critical
-     + 0.20·unresolved
-     + 0.15·has_clinical_entity
-     + 0.15·clinician_confirmed
-     + 0.20·exp(-age_days / 90)
+## 5 · Assumptions
 
-learned = mean(clinic feature weights)
-final = clamp(base + learned, 0, 1)
-```
+**Still standing.** Provenance must be version-bound and immutable; this held
+under every probe. The database, not the route layer, is where tenant isolation
+belongs — deleting a route's clinic filter still yields zero cross-boundary
+rows. Redaction ordering must be structural, so tampered text fails by
+construction rather than by convention. Shadow-mode-by-default for learning,
+which the exposure-bias critique confirmed rather than undermined. Human
+confirmation gates patient-facing dosage.
 
-Features use a bounded non-identifying taxonomy: allergy, medication, diagnosis, follow-up, critical risk, and entry type. Free text and identity material are rejected. Feedback deltas are `pin +0.08`, `accept/manual highlight +0.06`, `comment +0.02`, `edit +0.01`, `reject -0.08`, and `dismiss -0.04`; each feature update is damped by `delta / sqrt(1 + observations)` and clamped to `[-0.20, +0.20]`. Negative learning cannot suppress a critical, unresolved, or clinician-confirmed item.
+**No longer standing.**
 
-The database makes the mechanism auditable:
+*That a green suite means a user-reachable path works.* The suite was green
+while the patient portal returned a 500 on its primary action, because no test
+exercised a patient writing clinically meaningful text. The bug was found by
+trying to film the feature. Coverage measured the paths I thought to write, and
+my blind spot in the tests matched my blind spot in the code.
 
-- `importance_feedback_events` records clinic, highlight, actor membership, signal, reason, feature keys, applied delta, idempotency binding, and time.
-- `importance_feature_stats` stores the clinic-wide aggregate weight and positive/negative/observation counts for each feature.
-- `importance_impressions` records viewer membership, highlight, rank, duration, visibility, exposure value, and deduplicated view event for bias analysis.
-- `audit_events` and `domain_events` record visible state changes; snapshots are rebuilt for affected patients after feedback.
+*That a stubbed provider is an acceptable default.* It reports success, so a
+queued message looks delivered. The state machine was never the problem; the
+honest default was.
 
-The actor/viewer identifiers provide accountability and bias-analysis evidence; they are **not** used to build an individual preference vector. Ranking reads clinic aggregates keyed by `(clinic_id, feature_key)`. Impressions currently remain telemetry and are not consumed by the scoring formula. The current production path performs no randomized exploration or inverse-propensity correction; therefore it must not claim a “10% exploration” experiment. In the UI, **Why this decision?** exposes base components, clinic feedback adjustment, protected status, source, risk floor, confidence state, and what happens when a check fails.
+*That a declared config value is an enforced one.* Retention days, messaging
+channels and a worker-enabled flag were stored, plumbed and unread. A setting
+that exists only to satisfy a test reads as a control during review and is
+worse than no setting.
 
-The Clinician browser now supports the brief's exact manual-Highlight interaction: select arbitrary wording inside any AI-assisted note, review the exact quote in a dialog, and create a clinician-confirmed Highlight bound to that immutable version, code-point offsets, and quote context. The priority deliberately retains the selected source wording; a paraphrase or correction must be a separately authored clinical note. Staff, Admin, and Patient do not receive this control. The resulting event updates the same clinic-level bounded feature mechanism and refreshes Current priorities. A clinic-level learning evidence panel for Admin would still make aggregate feature weights and feedback counts easier to inspect without SQL.
+*That backend correctness implies clinical correctness.* Correct data reaching
+the wire and never rendered is not a feature. The dead badge and the unreachable
+diff pane are the same failure as a missing check.
 
-## 5. AI trust, real evaluation, voice, and retention
+*That "no assessment" is neutral.* The assumption behind all four trust defects
+and behind the provenance write check.
 
-AI content is derived material, never a silent replacement for human documentation. A fact must bind to an immutable source and exact quote before it can enter the decision pipeline. Deterministic risk rules set a floor for allergy, medication status, dose, route, frequency, and severe-condition conflicts; a provider result can raise but not lower that floor. Unsupported, abstained, low/unavailable-confidence, redaction-failed, or unresolved high-risk material goes to clinical review and is blocked from patient publication.
+*That the demo environment reflects the code.* It did not, silently, for eight
+hours, because an old image and an old schema agreed with each other.
 
-Two real OpenAI evaluation artifacts now exist, and both preserve negative results:
+## 6 · The demo is a test that produces footage
 
-- PriMock57 voice holdout: provider `openai`, model `gpt-4o-transcribe-diarize`, 17 consultations / 2,206 segment decisions, WER 0.2004, medical-entity recall 0.8574, speaker error rate 0.2021, lower-bound accuracy 0.1292 — **Confidence: Low**.
-- ACI-Bench fact extraction: provider `openai`, model `gpt-5.1`, 40 consultations / 176 judged facts, 23 true positives, 155 false negatives, lower-bound accuracy 0.0437 — **Confidence: Low**.
+Each scenario is defined once with its click path and the strings that must be
+visible for it to be true. A check phase walks that path with capture off and
+asserts every string; the record phase replays it with capture on. A scenario
+that cannot prove itself produces no video, so footage cannot drift from the
+claim.
 
-These results validate the evaluation-and-abstention path, not clinical model quality. The correct runtime consequence is Low/Unavailable plus review, not a decorative High label. A fixed 500-example redaction evaluation reports 2,500/2,500 expected PHI spans detected, residual PHI 0, and protected clinical-span damage 0; it covers the configured synthetic classes and is not a universal de-identification guarantee.
+Filming scenario 13 found three defects, none reachable from the suite as
+written. Conflict cards showed UUID-sort ordinals — "first" versus "conflicting"
+assertion — instead of nurse versus patient, because origin was checked before
+section. A patient insight mentioning an allergy writes a provenance pointer,
+and that table's write check validated a pointer by querying for that pointer:
+a self-referential `EXISTS`, unsatisfiable before the row is visible, so **any
+patient submitting clinically meaningful text through their own portal got a
+500** — invisible to clinical roles, whose branch short-circuits first. With
+that fixed, the patient's "no known drug allergies" was refused as an
+unresolved conflict, because the gate stopping clinician content going out to a
+patient was also stopping the patient's own input. All three now have
+regression tests.
 
-Voice capture provides encrypted IndexedDB recovery, resumable encrypted chunks, multi-device finalization, bounded FFmpeg preprocessing, provisional captions, immutable final transcript revisions, speaker/timestamp/overlap review, facts linked to transcript/audio ranges, and Clinician publication. The final reviewed transcript remains authoritative; provisional text is ephemeral. Optional local providers remain profile-specific.
-
-Data decay separates retention from deletion. Older eligible bodies can move to encrypted compressed archive storage while their version metadata, checksum, provenance, and audit rows remain. Rehydration verifies the checksum before restoring content. Critical, unresolved, clinician-confirmed, pinned, or otherwise protected material stays active.
-
-## 6. Assumptions, trade-offs, and completion boundary
-
-- All shipped patients, identifiers, messages, recordings, and benchmark transmissions are synthetic or Mock data.
-- Precomputed snapshots trade write-time work for a fast, predictable 10-second review path.
-- Immutable versions and separate correction records consume more storage but preserve auditability and disagreement history.
-- Clinic-level learning avoids covert personal profiling but cannot model individual preferences; telemetry is retained for later fairness/exposure analysis.
-- Deterministic risk floors and abstention favor false-positive review over silently suppressing unsafe content.
-- Admin-configured provider keys and task-specific fast/careful model routing are operational controls, not proof that a selected model is clinically adequate.
-- The current OpenAI evaluations are explicitly Low; patient publication still requires human approval and source checks.
-
-Before final delivery, run and preserve a clean, revision-bound full gate, then bind the final benchmark, browser report, source SHA/tree state, and OCI image digest into one evidence package. The manual AI-phrase Highlight interaction, direct Timeline author/provenance contract, and Staff-request/Clinician-approval/withdrawal workbench are implemented in the current working tree; they must still be included in that final revision-bound browser gate. Historical candidate evidence remains under [`docs/delivery/`](./delivery/) and must not be used to attest to later working-tree changes.
+**Evaluation evidence, negative results kept.** Fact extraction calibrates to
+`low` at a 0.0437 accuracy lower bound over 176 judged facts; voice to `low`
+with a 0.200 word error rate over 2,206 segment decisions; redaction achieves
+1.0 PHI recall over 500 samples and passes. The first two are why the system
+abstains on every AI fact extraction today. Left exactly as measured.

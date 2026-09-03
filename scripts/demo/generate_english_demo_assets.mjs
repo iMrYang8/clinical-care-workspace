@@ -25,7 +25,7 @@ function wordCount(text) {
 	return text.trim().split(/\s+/u).filter(Boolean).length;
 }
 
-function wrapCue(text, maxLength = SUBTITLE_LINE_LENGTH) {
+export function wrapCue(text, maxLength = SUBTITLE_LINE_LENGTH) {
 	const words = text.trim().split(/\s+/u).filter(Boolean);
 	const lines = [];
 	let line = "";
@@ -52,7 +52,7 @@ function wrapCue(text, maxLength = SUBTITLE_LINE_LENGTH) {
 	return lines;
 }
 
-function cueDurationSeconds(text) {
+export function cueDurationSeconds(text) {
 	const duration = Math.max(3, wordCount(text) / 2.8);
 	if (duration > 7.5) {
 		throw new Error(
@@ -66,7 +66,7 @@ function toMilliseconds(seconds) {
 	return Math.round(seconds * 1000);
 }
 
-function formatSrtTime(milliseconds) {
+export function formatSrtTime(milliseconds) {
 	const hours = Math.floor(milliseconds / 3_600_000);
 	const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
 	const seconds = Math.floor((milliseconds % 60_000) / 1000);

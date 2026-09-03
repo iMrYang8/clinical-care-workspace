@@ -83,6 +83,25 @@ FIRST_SUPERUSER_PASSWORD
 
 External text or audio processing is optional. When enabled, supply credentials only through the local shell or secret manager and review [`MODEL_INVENTORY.md`](./MODEL_INVENTORY.md) before allowing any remote data flow.
 
+## The sixteen clinic scenarios
+
+This build is assessed against sixteen real-clinic scenarios — a nurse and a
+patient disagreeing about an allergy, a provider returning 503 for an hour, two
+clinicians typing into the same note at 09:14, a highlight that cites a note
+someone has since edited. **Eleven survive, five are partial, none fail
+outright.**
+
+[`docs/SCENARIO_TEST_MAP.md`](./docs/SCENARIO_TEST_MAP.md) indexes every
+scenario to the automated tests that cover it and names what each one still
+does not prove. `backend/tests/test_scenario_map.py` verifies that index
+against the source tree, so it cannot rot silently.
+
+Seven scenarios are additionally recorded from the running application. Each
+recording is gated: the recorder first walks the click path with capture off
+and asserts every declared proof string is on screen, so a scenario that cannot
+prove itself produces no footage. See
+[`docs/SCENARIO_RECORDINGS.md`](./docs/SCENARIO_RECORDINGS.md).
+
 ## Verification
 
 Run the release checks:
@@ -95,17 +114,32 @@ Individual development checks:
 
 ```bash
 cd backend && uv run pytest
-node node_modules/vitest/vitest.mjs run
-node node_modules/typescript/bin/tsc -p frontend/tsconfig.build.json
-node node_modules/vite/bin/vite.js build --config frontend/vite.config.ts
+cd trilingual-consult && uv run pytest
+cd frontend && bun run test
+cd frontend && bun run typecheck
+cd frontend && bun run build
 ```
 
-Browser tests are under `frontend/tests/`. Security and domain tests cover tenant isolation, role permissions, version history, concurrent edits, source traceability, importance feedback, data retention, invitations, and voice recovery.
+The frontend suites require Bun, which is what CI pins (1.3.12) and what the
+workspace scripts resolve. Running Vitest under Node instead fails on recent
+releases — Node 25 exposes its own global `localStorage`, which collides with
+the jsdom test environment and breaks every suite that clears storage. Running
+it from the repository root fails differently: it sweeps `.worktrees/`, picks
+up the Playwright specs, and cannot resolve the `@/` alias.
+
+Browser tests are under `frontend/tests/` and run with `bunx playwright test`
+against a running local stack. Security and domain tests cover tenant
+isolation, role permissions, version history, concurrent edits, source
+traceability, importance feedback, data retention, invitations, and voice
+recovery.
 
 ## Documentation
 
+- [Technical brief](./docs/TECHNICAL_BRIEF.md) — what the clinic-scenario feedback changed, where this build fails first, and which assumptions did not survive
+- [Scenario-to-test map](./docs/SCENARIO_TEST_MAP.md) — all sixteen scenarios, their verdicts, and the tests that cover them
+- [Architecture and product overview](./docs/ARCHITECTURE.md)
 - [Architecture diagram](./docs/architecture.svg)
-- [Technical brief](./docs/TECHNICAL_BRIEF.md)
+- [Scenario recordings](./docs/SCENARIO_RECORDINGS.md)
 - [中文最终演示脚本](./docs/DEMO_SCRIPT.zh-CN.md)
 - [Voice pipeline](./docs/VOICE_PIPELINE.md)
 - [Model inventory](./MODEL_INVENTORY.md)

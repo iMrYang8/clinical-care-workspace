@@ -1,6 +1,6 @@
 # Nightingale — historical delivery technical brief
 
-This document preserves delivery-specific evidence and claim boundaries for the recorded build. For the current product and architecture overview, read [`docs/TECHNICAL_BRIEF.md`](../TECHNICAL_BRIEF.md).
+This document preserves delivery-specific evidence and claim boundaries for the recorded build. For the current product and architecture overview, read [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md); for the current submission brief, read [`docs/TECHNICAL_BRIEF.md`](../TECHNICAL_BRIEF.md).
 
 **72-hour synthetic healthcare collaboration candidate · synthetic data only · 26 August 2026**
 
