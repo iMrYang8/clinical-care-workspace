@@ -1,7 +1,7 @@
 services:
 
   proxy:
-    image: traefik:3.6
+    image: traefik:v3.7
     ports:
       # Demo persona auth must never be reachable from the local LAN.
       - "127.0.0.1:${LOCAL_HTTP_PORT:-80}:80"
