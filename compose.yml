@@ -7,7 +7,7 @@ x-bounded-container-logging: &bounded-container-logging
 services:
 
   proxy:
-    image: traefik:3.6
+    image: traefik:v3.7
     logging: *bounded-container-logging
     volumes:
       # Add Docker as a mounted volume, so that Traefik can read the labels of other services
